@@ -73,15 +73,3 @@ jobs:
         with: { node-version: '18' }
       - run: npm ci
       - run: npm run pack
-```
-
-## Notes & best practices
-- Keep `preload.js` surface minimal and avoid exposing Node directly to the renderer.
-- Test copy/move flows with small sample folders before moving large datasets.
-- For beta/time-limited builds, implement expiry checks at startup (non-destructive) and document how to override at build time.
-
-If you want, I can:
-- Add a complete `package.json` with the example scripts wired and a minimal CI workflow file placed in `.github/workflows/`.
-- Produce a short contributor guide with testing commands.
-
-Which would you like next?  
