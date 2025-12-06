@@ -1,151 +1,45 @@
 # PS5 Vault
 
-PS5 Vault is a small Electron app to scan and organize PS5 PPSA folders (scan -> copy/move/verify). This README documents local development, packaging and GitHub automation scripts (CI) used to build and publish Windows installers and a recommended beta workflow (time‑limited beta + auto‑update). It also covers the optional token server used to issue signed trial tokens for a stronger timed beta.
+Lightweight Electron app to scan, verify and copy/move PS5 PPSA folders.
 
-Quick links
-- Run locally: `npm start`
-- Build (local): `npm run dist:local`
-- Build & publish: `npm run dist` (publishes to GitHub Releases)
-- Build Windows installer: `npm run build-win`
+Quick start
+- Install: npm ci
+- Run (dev): npm start
+- Scan → Select → Choose Action & Layout → Pick Destination → GO
 
-Table of contents
-- Prerequisites
-- Install & run locally
-- NPM scripts
-- Packaging & publishing (electron-builder)
-- GitHub Actions (CI) — how it works
-- Timed beta options (build-time and server-signed tokens)
-- Token server (optional) — quick usage
-- Required repository secrets for CI
-- Troubleshooting & notes
+Build & release
+- Local build (no publish): npm run dist:local
+- Build & publish to GitHub Releases: npm run dist
+- Windows installer (NSIS): npm run build-win
 
----
+Beta & expiry
+- The app supports a build-time beta expiry (BETA_EXPIRES). If expiry is reached the app will show a message and exit.
+- For stronger control use the optional token server (server issues signed trial tokens).
 
-Prerequisites
-- Node.js (LTS recommended, >= 18)
-- npm
-- A GitHub repository (public or private)
-- Optional (recommended): a code signing certificate (PFX) if you want signed Windows installers. This reduces SmartScreen warnings.
-- Optional: a small server (or serverless endpoint) if using signed tokens for trials.
+Auto-update
+- Uses electron-updater. When published to GitHub Releases the app can auto-check and install updates.
 
-Install & run locally
-1. Clone the repo:
-   git clone https://github.com/YOUR_GITHUB_USER/YOUR_REPO.git
-2. Install dependencies:
-   npm ci
-3. Start the app (development):
-   npm start
+CI / GitHub Actions
+- A workflow is included (.github/workflows/release.yml) to build & publish on tag pushes (v*).
+- Required repo secrets for publishing:
+  - GH_TOKEN (GitHub PAT with repo access)
+  - Optional: BETA_EXPIRES, CSC_LINK, CSC_KEY_PASSWORD (for code signing)
 
-The app uses Electron. During dev you can open DevTools (you have an IPC to open them via the UI).
-
-NPM scripts
-- start — Launch Electron for development
-- dist — Run electron-builder and publish per `build.publish` config (requires GH_TOKEN)
-- dist:local — Build locally without publishing
-- build-win — Build Windows NSIS installer
-- pack — Create directory build (no installer)
-- postinstall — electron-builder helper (installed automatically by npm)
-
-These scripts are defined in package.json.
-
-Packaging & publishing (electron-builder)
-The project uses electron-builder (configured in package.json). The typical workflow:
-
-1. Ensure code is committed and pushed.
-2. Tag a release (semantic version):
-   - git tag v0.1.0
-   - git push --tags
-3. Build and publish (locally or via CI):
-   - Locally (no publish): `npm run dist:local`
-   - Publish to GitHub Releases (requires GH_TOKEN): `npm run dist` or use the GitHub Actions workflow.
-
-The build will produce Windows installers (NSIS) and put them in `dist/`. If you have set up `publish` in package.json to point to your GitHub repo, electron-builder will create a Release and upload artifacts.
-
-GitHub Actions (CI)
-A workflow example provided in `.github/workflows/release.yml` will:
-- Run on tag pushes (`v*`) or manual dispatch
-- Build on `windows-latest`
-- Run `npm run dist` and publish to GitHub Releases using `GH_TOKEN`
-
-Required GitHub secrets (add these in your repo Settings -> Secrets):
-- GH_TOKEN — a GitHub personal access token (recommended: GITHUB_TOKEN or PAT with repo access); used by electron-builder to upload releases
-- BETA_EXPIRES — optional ISO date to override embedded expiry used for built artifacts (e.g. `2026-01-01T00:00:00Z`)
-- CSC_LINK (optional) — URL to your PFX (if using code signing via CI)
-- CSC_KEY_PASSWORD (optional) — PFX password
-(If using code signing via CI you'll normally upload the PFX as a secret or store in protected storage.)
-
-Timed beta options (recommended, non‑destructive)
-I strongly recommend NOT attempting self‑destruct logic. Instead use one of the following secure strategies:
-
-A) Build-time expiry (included)
-- At build time we embed or use an environment variable `BETA_EXPIRES` (ISO timestamp).
-- The running app checks that expiry on startup and will gracefully exit with an informative dialog when expired.
-- This is simple but can be bypassed if users tamper with system clock or binary.
-
-B) Server-signed tokens (recommended for stronger control)
-- Run a small token issuer server (example included).
-- Issue tokens that embed expiry and are HMAC-signed by your server secret.
-- App verifies token signature and expiry. If you revoke a token server-side, the app can check server for revocation or require online validation from time to time.
-- This prevents trivial bypass via clock changes because token is signed by server.
-
-Auto-updates
-- The app integrates electron-updater. When built & published to GitHub Releases, electron-updater can check for releases and install updates.
-- The main process uses `autoUpdater.checkForUpdatesAndNotify()` to run a background check.
-- Releases tagged as pre-release can be used for betas. Users will receive updates if the autoUpdater config matches.
-
-Token server (optional)
-A minimal example Node token server (HMAC) is included under `token-server/`. It:
-- GET /issue?days=7 — returns a signed token valid for N days
-- POST /verify — verify token validity
-
-Deploy this behind HTTPS and never expose your TOKEN_SECRET. Use tokens to enable app usage for particular testers, and verify locally or server-side according to your policy.
-
-CI & Publishing Quick Setup
-1. Add `GH_TOKEN` to repo secrets.
-2. Add optional `BETA_EXPIRES` if you want CI-built artifacts to have a specific expiry.
-3. Push a tag like `v0.1.0` -> workflow will run (if you enabled the provided workflow)
-4. Download installer from release and share with beta testers.
-
-Sample local build (no publish)
-- npm install
-- npm run dist:local
-- Look in `dist/` for installer artifacts.
-
-Testing expiry locally
-- You can test expiry behavior locally by setting the environment var before launching:
-  - Linux/macOS:
-    BETA_EXPIRES='2020-01-01T00:00:00Z' npm start
-  - Windows (PowerShell):
-    $env:BETA_EXPIRES='2020-01-01T00:00:00Z'; npm start
-
-If the expiry is in the past the app will show an "Beta expired" dialog and exit.
-
-Security & signing notes
-- Code signing is strongly recommended for Windows releases. Store the PFX and password securely (GitHub secrets).
-- Without signing, Windows SmartScreen may show warnings.
-- The included GitHub Actions workflow supports passing `CSC_LINK` and `CSC_KEY_PASSWORD` secrets into electron-builder.
-
-Troubleshooting
-- Build errors: check Node and electron-builder versions; ensure `npm ci` completes without errors.
-- Auto-update issues: ensure GH_TOKEN has sufficient rights; verify release assets are uploaded.
-- Expiry issues: ensure `BETA_EXPIRES` is valid ISO timestamp. CI can set this env var when building.
-
-Contributing & testing
-- Use feature branches, create PRs, and tag beta releases for testers.
-- Add tests around critical IO/copy functions (copy & verify) before changing copying logic.
+Optional token server
+- token-server/ contains a simple HMAC token issuer to create signed trial tokens.
+- Use tokens if you want server-issued, revocable timed access.
 
 Files of interest
-- main.js — main process, includes expiry check + autoUpdater init
-- preload.js — exposes safe API to renderer
-- renderer.js — UI logic & modals
-- index.html — UI markup and styles
-- package.json — scripts and electron-builder config
-- .github/workflows/release.yml — CI build & publish workflow
-- token-server/ — optional HMAC token issuer & verifier
+- main.js — app logic + beta expiry + autoUpdater init
+- preload.js — secure renderer API
+- renderer.js / index.html — UI
+- package.json — scripts & electron-builder config
+- .github/workflows/release.yml — CI build/publish example
+- token-server/ — optional trial token issuer
 
-Need me to:
-- Create the PR in your GitHub repo with these files and CI configured?
-- Add code signing steps using your PFX in GitHub Actions?
-- Create a more secure JWT/RS256 token issuance example and client verification?
+Security notes
+- Prefer graceful expiry over self‑destruct. Use signed tokens for stronger control.
+- Code-sign Windows installers (PFX) to avoid SmartScreen warnings.
 
-Pick one and I’ll prepare it next.
+Need help wiring CI, signing, or adding server‑verified tokens? Tell me which and I’ll generate the exact artifacts or PR.  
+```
