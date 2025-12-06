@@ -28,18 +28,3 @@ CI / GitHub Actions
 Optional token server
 - token-server/ contains a simple HMAC token issuer to create signed trial tokens.
 - Use tokens if you want server-issued, revocable timed access.
-
-Files of interest
-- main.js — app logic + beta expiry + autoUpdater init
-- preload.js — secure renderer API
-- renderer.js / index.html — UI
-- package.json — scripts & electron-builder config
-- .github/workflows/release.yml — CI build/publish example
-- token-server/ — optional trial token issuer
-
-Security notes
-- Prefer graceful expiry over self‑destruct. Use signed tokens for stronger control.
-- Code-sign Windows installers (PFX) to avoid SmartScreen warnings.
-
-Need help wiring CI, signing, or adding server‑verified tokens? Tell me which and I’ll generate the exact artifacts or PR.  
-```
