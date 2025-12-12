@@ -2,6 +2,8 @@
 
 PS5 Vault — quickly find, organize and move PS5 PPSA/game folders. Portable, verified copy/move, and conflict-safe operations — designed for fast library management.
 
+<div style="position:relative; width:100%; height:0px; padding-bottom:52.396%"><iframe allow="fullscreen" allowfullscreen height="100%" src="https://streamable.com/e/6257gm?" width="100%" style="border:none; width:100%; height:100%; position:absolute; left:0px; top:0px; overflow:hidden;"></iframe></div>
+
 Why you'll like it
 - Fast scanning for PPSA and param.json metadata with cover previews.
 - Safe copy (SHA‑256 verified) and intelligent move (fast rename when possible).
