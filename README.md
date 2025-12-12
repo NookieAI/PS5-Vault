@@ -1,28 +1,36 @@
-# PS5 Vault — Native Windows version (C# WinForms)
+# PS5 Vault
 
-This is a native Windows rewrite of the original Electron-based PS5 Vault. It scans a source folder for param.json / PPSA folders and allows creating/copying/moving content into a destination with SHA256-verified copy.
+PS5 Vault — quickly find, organize and move PS5 PPSA/game folders. Portable, verified copy/move, and conflict-safe operations — designed for fast library management.
 
-Requirements
-- .NET 7 SDK (or change TargetFramework in csproj to net6.0 if you prefer .NET 6)
-- Windows (WinForms GUI)
+Why you'll like it
+- Fast scanning for PPSA and param.json metadata with cover previews.
+- Safe copy (SHA‑256 verified) and intelligent move (fast rename when possible).
+- Flexible target layouts: Game/PPSA, Game-only, etaHEN, itemZFlow.
+- Conflict handling: Overwrite / Skip / Rename with safety checks to prevent accidental deletions.
+- Portable single-file EXE support and a large splash screen for polished distribution.
 
-Build a single native exe
-1. Open a command prompt in the project folder (where Ps5VaultNative.csproj is).
-2. Run (example for x64 self-contained single file):
+Quick start
+1. Download and run the portable EXE (no installer required).
+2. Click Browse → choose your Source (drive/folder) and press SCAN.
+3. Select entries, pick Destination, choose Action and Layout.
+4. Review the Confirm dialog (authoritative From → To paths computed by the app), then click GO.
+5. Monitor progress; results show copied/moved items and any errors.
 
-dotnet publish -c Release -r win-x64 --self-contained true /p:PublishSingleFile=true -o publish
+Important notes
+- etaHEN layout: games are placed under <Destination>\etaHEN\games\<GameName> unless your Destination already points inside an etaHEN/games folder. No PPSA subfolder is created for etaHEN.
+- Overwrite is guarded: the app will refuse to delete paths outside the Destination you selected.
+- Always back up important data before bulk operations.
 
-This will produce an executable in `publish\` (e.g. `publish\Ps5VaultNative.exe`) that runs standalone.
+Builds & customization
+- The portable EXE is produced with electron-builder. Add your splash icon at ./assets/splash.ico before building to include a custom splash.
+- CI builds can be added to automatically produce artifacts.
 
-Notes / limitations
-- The UI is simplified, but the scanning, content extraction, icon detection and verified copy/move logic are implemented.
-- Error handling attempts to be resilient but please test on your dataset.
-- You can expand the UI, add localization, add a database, or more advanced options as needed.
+Support / Contact
+- Developer: Nookie — Discord: nookie_65120
+- Report problems with steps to reproduce and any console output for faster help.
 
-If you want, I can:
-- Add a proper installer (MSI)
-- Create a lightweight service for unattended scans
-- Convert the UI to WPF for richer visuals
-- Add multi-threaded copy progress for every file (per-file progress)
+License
+- Use at your own risk. Please back up your files before large operations.
 
-Tell me which of the above you'd like next or any additional behavior to preserve from the Electron app.
+Short promo line
+"PS5 Vault — fast, safe, portable PPSA management for your PS5 library."
