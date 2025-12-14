@@ -160,15 +160,3 @@ Note: If the renderer cannot find these APIs it will show helpful error modals/t
 - Keep UI/UX accessible and avoid breaking existing preload contract.
 
 ---
-
-## License
-
-Include your preferred license here (MIT recommended if you want permissive usage).
-
----
-
-If you want, I can also add:
-- packaging instructions (Electron build scripts),
-- example preload implementation (node/Electron) that wires the filesystem operations,
-- or a short changelog template.
-```
