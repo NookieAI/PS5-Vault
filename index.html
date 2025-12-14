@@ -1,0 +1,330 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>PS5 Vault</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' file: data:;">
+  <style>
+    :root{
+      --bg:#061226;
+      --muted:#9aa6c0;
+      --accent:#60baff;
+      --accent-2:#3ac0ff;
+      --card-border: rgba(255,255,255,0.04);
+      --title:#eaf3ff;
+      --accent-scan:#ff8a00;
+      --select-bg: #0b1b2b;
+      --modal-bg: #0b2436;
+      --thumb-size: 80px;
+      --cover-col-width: 160px;
+      --thumb-radius: 14px;
+      --thumb-gap: 10px;
+      --modal-max-width: 760px;
+      --preview-max-w: 560px;
+      --preview-max-h: 560px;
+      --preview-border: rgba(255,255,255,0.06);
+      --discord-color: #7289da;
+
+      --top-padding: 10px;
+      --control-gap: 8px;
+      --progress-slot-h: 44px;
+      --select-width: 160px;
+    }
+
+    html,body{height:100%;margin:0;background:var(--bg);color:var(--title);overflow:hidden;font-family:system-ui,-apple-system,"Segoe UI",Roboto,Arial;}
+    *,*:before,*:after{box-sizing:border-box}
+
+    .container { height:100vh; display:flex; flex-direction:column; gap:8px; padding:var(--top-padding); max-width:1400px; margin:0 auto; }
+
+    .topbar { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+    .brand { display:flex; gap:10px; align-items:center; }
+
+    .logo-wrap { height:48px; display:flex; align-items:center; justify-content:center; overflow:hidden; border-radius:8px; background:transparent; flex: 0 0 auto; margin-right:6px; }
+    .brand img.brand-logo { height:48px; width:auto; object-fit:cover; display:block; border-radius:8px; border:1px solid rgba(255,255,255,0.04); box-shadow: 0 6px 18px rgba(0,0,0,0.45); background:#071826; }
+    .brand svg.brand-fallback { height:48px; width:auto; display:none; border-radius:8px; background:transparent; }
+
+    .brand .meta .app-title { font-weight:800; font-size:15px; color:var(--title); line-height:1; }
+    .brand .meta .app-sub  { font-size:11px; color:var(--muted); margin-top:2px; }
+
+    .topbar-right { display:flex; gap:6px; align-items:center; }
+    .made-by { font-size:11px; color:var(--muted); opacity:0.95; padding:5px 8px; border-radius:6px; background:transparent; user-select:none; }
+
+    .discord-link { font-size:12px; color:var(--discord-color); padding:6px 8px; border-radius:8px; border:1px solid rgba(114,137,218,0.08); background:transparent; cursor:pointer; font-weight:700; display:inline-flex; gap:6px; align-items:center; text-decoration:none; }
+    .discord-link:hover { background: rgba(114,137,218,0.06); }
+
+    .controls-row { display:flex; gap:var(--control-gap); align-items:flex-start; justify-content:space-between; }
+    .controls-left { display:flex; gap:8px; align-items:center; min-width:420px; max-width:65%; flex-direction:column; align-items:flex-start; }
+    .controls-left .primary { display:flex; gap:8px; align-items:center; width:100%; }
+    .controls-right { display:flex; gap:8px; align-items:flex-start; justify-content:flex-end; flex-direction:column; min-width:320px; }
+
+    .progress-slot { height:var(--progress-slot-h); min-height:var(--progress-slot-h); display:flex; align-items:center; gap:8px; width:100%; }
+
+    .scan-progress { display:flex; flex-direction:column; gap:6px; align-items:flex-start; margin-top:0; width:100%; box-sizing:border-box; }
+    .scan-progress .bar { height:8px; width:100%; max-width:640px; background:rgba(255,255,255,0.04); border-radius:6px; overflow:hidden; }
+    .scan-progress .bar .bar-fill { height:100%; width:0%; background:linear-gradient(90deg,var(--accent),var(--accent-2)); border-radius:6px; transition:width 160ms linear; display:block; }
+    .current-scan { color:var(--muted); font-size:12px; }
+
+    input[type="text"], select { padding:6px 8px; border-radius:8px; border:1px solid var(--card-border); background:var(--select-bg); color:var(--title); font-size:13px; }
+    select { height:34px; min-width:var(--select-width); }
+
+    .btn { padding:6px 10px; border-radius:8px; border:1px solid var(--card-border); background:transparent; color:var(--muted); cursor:pointer; font-weight:700; }
+    .btn-scan { padding:7px 10px; border-radius:8px; border:0; cursor:pointer; background:linear-gradient(90deg,var(--accent-scan),#ff5f00); color:#04130A; font-weight:900; }
+    .btn-go { padding:7px 12px; border-radius:8px; border:0; cursor:pointer; background:linear-gradient(90deg,#22C55E,#16A34A); color:#032204; font-weight:800; }
+    .btn-danger { padding:7px 12px; border-radius:8px; border:0; cursor:pointer; background:linear-gradient(90deg,#ef4444,#dc2626); color:#fff; font-weight:800; }
+
+    .action-layout-row { display:flex; gap:10px; width:100%; justify-content:flex-end; margin-top:6px; }
+    .action-block, .layout-block { text-align:right; }
+
+    .content { flex:1; display:flex; gap:8px; min-height:0; align-items:stretch; }
+    .results { flex:1; display:flex; flex-direction:column; background:linear-gradient(180deg, rgba(255,255,255,0.01), rgba(255,255,255,0.006)); border-radius:8px; padding:8px; border:1px solid var(--card-border); min-height:0; }
+
+    .table-wrap { overflow:auto; border-radius:6px; background:transparent; flex:1 1 auto; min-height:0; }
+    table { width:100%; border-collapse:separate; border-spacing:0 8px; color:var(--title); table-layout:fixed; font-size:13px; }
+    thead th { padding:4px 8px; color:var(--muted); font-size:11px; text-transform:uppercase; text-align:left; }
+    tbody td { padding:6px 8px; vertical-align:middle; word-break:break-word; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+
+    thead th.check { width:36px; text-align:center; }
+    thead th.cover { text-align:center; vertical-align:middle; }
+    th.cover, td.cover { width:var(--cover-col-width); text-align:center; }
+    td.cover { display:flex; flex-direction:column; align-items:center; justify-content:center; gap:var(--thumb-gap); padding-top:8px; padding-bottom:8px; }
+
+    .thumb { width:var(--thumb-size); height:var(--thumb-size); object-fit:cover; border-radius:var(--thumb-radius); border:1px solid rgba(255,255,255,0.04); display:block; box-shadow: 0 6px 20px rgba(0,0,0,0.45); transition: transform .12s ease, box-shadow .12s ease; }
+    .thumb:hover { transform: translateY(-4px) scale(1.03); box-shadow: 0 14px 32px rgba(0,0,0,0.55); cursor:zoom-in; }
+
+    .title-main { font-weight:700; font-size:13px; }
+    .title-sub { font-size:11px; color:var(--muted); margin-top:2px; }
+    .progress-row { display:flex; gap:12px; align-items:center; margin-top:6px; width:100%; }
+    .progress-info { color:var(--muted); font-size:12px; min-width:140px; }
+
+    .modal-backdrop { position:fixed; inset:0; display:none; align-items:center; justify-content:center; background:rgba(0,0,0,0.6); z-index:10000; padding:20px; }
+    .modal { width:var(--modal-max-width); max-width:98%; background:var(--modal-bg); color:var(--title); border-radius:10px; padding:12px; box-shadow:0 20px 60px rgba(0,0,0,0.6); border:1px solid rgba(255,255,255,0.04); display:flex; flex-direction:column; gap:8px; }
+    .modal-header { display:flex; align-items:center; justify-content:space-between; }
+    .modal-header h4 { margin:0; font-size:18px; font-weight:800; color:var(--title); letter-spacing:0.2px; }
+    .modal-body { max-height:480px; overflow:auto; padding-top:6px; }
+    .modal-actions { display:flex; justify-content:flex-end; gap:8px; margin-top:8px; }
+
+    .path-box { background: rgba(255,255,255,0.02); border:1px solid rgba(255,255,255,0.02); padding:8px 10px; border-radius:8px; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, "Roboto Mono", monospace; font-size:14px; color:#dbeeff; margin-bottom:6px; overflow-wrap: anywhere; font-weight:700; }
+    .label-bold { color:var(--muted); font-weight:800; margin-right:8px; font-size:12px; }
+
+    .result-actions-row { display:flex; flex-direction:column; align-items:flex-end; gap:8px; margin-top:6px; }
+
+    .toast { position:fixed; left:50%; transform:translateX(-50%); bottom:20px; background:rgba(2,6,12,0.9); color:var(--muted); padding:6px 10px; border-radius:8px; border:1px solid rgba(255,255,255,0.04); font-size:13px; display:none; z-index:2000; }
+
+    .img-preview { position:fixed; display:none; pointer-events:none; z-index:12000; max-width:var(--preview-max-w); max-height:var(--preview-max-h); border-radius:10px; border:1px solid var(--preview-border); background:linear-gradient(180deg, rgba(10,12,16,0.95), rgba(6,8,12,0.98)); padding:6px; box-shadow: 0 18px 50px rgba(0,0,0,0.75); }
+    .img-preview img { display:block; max-width:100%; max-height:100%; border-radius:8px; }
+
+    @media (max-width:980px){
+      .controls-row{flex-direction:column;align-items:stretch}
+      .action-layout-row{justify-content:flex-start}
+      .scan-right{justify-content:flex-start; min-width:unset}
+      .cover{display:none}
+      .thumb{display:none}
+      .modal { width:calc(100% - 40px); }
+      select { min-width:120px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="topbar">
+      <div class="brand">
+        <div class="logo-wrap" aria-hidden="false" role="img" aria-label="PS5 Vault logo">
+          <img id="brandLogo" class="brand-logo" src="./assets/logo/logo.png" alt="PS5 Logo" />
+          <svg id="brandLogoFallback" class="brand-fallback" viewBox="0 0 100 100" role="img" aria-label="PS5 Vault logo" xmlns="http://www.w3.org/2000/svg" style="display:none" preserveAspectRatio="xMidYMid meet">
+            <rect x="0" y="0" width="100" height="100" rx="10" fill="#0b2740"/>
+            <text x="50" y="58" text-anchor="middle" font-size="28" font-family="Segoe UI, Roboto, Arial" fill="#eaf3ff" font-weight="700">PS5</text>
+          </svg>
+        </div>
+        <div class="meta">
+          <div class="app-title">PS5 Vault</div>
+          <div class="app-sub">Organize PPSA folders</div>
+        </div>
+      </div>
+
+      <div class="topbar-right">
+        <div class="made-by" id="madeBy">Made by Nookie</div>
+        <div style="display:flex;gap:6px;align-items:center;">
+          <button id="btnHelp" class="btn">Help</button>
+          <button id="btnSelectAll" class="btn">Select All</button>
+          <button id="btnUnselectAll" class="btn">Unselect All</button>
+          <button id="btnClear" class="btn">Clear</button>
+          <a id="discordLink" class="discord-link" href="#" title="Click to copy 'nookie_65120' and open Discord">💬 Discord</a>
+        </div>
+      </div>
+    </div>
+
+    <div class="controls-row" aria-label="Controls">
+      <div class="controls-left">
+        <div class="primary">
+          <label style="color:var(--muted);margin-right:6px">Source</label>
+          <input id="sourcePath" type="text" readonly placeholder="Choose root folder" style="min-width:260px" />
+          <button id="btnPickSource" class="btn">Browse</button>
+          <button id="btnScan" class="btn-scan">SCAN</button>
+        </div>
+
+        <!-- progress placed under Source -->
+        <div class="progress-slot" style="width:100%; margin-top:6px;">
+          <div id="currentScanLabel" class="current-scan" style="min-height:16px; flex:1;"></div>
+          <div id="actionScanProgress" class="scan-progress" style="display:none; flex:1;">
+            <div id="fileProgressLabel" class="progress-info" style="display:none;font-size:12px">File: <span id="fileName">—</span></div>
+            <div class="progress-row" style="width:100%; align-items:center;">
+              <div class="bar" style="flex:1; margin-right:10px;"><div id="actionTotalProgressBar" class="bar-fill" style="width:0%"></div></div>
+              <div id="totalProgressLabel" class="progress-info" style="font-size:12px">Total: <span id="totalPercent">0%</span> • <span id="etaLabel">ETA: —</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="controls-right">
+        <div style="display:flex;gap:8px;align-items:center;">
+          <button id="btnGoBig" class="btn-go">GO</button>
+          <label style="color:var(--muted);margin-left:6px">Destination</label>
+          <input id="destPath" type="text" readonly placeholder="Destination" style="min-width:260px" />
+          <button id="btnPickDest" class="btn">Browse</button>
+        </div>
+
+        <!-- Action & Layout moved here under Destination Browse (right-aligned) -->
+        <div class="action-layout-row" aria-hidden="false">
+          <div class="action-block">
+            <label style="color:var(--muted);font-size:12px;display:block;margin-bottom:4px">Action</label>
+            <select id="action" style="min-width:140px">
+              <option value="folder-only">Create folder</option>
+              <option value="copy">Copy (verified)</option>
+              <option value="move">Move</option>
+            </select>
+          </div>
+
+          <div class="layout-block">
+            <label style="color:var(--muted);font-size:12px;display:block;margin-bottom:4px">Layout</label>
+            <select id="layout" style="min-width:160px">
+              <option value="game-ppsa">Game / PPSA</option>
+              <option value="game-only">Game only</option>
+              <option value="ppsa-only">PPSA only</option>
+              <option value="etahen">etaHEN default</option>
+              <option value="itemzflow">itemZFlow default</option>
+            </select>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="content">
+      <div class="results" role="main">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+          <div style="font-weight:800;font-size:14px">Scan Results <span id="scanCount" style="font-size:12px;color:var(--muted);margin-left:8px"></span></div>
+        </div>
+
+        <div class="table-wrap" role="region" aria-label="Scan results table">
+          <table>
+            <thead>
+              <tr>
+                <th class="check"><input id="chkHeader" type="checkbox" title="Select visible" /></th>
+                <th class="cover">Cover</th>
+                <th class="game">GAME</th>
+                <th class="folder">FOLDER</th>
+              </tr>
+            </thead>
+            <tbody id="resultsBody">
+              <tr><td colspan="4" style="color:var(--muted);padding:12px">No scan performed yet.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- modals (confirm/conflict/result/help) — IDs preserved -->
+  <div id="conflictModalBackdrop" class="modal-backdrop" aria-hidden="true" style="display:none">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="conflictTitle">
+      <div class="modal-header"><h4 id="conflictTitle">Conflicting targets detected</h4></div>
+      <div class="modal-body" id="conflictBody" style="color:var(--muted);">
+        <div id="conflictList" style="margin-bottom:12px"></div>
+        <div style="margin-top:6px">Choose how to handle existing targets (applies to all conflicts):</div>
+        <div style="margin-top:8px;display:flex;gap:8px;flex-direction:column">
+          <label><input type="radio" name="conflictAction" value="overwrite"> Overwrite existing targets</label>
+          <label><input type="radio" name="conflictAction" value="skip"> Skip items with existing targets</label>
+          <label><input type="radio" name="conflictAction" value="rename" checked> Rename conflicting targets (keep originals)</label>
+        </div>
+      </div>
+      <div class="modal-actions"><button id="conflictCancel" class="btn">Cancel</button><button id="conflictProceed" class="btn-go">Proceed</button></div>
+    </div>
+  </div>
+
+  <div id="confirmModalBackdrop" class="modal-backdrop" aria-hidden="true">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="confirmTitle">
+      <div class="modal-header"><h4 id="confirmTitle">Confirm transfer</h4></div>
+      <div class="modal-body"><div id="confirmList"></div></div>
+      <div class="modal-actions"><button id="confirmNo" class="btn">Cancel</button><button id="confirmYes" class="btn-go">Yes — proceed</button></div>
+    </div>
+  </div>
+
+  <div id="resultModalBackdrop" class="modal-backdrop" aria-hidden="true">
+    <div class="modal result-modal-wide" role="dialog" aria-modal="true" aria-labelledby="resultTitle">
+      <div class="modal-header">
+        <div style="display:flex;align-items:center;gap:12px">
+          <div class="result-count" id="resultCount">0</div>
+          <div><div class="result-summary-title" id="resultTitleText">Operation results</div><div class="result-summary-sub" id="resultSubText">Summary</div></div>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center">
+          <!-- Close is now red per request -->
+          <button id="resultClose" class="btn-danger">Close</button>
+        </div>
+      </div>
+
+      <!-- status buttons (moved/copied/error) — stacked under Close, right aligned -->
+      <div class="result-actions-row" style="display:none;" id="resultActionsRow" aria-hidden="true"></div>
+
+      <div class="modal-body"><div id="resultList"></div></div>
+    </div>
+  </div>
+
+  <div id="helpModalBackdrop" class="modal-backdrop" aria-hidden="true">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="helpTitle">
+      <div class="modal-header"><h4 id="helpTitle">How to use PS5 Vault</h4></div>
+      <div class="modal-body">
+        <div style="color:var(--muted);line-height:1.4">
+          <h4 style="margin-top:0">Quick start</h4>
+          <ol style="margin-left:14px">
+            <li>Click "Browse" next to Source and choose the folder or drive that contains your game folders.</li>
+            <li>Click SCAN. The app will locate validated game folders and list them with thumbnails.</li>
+            <li>Select the entries you want to process using the checkboxes (use Select All / Unselect All to help).</li>
+            <li>Pick a Destination where the organized folders should be created or moved to.</li>
+            <li>Choose Action and Layout (Action and Layout controls are under Destination). Action controls whether to create folders, copy, or move. Layout selects the destination folder structure.</li>
+            <li>Click GO. A confirmation dialog will show exact From → To mappings. Confirm to start.</li>
+            <li>While transfers run the UI is locked and a single total progress bar with ETA appears under the Source field. Wait until it finishes.</li>
+          </ol>
+
+          <h4 style="margin-top:8px">Layout directory structures</h4>
+          <ul style="margin-left:14px">
+            <li><strong>Game / PPSA</strong> — Destination/GameName/PPSAXXXXX (both game folder and PPSA folder are created under destination)</li>
+            <li><strong>Game only</strong> — Destination/GameName (only the human-friendly game folder is created)</li>
+            <li><strong>PPSA only</strong> — Destination/PPSAXXXXX (only the PPSA folder is created)</li>
+            <li><strong>etaHEN default</strong> — Destination/etaHEN/games/GameName (organized for etaHEN)</li>
+            <li><strong>itemZFlow default</strong> — Destination/games/GameName (organized for itemZFlow)</li>
+          </ul>
+
+          <h4 style="margin-top:8px">Notes</h4>
+          <ul style="margin-left:14px">
+            <li>If a target already exists you will be prompted to choose how to handle conflicts (overwrite, skip, or rename).</li>
+            <li>For fastest moves, place Destination on the same drive as Source and use Move. If drives differ, Copy+verify is used for safety.</li>
+            <li>Do not close the app during an ongoing transfer.</li>
+          </ul>
+
+          <h4 style="margin-top:8px">Tips</h4>
+          <ul style="margin-left:14px">
+            <li>Use SCAN to refresh the list after operations complete (the app attempts to refresh automatically).</li>
+            <li>Paths that end with "sce_sys" are hidden from the small path label to reduce clutter.</li>
+          </ul>
+        </div>
+      </div>
+      <div class="modal-actions"><button id="helpClose" class="btn">Close</button></div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <div id="imgPreview" class="img-preview" aria-hidden="true"><img id="imgPreviewImg" src="" alt="preview"></div>
+
+  <script src="renderer.js"></script>
+</body>
+</html>
