@@ -2,8 +2,7 @@
 
 <img src="https://github.com/user-attachments/assets/6f510e79-e5f1-4250-afe1-95d240e75050" />
 
-
-PS5 Vault is a desktop utility that helps organize PS5 PPSA game folders into consistent destination layouts. It scans a source folder for validated game folders (PPSA/app packages), shows thumbnails and metadata, and can create/copy/move the selected entries into structured destinations such as "Game / PPSA", etaHEN or itemZFlow formats.
+PS5 Vault is a powerful, user-friendly Electron app for organizing PPSA (PlayStation 5 game) folders. It scans drives or directories, validates game data, and moves/copies files into structured layouts compatible with PS5 homebrew tools like etaHEN and itemZFlow. Built with safety in mind, it prevents data loss with hash verification and conflict resolution.
 
 This README covers features, how the UI works, available actions & layouts, integration points, and troubleshooting.
 
