@@ -1,164 +1,109 @@
 # PS5 Vault
 
-<img src="https://github.com/user-attachments/assets/6f510e79-e5f1-4250-afe1-95d240e75050" />
+![PS5 Vault](https://github.com/user-attachments/assets/6f510e79-e5f1-4250-afe1-95d240e75050)
 
-PS5 Vault is a powerful, user-friendly Electron app for organizing PPSA (PlayStation 5 game) folders. It scans drives or directories, validates game data, and moves/copies files into structured layouts compatible with PS5 homebrew tools like etaHEN and itemZFlow. Built with safety in mind, it prevents data loss with hash verification and conflict resolution.
-
-This README covers features, how the UI works, available actions & layouts, integration points, and troubleshooting.
+PS5 Vault is an Electron app for discovering and organizing PlayStation 5 PPSA folders. It scans a source directory, validates game metadata, and creates clean target layouts compatible with tools like etaHEN and itemZFlow. Transfers are safety‑first with hash verification, overlap protection, and clear confirmations.
 
 ---
 
-## Key features
+## Highlights
 
-- Fast, validated scan of a Source folder for PPSA / game folders
-- Thumbnail previews with hover preview popup
-- Selectable scan results with "Select All", "Unselect All", and per-row checkbox selection
-- Destination selection (browse)
-- Action options:
-  - Create folder (only create target folders)
-  - Copy (verified)
-  - Move
-- Layout options:
-  - Game / PPSA (Destination/GameName/PPSAXXXXX)
-  - Game only (Destination/GameName)
-  - PPSA only (Destination/PPSAXXXXX)
-  - etaHEN default (Destination/etaHEN/games/GameName)
-  - itemZFlow default (Destination/games/GameName)
-- Confirm dialog with per-item From → To preview before operations
-- Conflict resolution modal (Overwrite / Skip / Rename)
-- Single total progress bar with ETA while operations run (UI locked during run)
-- Per-item operation result indicators (moved / copied / error) shown in the results modal
-- Local storage for last used Source and Destination paths
-- Small path labels hide trailing `sce_sys` to reduce clutter
-- Simple built-in "Help" popup with usage steps and layout directory examples
-- Quick Discord copy/link button for support/contact
-- Accessible keyboard behavior — Escape to close modals
+- Fast scan with validated PPSA results
+- Thumbnails with hover preview
+- Clear confirmations with per‑item From → To before transfer
+- Conflict window (Overwrite / Skip / Rename)
+- Single progress bar with speed and ETA
+- “Select All / Unselect All” and per‑row selection
+- Small touches: “Scanning…” label, ESC to close Help, tri‑state header checkbox
+- Destination layouts for common PS5 homebrew setups
 
 ---
 
-## UI overview
+## Getting started
 
-Top bar
-- App title and small brand area
-- Utility buttons: Help, Select All, Unselect All, Clear, Discord
-
-Controls row (left)
-- Source field + Browse button + SCAN button
-- Progress/scan label and total progress bar area (appears under Source)
-
-Controls row (right)
-- GO button
-- Destination field + Browse button
-- Action and Layout selects (right-aligned under Destination Browse)
-
-Results area
-- Table showing checkboxes, cover (thumbnail), GAME (title + ID), and FOLDER (path)
-- Click row or checkbox to select items
-- Hover thumbnails show a larger preview popup
-
-Result / Operation modal
-- After operation, a modal shows per-item summary entries with "From" and "To"
-- Each entry has a right-aligned status indicator (button-styled) showing `moved`, `copied`, or `error`
-- Close button dismisses
+1. Pick a Source folder (drive or root path containing game folders).
+2. Click SCAN. Valid entries appear with thumbnails.
+3. Select the items to process.
+4. Pick a Destination, then choose Action and Layout.
+5. Click GO. Review the confirmation window and start the transfer.
+6. Follow progress in the modal. Results list shows moved/copied/errors per item.
 
 ---
 
-## Layout directory structures
+## UI at a glance
 
-- Game / PPSA
-  - Destination/GameName/PPSAXXXXX
-  - Creates both a human-friendly GameName folder and the corresponding PPSA folder inside it.
-
-- Game only
-  - Destination/GameName
-
-- PPSA only
-  - Destination/PPSAXXXXX
-
-- etaHEN default
-  - Destination/etaHEN/games/GameName
-
-- itemZFlow default
-  - Destination/games/GameName
-
-The app tries to derive safe GameName and PPSA names automatically (sanitizes illegal characters).
+- Top bar: Help, Select All, Unselect All, Clear, Discord
+- Left controls: Source + Browse, SCAN, “Scanning…” label and scan progress bar
+- Right controls: GO, Destination + Browse, Action + Layout (right‑aligned)
+- Results table: checkbox, cover, game title/ID, folder path (trailing `sce_sys` hidden for clarity)
+- Modals: Confirmation (pre‑transfer), Conflict (if needed), Operation Results
 
 ---
 
-## How to use
+## Actions and layouts
 
-1. Click "Browse" next to Source and choose the folder or drive that contains your game directories.
-2. Click "SCAN" — the app will locate validated game folders and list them with thumbnails.
-3. Select the entries you want to process using the checkboxes (use Select All / Unselect All).
-4. Pick a Destination using the Destination Browse button.
-5. Under Destination, choose Action (Create folder / Copy / Move) and Layout.
-6. Click "GO". A confirmation dialog will show exact From → To mappings — review and confirm.
-7. While the operation runs the UI will lock and a single total progress bar with ETA will appear under the Source field. Wait until it finishes.
-8. View results in the Operation Results modal (per-item moved/copy/error indicators).
+Actions
+- Create folder: only creates destination folders
+- Copy (verified): copies with checksum verification
+- Move: fast same‑disk rename or safe copy+remove across disks
 
----
+Layouts
+- Game / PPSA → Destination/GameName/PPSAXXXXX
+- Game only → Destination/GameName
+- PPSA only → Destination/PPSAXXXXX
+- etaHEN default → Destination/etaHEN/games/GameName
+- itemZFlow default → Destination/games/GameName
 
-## Integration / Preload API (hooks)
-
-PS5 Vault expects a platform/preload integration that exposes a `ppsaApi` object to the renderer with these functions/callback hooks (these names are used by the renderer):
-
-- pickDirectory() : Promise<string|null>
-  - Opens a folder picker and returns the selected path.
-
-- scanSourceForPpsa(sourcePath) : Promise<Array|{items:Array}>
-  - Scans the provided source path and returns an array of validated entries.
-  - Each entry object may contain:
-    - displayTitle, dbTitle, folderName
-    - ppsaFolderPath, folderPath, contentFolderPath
-    - contentId, skuFromParam
-    - iconPath (file path to thumbnail)
-
-- ensureAndPopulate({ items, dest, action, layout, overwriteMode }) : Promise<{ results: Array, error?: string }>
-  - Performs the actual create/copy/move operations.
-  - Returns results for each item with fields like `item`, `from`/`source`, `target`, `moved`/`copied`, `error`.
-
-- checkPathsExist(paths: string[]) : Promise<Array<{path:string, exists:boolean}>>
-  - Optional: verifies whether target paths already exist (used to show conflict modal).
-
-- onScanProgress(callback)
-  - Optional: register a callback for scan progress updates (used to update small scan label).
-
-- onOperationComplete(callback)
-  - Optional: register for notifications when operations complete.
-
-Note: If the renderer cannot find these APIs it will show helpful error modals/toasts.
+Names are sanitized automatically. PPSA and GameName are derived from metadata or folder names.
 
 ---
 
-## Accessibility & keyboard
+## How transfers work
 
-- Escape key closes Help / Confirm / Conflict / Result modals when they are open.
-- Buttons and inputs have accessible labels and roles where applicable.
-- Thumbnails include alt text where available.
+- Confirmation: shows each item’s From → To with the selected Action and Layout.
+- Conflicts: if a target exists, choose Overwrite / Skip / Rename. Overwrite avoids “(1)” suffixes.
+- Overlap safety: moving into the same target (etaHEN/itemZFlow) safely no‑ops and only removes empty PPSA subfolders.
 
 ---
 
 ## Troubleshooting
 
-- "Picker not available" — the platform integration did not expose `pickDirectory`.
-- "Backend missing" — ensure your preload/main process exposes the expected `ppsaApi` functions.
-- If operations fail unexpectedly, the results modal will include per-item errors; use the "Operation exception" error dialogs for stack/details when available.
+- Nothing happens after GO: ensure Destination is set and items are selected.
+- “Picker not available”: preload didn’t expose the folder picker.
+- “Backend missing”: preload/main must expose the required `ppsaApi` functions.
+- Errors per item: check the Operation Results modal for the exact cause.
 
 ---
 
-## Developer notes
+## Shortcuts & accessibility
 
-- UI stores last used Source and Destination in localStorage keys:
-  - `ps5vault.lastSource`
-  - `ps5vault.lastDest`
-- Small-path normalization removes trailing `sce_sys` for display.
-- Thumbnails are displayed using file:// URLs when local icon paths are provided.
+- ESC closes Help / Confirmation / Conflict / Results
+- Thumbnails include alt text; interactive elements have labels
+- Hover preview opens after ~1s and follows the cursor
 
 ---
 
-## Contributing
+## Integration (preload API)
 
-- Fork the repo, make changes, open a PR with clear description.
-- Keep UI/UX accessible and avoid breaking existing preload contract.
+The renderer expects a `ppsaApi` with:
+
+- `pickDirectory(): Promise<{canceled:boolean, path?:string}>`
+- `scanSourceForPpsa(source: string): Promise<Array|{items:Array}>`
+- `ensureAndPopulate({ items, dest, action, layout, overwriteMode }): Promise<{results:Array, error?:string}>`
+- `checkConflicts(items, dest, layout): Promise<Array<{item:string, target:string}>>`
+- `onScanProgress(handler: (payload) => void): () => void`
+- `cancelOperation(): Promise<{ok:boolean}>`
+- `openExternal(url: string): Promise<{ok:boolean}>`
+- `copyToClipboard(text: string): Promise<{ok:boolean}>`
+
+If these are missing, the UI will show a toast and disable the affected action.
+
+---
+
+## Notes
+
+- Last Source/Destination are remembered locally
+- Paths are normalized for display (hides trailing `sce_sys`)
+- The Discord button copies `nookie_65120` and attempts to open the Discord app or falls back to the browser
 
 ---
