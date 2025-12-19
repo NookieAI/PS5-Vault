@@ -1,7 +1,7 @@
 # PS5 Vault
 
-[https://github.com/user-attachments/assets/6f510e79-e5f1-4250-afe1-95d240e75050
-](https://github-production-user-asset-6210df.s3.amazonaws.com/188130079/526289581-6f510e79-e5f1-4250-afe1-95d240e75050.png)
+https://github-production-user-asset-6210df.s3.amazonaws.com/188130079/526289581-6f510e79-e5f1-4250-afe1-95d240e75050.png
+
 PS5 Vault is an Electron app for discovering and organizing PlayStation 5 PPSA folders. It scans a source directory, validates game metadata, and creates clean target layouts compatible with tools like etaHEN and itemZFlow. Transfers are safety‑first with hash verification, overlap protection, and clear confirmations.
 
 ---
