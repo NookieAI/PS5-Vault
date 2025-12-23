@@ -1,0 +1,56 @@
+{
+  "name": "ps5vault",
+  "version": "1.0.4",
+  "description": "PS5 Vault: organize PPSA folders safely with verified copy/move, original Electron transfer windows, clear progress/ETA, and conflict resolution.",
+  "author": "Nookie",
+  "private": true,
+  "main": "main.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron .",
+    "dist": "electron-builder -w portable --publish never",
+    "dist:x64": "electron-builder -w portable --x64 --publish never"
+  },
+  "devDependencies": {
+    "electron": "22.3.27",
+    "electron-builder": "^24.13.3"
+  },
+  "build": {
+    "appId": "com.nookie.ps5vault",
+    "productName": "PS5 Vault",
+    "directories": {
+      "output": "dist",
+      "buildResources": "assets"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "renderer.js",
+      "utils.js",
+      "index.html",
+      "ui-overrides.css",
+      "assets/**/*",
+      "!assets/screenshots/**",
+      "!**/*.map",
+      "package.json"
+    ],
+    "asar": true,
+    "compression": "maximum",
+    "extraMetadata": {
+      "version": "1.0.4"
+    },
+    "win": {
+      "target": [
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "assets/icon.ico",
+      "artifactName": "PS5Vault-${version}-portable-${arch}.exe"
+    }
+  }
+}

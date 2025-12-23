@@ -1,0 +1,17 @@
+.controls-right { align-items: flex-end; }
+.action-layout-row {
+  align-self: flex-end;
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 10px;
+  align-items: flex-end;
+  justify-content: flex-end;
+}
+@media (max-width: 980px) {
+  .controls-right { align-items: stretch; }
+  .action-layout-row {
+    align-self: stretch;
+    justify-content: flex-start;
+    flex-wrap: wrap;
+  }
+}
