@@ -1,0 +1,864 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>PS5 Vault</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' file: data:;">
+  <style>
+    :root {
+      --bg: #061226;
+      --muted: #9aa6c0;
+      --accent: #60baff;
+      --accent-2: #3ac0ff;
+      --card-border: rgba(255,255,255,0.04);
+      --title: #eaf3ff;
+      --accent-scan: #ff8a00;
+      --select-bg: #0b1b2b;
+      --modal-bg: #0b2436;
+      --thumb-size: 80px;
+      --cover-col-width: 160px;
+      --thumb-radius: 14px;
+      --thumb-gap: 10px;
+      --modal-max-width: 760px;
+      --preview-max-w: 560px;
+      --preview-max-h: 560px;
+      --preview-border: rgba(255,255,255,0.06);
+      --discord-color: #7289da;
+      --top-padding: 10px;
+      --control-gap: 8px;
+      --progress-slot-h: 44px;
+      --select-width: 160px;
+      --row-font-size: 13px;
+      --scan-display-margin: 6px;
+      --wiggle-bar-height: 6px;
+      --current-scan-font-size: 11px;
+    }
+
+    [data-theme="light"] {
+      --bg: #f5f5f5;
+      --muted: #666;
+      --accent: #007bff;
+      --title: #333;
+      --select-bg: #e9ecef;
+      --modal-bg: #fff;
+      --card-border: rgba(0,0,0,0.1);
+    }
+
+    html, body {
+      height: 100%;
+      margin: 0;
+      background: var(--bg);
+      color: var(--title);
+      overflow: hidden;
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, Arial;
+      transition: background 0.3s, color 0.3s;
+    }
+
+    *, *:before, *:after {
+      box-sizing: border-box;
+    }
+
+    .container {
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      padding: var(--top-padding);
+      max-width: 1400px;
+      margin: 0 auto;
+    }
+
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+
+    .brand {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+    }
+
+    .logo-wrap {
+      height: 48px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+      border-radius: 8px;
+      background: transparent;
+      flex: 0 0 auto;
+      margin-right: 6px;
+    }
+
+    .brand img.brand-logo {
+      height: 48px;
+      width: auto;
+      object-fit: cover;
+      border-radius: 8px;
+      border: 1px solid rgba(255,255,255,0.04);
+      box-shadow: 0 6px 18px rgba(0,0,0,0.45);
+      background: #071826;
+    }
+
+    .brand svg.brand-fallback {
+      height: 48px;
+      width: auto;
+      display: none;
+      border-radius: 8px;
+      background: transparent;
+    }
+
+    .brand .meta .app-title {
+      font-weight: 800;
+      font-size: 15px;
+      color: var(--title);
+      line-height: 1;
+    }
+
+    .brand .meta .app-sub {
+      font-size: 11px;
+      color: var(--muted);
+      margin-top: 2px;
+    }
+
+    .topbar-right {
+      display: flex;
+      gap: 6px;
+      align-items: center;
+    }
+
+    .made-by {
+      font-size: 11px;
+      color: var(--muted);
+      opacity: 0.95;
+      padding: 5px 8px;
+      border-radius: 6px;
+      background: transparent;
+      user-select: none;
+      cursor: pointer;
+    }
+
+    .made-by:hover {
+      color: var(--accent);
+    }
+
+    .discord-link {
+      font-size: 12px;
+      color: var(--discord-color);
+      padding: 6px 8px;
+      border-radius: 8px;
+      border: 1px solid rgba(114,137,218,0.08);
+      background: transparent;
+      cursor: pointer;
+      font-weight: 700;
+      display: inline-flex;
+      gap: 6px;
+      align-items: center;
+      text-decoration: none;
+    }
+
+    .discord-link:hover {
+      background: rgba(114,137,218,0.06);
+    }
+
+    .controls-row {
+      display: flex;
+      gap: var(--control-gap);
+      align-items: flex-start;
+      justify-content: space-between;
+    }
+
+    .controls-left {
+      display: flex;
+      gap: 8px;
+      min-width: 420px;
+      max-width: 65%;
+      flex-direction: column;
+      align-items: flex-start;
+      flex-shrink: 0;
+    }
+
+    .controls-left .primary {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      width: 100%;
+      flex-wrap: wrap;
+    }
+
+    .controls-right {
+      display: flex;
+      gap: 8px;
+      align-items: flex-start;
+      justify-content: flex-end;
+      flex-direction: column;
+      min-width: 380px;
+      flex-shrink: 0;
+    }
+
+    .scan-display {
+      width: 100%;
+      margin-top: var(--scan-display-margin);
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .current-scan {
+      font-size: var(--current-scan-font-size);
+      color: var(--muted);
+      line-height: 1.2;
+      font-weight: 600;
+    }
+
+    .wiggle-bar {
+      height: var(--wiggle-bar-height);
+      background: rgba(255,255,255,0.04);
+      border-radius: 3px;
+      overflow: hidden;
+      width: 100%;
+      position: relative;
+      box-shadow: inset 0 1px 2px rgba(0,0,0,0.2);
+    }
+
+    .wiggle-bar .bar-fill {
+      height: 100%;
+      width: 50%;
+      background: linear-gradient(90deg, transparent, var(--accent), transparent);
+      animation: indeterminate 4s infinite;
+      will-change: transform;
+    }
+
+    @keyframes indeterminate {
+      0% { transform: translateX(-100%); }
+      50% { transform: translateX(0%); }
+      100% { transform: translateX(100%); }
+    }
+
+    @keyframes cool-wobble {
+      0%, 100% { transform: scaleY(1); }
+      50% { transform: scaleY(1.5); }
+    }
+
+    .progress-slot {
+      height: var(--progress-slot-h);
+      min-height: var(--progress-slot-h);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      width: 100%;
+      flex-shrink: 0;
+    }
+
+    .scan-progress {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      align-items: flex-start;
+      margin-top: 0;
+      width: 100%;
+      box-sizing: border-box;
+    }
+
+    .scan-progress .bar {
+      height: 8px;
+      width: 100%;
+      max-width: 640px;
+      background: rgba(255,255,255,0.04);
+      border-radius: 6px;
+      overflow: hidden;
+    }
+
+    .scan-progress .bar .bar-fill {
+      height: 100%;
+      width: 50%;
+      background: linear-gradient(90deg, transparent, var(--accent), transparent);
+      animation: indeterminate 4s infinite;
+      will-change: transform;
+    }
+
+    .current-scan {
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .bar {
+      height: 8px;
+      width: 100%;
+      background: rgba(255,255,255,0.08);
+      border-radius: 6px;
+      overflow: hidden;
+    }
+
+    .bar .bar-fill {
+      height: 100%;
+      width: 50%;
+      background: linear-gradient(90deg, transparent, var(--accent), transparent);
+      animation: indeterminate 4s infinite;
+      will-change: transform;
+    }
+
+    input[type="text"], select {
+      padding: 6px 8px;
+      border-radius: 8px;
+      border: 1px solid var(--card-border);
+      background: var(--select-bg);
+      color: var(--title);
+      font-size: 13px;
+    }
+
+    select {
+      height: 34px;
+      min-width: var(--select-width);
+    }
+
+    .btn {
+      padding: 6px 10px;
+      border-radius: 8px;
+      border: 1px solid var(--card-border);
+      background: transparent;
+      color: var(--muted);
+      cursor: pointer;
+      font-weight: 700;
+    }
+
+    .btn-scan {
+      padding: 7px 10px;
+      border-radius: 8px;
+      border: 0;
+      cursor: pointer;
+      background: linear-gradient(90deg, var(--accent-scan), #ff5f00);
+      color: #04130A;
+      font-weight: 900;
+    }
+
+    .btn-cancel {
+      padding: 4px 8px;
+      border-radius: 6px;
+      border: 1px solid var(--muted);
+      cursor: pointer;
+      background: transparent;
+      color: var(--muted);
+      font-weight: 500;
+      font-size: 12px;
+      display: none;
+    }
+
+    .btn-cancel:hover {
+      background: rgba(255,255,255,0.05);
+    }
+
+    .btn-go {
+      padding: 7px 12px;
+      border-radius: 8px;
+      border: 0;
+      cursor: pointer;
+      background: linear-gradient(90deg, #22C55E, #16A34A);
+      color: #032204;
+      font-weight: 800;
+    }
+
+    .btn-danger {
+      padding: 7px 12px;
+      border-radius: 8px;
+      border: 0;
+      cursor: pointer;
+      background: linear-gradient(90deg, #ef4444, #dc2626);
+      color: #fff;
+      font-weight: 800;
+    }
+
+    .content {
+      flex: 1;
+      display: flex;
+      gap: 8px;
+      min-height: 0;
+      align-items: stretch;
+    }
+
+    .results {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      background: linear-gradient(180deg, rgba(255,255,255,0.01), rgba(255,255,255,0.006));
+      border-radius: 8px;
+      padding: 8px;
+      border: 1px solid var(--card-border);
+      min-height: 0;
+    }
+
+    .table-wrap {
+      overflow: auto;
+      border-radius: 6px;
+      background: transparent;
+      flex: 1 1 auto;
+      min-height: 0;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: separate;
+      border-spacing: 0 8px;
+      color: var(--title);
+      table-layout: fixed;
+      font-size: var(--row-font-size);
+    }
+
+    thead th {
+      padding: 4px 8px;
+      color: var(--muted);
+      font-size: 11px;
+      text-transform: uppercase;
+      text-align: left;
+    }
+
+    tbody td {
+      padding: 6px 8px;
+      vertical-align: top;
+      word-break: break-word;
+      white-space: normal;
+      overflow: visible;
+      font-size: var(--row-font-size);
+      line-height: 1.3;
+    }
+
+    thead th.check {
+      width: 36px;
+      text-align: center;
+    }
+
+    th.cover, td.cover {
+      width: var(--cover-col-width);
+      text-align: center;
+    }
+
+    th.size, td.size {
+      width: 80px;
+      text-align: right;
+    }
+
+    td.cover {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: var(--thumb-gap);
+      padding-top: 8px;
+      padding-bottom: 8px;
+    }
+
+    .thumb {
+      width: var(--thumb-size);
+      height: var(--thumb-size);
+      object-fit: cover;
+      border-radius: var(--thumb-radius);
+      border: 1px solid rgba(255,255,255,0.04);
+      display: block;
+      box-shadow: 0 6px 20px rgba(0,0,0,0.45);
+      transition: transform .12s ease, box-shadow .12s ease;
+    }
+
+    .thumb:hover {
+      transform: translateY(-4px) scale(1.03);
+      box-shadow: 0 14px 32px rgba(0,0,0,0.55);
+      cursor: zoom-in;
+    }
+
+    .title-main {
+      font-weight: 700;
+      font-size: calc(var(--row-font-size) + 1px);
+    }
+
+    .title-sub {
+      font-size: var(--row-font-size);
+      color: var(--muted);
+      margin-top: 2px;
+    }
+
+    .img-preview {
+      position: fixed;
+      display: none;
+      pointer-events: none;
+      z-index: 12000;
+      max-width: var(--preview-max-w);
+      max-height: var(--preview-max-h);
+      border-radius: 10px;
+      border: 1px solid var(--preview-border);
+      background: linear-gradient(180deg, rgba(10,12,16,0.95), rgba(6,8,12,0.98));
+      padding: 6px;
+      box-shadow: 0 18px 50px rgba(0,0,0,0.75);
+    }
+
+    .img-preview img {
+      display: block;
+      max-width: 100%;
+      max-height: 100%;
+      border-radius: 8px;
+    }
+
+    .result-modal-wide.busy .close-btn {
+      display: none !important;
+    }
+
+    .modal-backdrop {
+      position: fixed;
+      inset: 0;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      background: rgba(0,0,0,0.6);
+      z-index: 10000;
+      padding: 20px;
+    }
+
+    .modal {
+      width: var(--modal-max-width);
+      max-width: 95vw;
+      max-height: 90vh;
+      background: var(--modal-bg);
+      color: var(--title);
+      border-radius: 10px;
+      padding: 12px;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.6);
+      border: 1px solid var(--card-border);
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .modal-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      position: relative;
+      gap: 12px;
+    }
+
+    .modal-header h4 {
+      margin: 0;
+      font-size: 18px;
+      font-weight: 800;
+      color: var(--title);
+      letter-spacing: 0.2px;
+    }
+
+    .result-eta {
+      font-size: 18px;
+      font-weight: 800;
+      color: var(--accent);
+      letter-spacing: 0.5px;
+    }
+
+    .modal-body {
+      max-height: 480px;
+      overflow-y: auto;
+      padding-top: 6px;
+      flex: 1;
+    }
+
+    .modal-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+      margin-top: 8px;
+    }
+
+    .close-btn {
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      background: none;
+      border: none;
+      font-size: 20px;
+      color: var(--muted);
+      cursor: pointer;
+      width: 30px;
+      height: 30px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .close-btn:hover {
+      color: var(--title);
+    }
+
+    .path-box {
+      background: rgba(255,255,255,0.02);
+      border: 1px solid rgba(255,255,255,0.02);
+      padding: 8px 10px;
+      border-radius: 8px;
+      font-family: ui-monospace, Menlo, Monaco, "Roboto Mono", monospace;
+      font-size: 14px;
+      color: #dbeeff;
+      margin-bottom: 6px;
+      overflow-wrap: anywhere;
+      font-weight: 700;
+    }
+
+    .label-bold {
+      color: var(--muted);
+      font-weight: 800;
+      margin-right: 8px;
+      font-size: 12px;
+    }
+
+    .toast {
+      position: fixed;
+      left: 50%;
+      transform: translateX(-50%);
+      bottom: 20px;
+      background: rgba(2,6,12,0.9);
+      color: var(--muted);
+      padding: 6px 10px;
+      border-radius: 8px;
+      border: 1px solid rgba(255,255,255,0.04);
+      font-size: 13px;
+      display: none;
+      z-index: 2000;
+    }
+
+    .completed-file {
+      padding: 4px 0;
+      border-bottom: 1px solid rgba(255,255,255,0.04);
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    @media (max-width: 980px) {
+      .controls-row {
+        flex-direction: column;
+        align-items: stretch;
+      }
+
+      .cover, .thumb {
+        display: none;
+      }
+
+      .modal {
+        width: calc(100% - 40px);
+      }
+
+      .select {
+        min-width: 120px;
+      }
+    }
+  </style>
+
+  <link rel="stylesheet" href="./ui-overrides.css">
+</head>
+<body>
+  <div class="container">
+    <div class="topbar">
+      <div class="brand">
+        <div class="logo-wrap" aria-hidden="false" role="img" aria-label="PS5 Vault logo">
+          <img id="brandLogo" class="brand-logo" src="./assets/logo.png" alt="PS5 Logo" />
+          <svg id="brand-fallback" class="brand-fallback" viewBox="0 0 100 100" role="img" aria-label="PS5 Vault logo" xmlns="http://www.w3.org/2000/svg" style="display:none" preserveAspectRatio="xMidYMid meet">
+            <rect x="0" y="0" width="100" rx="10" fill="#0b2740"/>
+            <text x="50" y="58" text-anchor="middle" font-size="28" font-family="Segoe UI, Roboto, Arial" fill="#eaf3ff" font-weight="700">PS5</text>
+          </svg>
+        </div>
+        <div class="meta">
+          <div class="app-title">PS5 Vault</div>
+          <div class="app-sub">Organize PPSA folders</div>
+        </div>
+      </div>
+
+      <div class="topbar-right">
+        <div id="madeBy" class="made-by" title="Click to toggle theme">Made by Nookie</div>
+        <div style="display:flex;gap:6px;align-items:center;">
+          <button id="btnHelp" class="btn">Help</button>
+          <button id="btnSelectAll" class="btn">Select All</button>
+          <button id="btnUnselectAll" class="btn">Unselect All</button>
+          <button id="btnClear" class="btn">Clear</button>
+          <button id="btnExport" class="btn" style="display:none;">Export</button>
+          <button id="btnImport" class="btn" style="display:none;">Import</button>
+          <a id="discordLink" class="discord-link" href="#" title="Click to copy 'nookie_65120' and open Discord">💬 Discord</a>
+        </div>
+      </div>
+    </div>
+
+    <div class="controls-row" aria-label="Controls">
+      <div class="controls-left">
+        <div class="primary">
+          <label style="color:var(--muted);margin-right:6px">Source</label>
+          <input id="sourcePath" type="text" readonly placeholder="Choose root folder" style="min-width:260px" aria-label="Source path" />
+          <button id="btnPickSource" class="btn" aria-label="Browse source">Browse</button>
+          <button id="btnScan" class="btn-scan" aria-label="Start scan">SCAN</button>
+          <button id="btnCancelScan" class="btn-cancel" aria-label="Cancel scan">Cancel</button>
+        </div>
+        <div class="scan-display" id="scanDisplay" style="display:none;">
+          <div id="currentScanLabel" class="current-scan"></div>
+          <div class="wiggle-bar">
+            <div id="actionTotalProgressBar" class="bar-fill"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="controls-right">
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+          <button id="btnGoBig" class="btn-go" aria-label="Start transfer">GO</button>
+          <label style="color:var(--muted);margin-left:6px">Destination</label>
+          <input id="destPath" type="text" readonly placeholder="Destination" style="min-width:260px" aria-label="Destination path" />
+          <button id="btnPickDest" class="btn" aria-label="Browse destination">Browse</button>
+        </div>
+
+        <div class="action-layout-row" aria-hidden="false">
+          <div class="action-block">
+            <label style="color:var(--muted);font-size:12px;display:block;margin-bottom:4px">Action</label>
+            <select id="action" aria-label="Transfer action">
+              <option value="folder-only">Create folder</option>
+              <option value="copy">Copy (verified)</option>
+              <option value="move" selected>Move</option>
+            </select>
+          </div>
+          <div class="layout-block">
+            <label style="color:var(--muted);font-size:12px;display:block;margin-bottom:4px">Layout</label>
+            <select id="layout" aria-label="Folder layout">
+              <option value="game-ppsa">Game / PPSA</option>
+              <option value="game-only">Game only</option>
+              <option value="ppsa-only">PPSA only</option>
+              <option value="etahen" selected>etaHEN default</option>
+              <option value="itemzflow">itemZFlow default</option>
+            </select>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="content">
+      <div class="results" role="main">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+          <div style="font-weight:800;font-size:14px">Scan Results <span id="scanCount" style="font-size:12px;color:var(--muted);margin-left:8px"></span></div>
+          <div class="batch-actions" style="display:flex;gap:8px;">
+            <button id="btnDeleteSelected" class="btn" style="opacity:0.6;">Delete Selected</button>
+          </div>
+        </div>
+
+        <div class="table-wrap" role="region" aria-label="Scan results table">
+          <table>
+            <thead>
+              <tr>
+                <th class="check"><input id="chkHeader" type="checkbox" title="Select visible" aria-label="Select all" /></th>
+                <th class="cover">COVER</th>
+                <th class="game">GAME</th>
+                <th class="size">SIZE</th>
+                <th class="folder">FOLDER</th>
+              </tr>
+            </thead>
+            <tbody id="resultsBody">
+              <tr><td colspan="5" style="color:var(--muted);padding:12px">No scan performed yet.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Results modal -->
+  <div id="resultModalBackdrop" class="modal-backdrop" aria-hidden="true">
+    <div class="modal result-modal-wide" role="dialog" aria-modal="true" aria-labelledby="resultTitle">
+      <div class="modal-header">
+        <div style="display:flex;flex-direction:column;gap:4px">
+          <div class="result-count" id="resultCount">0</div>
+          <div class="result-eta" id="resultEta">--:--</div>
+        </div>
+        <div style="flex:1;text-align:center">
+          <div class="result-summary-title" id="resultTitleText">Operation results</div>
+          <div class="result-summary-sub" id="resultSubText">Summary</div>
+        </div>
+        <button id="resultClose" class="close-btn" title="Close" aria-label="Close modal">✕</button>
+      </div>
+      <div id="resultProgress" style="display:none; margin-bottom:8px;">
+        <div class="bar"><div id="resultProgressBar" class="bar-fill"></div></div>
+      </div>
+      <div id="currentFileInfo" style="margin-bottom:8px; font-size:14px; color:var(--muted)">Preparing...</div>
+      <div id="completedFiles" style="margin-bottom:8px; max-height:150px; overflow-y:auto;" role="list" aria-label="Completed files"></div>
+      <div class="result-actions-row" style="display:none;" id="resultActionsRow" aria-hidden="true"></div>
+      <div class="modal-body"><div id="resultList"></div></div>
+    </div>
+  </div>
+
+  <!-- NEW: Confirmation modal (before transfer) -->
+  <div id="confirmModalBackdrop" class="modal-backdrop" aria-hidden="true">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="confirmTitle">
+      <div class="modal-header"><h4 id="confirmTitle">Confirm operation</h4></div>
+      <div class="modal-body">
+        <div id="confirmSummary" style="color:var(--muted);margin-bottom:8px"></div>
+        <div id="confirmList"></div>
+      </div>
+      <div class="modal-actions">
+        <button id="confirmCancel" class="btn" aria-label="Cancel">Cancel</button>
+        <button id="confirmProceed" class="btn-go" aria-label="Start transfer">Start</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Conflict modal -->
+  <div id="conflictModalBackdrop" class="modal-backdrop" aria-hidden="true">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="conflictTitle">
+      <div class="modal-header"><h4 id="conflictTitle">Conflicting targets detected</h4></div>
+      <div class="modal-body" id="conflictBody" style="color:var(--muted);">
+        <div id="conflictList" style="margin-bottom:12px"></div>
+        <div style="margin-top:6px">Choose how to handle existing targets (applies to all conflicts):</div>
+        <div style="margin-top:8px;display:flex;gap:8px;flex-direction:column">
+          <label><input type="radio" name="conflictAction" value="skip" aria-label="Skip conflicting items"> Skip items with existing targets</label>
+          <label><input type="radio" name="conflictAction" value="rename" checked aria-label="Rename conflicting targets"> Rename conflicting targets (keep originals)</label>
+        </div>
+      </div>
+      <div class="modal-actions">
+        <button id="conflictCancel" class="btn" aria-label="Cancel">Cancel</button>
+        <button id="conflictProceed" class="btn-go" aria-label="Proceed">Proceed</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Help modal -->
+  <div id="helpModalBackdrop" class="modal-backdrop" aria-hidden="true">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="helpTitle">
+      <div class="modal-header"><h4 id="helpTitle">How to use PS5 Vault</h4></div>
+      <div class="modal-body">
+        <div style="color:var(--muted);line-height:1.4">
+          <h4 style="margin-top:0">Quick start</h4>
+          <ol style="margin-left:14px">
+            <li>Click "Browse" next to Source and choose the folder or drive that contains your game folders.</li>
+            <li>Click SCAN. The app will locate validated game folders and list them with thumbnails.</li>
+            <li>Select the entries you want to process using the checkboxes (use Select All / Unselect All to help).</li>
+            <li>Pick a Destination where the organized folders should be created or moved to.</li>
+            <li>Choose Action and Layout (these controls are under Destination). Action controls whether to create folders, copy, or move. Layout selects the destination folder structure.</li>
+            <li>Click GO. A confirmation dialog (From → To) appears. Confirm to start.</li>
+            <li>During transfers, only the Cancel button is shown. Wait for completion.</li>
+          </ol>
+
+          <h4 style="margin-top:8px">Layout directory structures</h4>
+          <ul style="margin-left:14px">
+            <li><strong>Game / PPSA</strong> — Destination/GameName/PPSAName</li>
+            <li><strong>Game only</strong> — Destination/GameName</li>
+            <li><strong>PPSA only</strong> — Destination/PPSAName</li>
+            <li><strong>etaHEN default</strong> — Destination/etaHEN/games/GameName</li>
+            <li><strong>itemZFlow default</strong> — Destination/games/GameName</li>
+          </ul>
+
+          <h4 style="margin-top:8px">Notes</h4>
+          <ul style="margin-left:14px">
+            <li>If a target already exists you will be prompted (or default) to handle conflicts via skip or rename.</li>
+            <li>For fastest moves, place Destination on the same drive as Source and use Move. If drives differ, Copy+verify is used for safety.</li>
+            <li>The PPSA folder is removed, but internal game folder structure (e.g., sce_sys) is preserved.</li>
+          </ul>
+        </div>
+      </div>
+      <div class="modal-actions"><button id="helpClose" class="btn" aria-label="Close">Close</button></div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <div id="imgPreview" class="img-preview" aria-hidden="true"><img id="imgPreviewImg" src="" alt="preview"></div>
+
+  <script src="utils.js"></script>
+  <script src="renderer.js"></script>
+</body>
+</html>
