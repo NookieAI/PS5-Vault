@@ -43,7 +43,7 @@ PS5 Vault is an Electron app for discovering and organizing PlayStation 5 PPSA f
 
 ### Layouts
 
-- **Game / PPSA** → Destination/GameName (PPSA wrapper removed, contents flattened into GameName)
+- **Game / PPSA** → Destination/GameName/PPSAXXXXX
 - **Game only** → Destination/GameName
 - **PPSA only** → Destination/PPSAXXXXX
 - **etaHEN default** → Destination/etaHEN/games/GameName
