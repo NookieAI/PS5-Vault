@@ -15,6 +15,10 @@
   let transferState = JSON.parse(localStorage.getItem(TRANSFER_STATE_KEY) || '{}');
   let settings = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}');
 
+  /**
+   * Sets the result modal to busy state.
+   * @param {boolean} busy - Whether the modal is busy.
+   */
   function setResultModalBusy(busy) {
     const modal = document.querySelector('.result-modal-wide');
     const closeBtn = $('resultClose');
@@ -28,6 +32,10 @@
     }
   }
 
+  /**
+   * Shows or hides the scan UI.
+   * @param {boolean} show - Whether to show the UI.
+   */
   function showScanUI(show) {
     const sd = $('scanDisplay');
     const label = $('currentScanLabel');
@@ -36,13 +44,21 @@
     if (!show && label) label.textContent = '';
     if (cancelBtn) cancelBtn.style.display = show ? 'inline-block' : 'none';
     if (show) {
-      // Bar is always animated when shown
+      // Animation is always active when shown
     }
   }
 
   const TransferStats = {
-    startTime: 0, lastTime: 0, lastBytes: 0, emaSpeed: 0,
-    reset() { this.startTime = Date.now(); this.lastTime = this.startTime; this.lastBytes = 0; this.emaSpeed = 0; },
+    startTime: 0,
+    lastTime: 0,
+    lastBytes: 0,
+    emaSpeed: 0,
+    reset() {
+      this.startTime = Date.now();
+      this.lastTime = this.startTime;
+      this.lastBytes = 0;
+      this.emaSpeed = 0;
+    },
     update(totalBytesCopied, totalBytes) {
       const now = Date.now();
       const dt = Math.max(1, (now - this.lastTime) / 1000);
@@ -50,30 +66,54 @@
       const instSpeed = delta / dt;
       const alpha = 0.25;
       this.emaSpeed = this.emaSpeed ? (alpha * instSpeed + (1 - alpha) * this.emaSpeed) : instSpeed;
-      this.lastTime = now; this.lastBytes = totalBytesCopied;
+      this.lastTime = now;
+      this.lastBytes = totalBytesCopied;
       const remaining = Math.max(0, totalBytes - totalBytesCopied);
       const etaSec = this.emaSpeed > 0 ? (remaining / this.emaSpeed) : 0;
-      return { speedBps: Number.isFinite(this.emaSpeed) ? this.emaSpeed : 0, etaSec: Number.isFinite(etaSec) ? etaSec : 0 };
+      return {
+        speedBps: Number.isFinite(this.emaSpeed) ? this.emaSpeed : 0,
+        etaSec: Number.isFinite(etaSec) ? etaSec : 0
+      };
     }
   };
+
+  /**
+   * Converts bytes to human-readable format.
+   * @param {number} b - Bytes.
+   * @returns {string} Formatted string.
+   */
   function bytesToHuman(b) {
-    const units = ['B','KB','MB','GB','TB'];
-    let i = 0, v = b;
-    while (v >= 1024 && i < units.length - 1) { v /= 1024; i++; }
+    const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+    let i = 0;
+    let v = b;
+    while (v >= 1024 && i < units.length - 1) {
+      v /= 1024;
+      i++;
+    }
     return `${v.toFixed(1)} ${units[i]}`;
   }
+
+  /**
+   * Converts seconds to H:MM:SS format.
+   * @param {number} s - Seconds.
+   * @returns {string} Formatted time.
+   */
   function secToHMS(s) {
     const sec = Math.round(Number.isFinite(s) ? s : 0);
     if (sec < 1) return sec >= 0 ? '0:00' : '--:--';
     const h = Math.floor(sec / 3600);
     const m = Math.floor((sec % 3600) / 60);
     const r = sec % 60;
-    return h > 0 ? `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(r).padStart(2,'0')}` : `${String(m).padStart(2,'0')}:${String(r).padStart(2,'0')}`;
+    return h > 0 ? `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(r).padStart(2, '0')}` : `${String(m).padStart(2, '0')}:${String(r).padStart(2, '0')}`;
   }
 
   let lastFile = '';
   let completedFiles = [];
 
+  /**
+   * Handles progress messages from the main process.
+   * @param {object} d - Progress data.
+   */
   function onProgressMessage(d) {
     if (!d || !d.type) return;
 
@@ -167,15 +207,22 @@
     }
   }
 
+  /**
+   * Formats content version (keeps original, cleans leading zeros).
+   * @param {string} cv - Content version.
+   * @returns {string} Cleaned version.
+   */
   function formatContentVersionShort(cv) {
     if (!cv) return '';
-    const parts = String(cv).match(/\d+/g);
-    if (!parts || parts.length < 2) return '';
-    const major = parseInt(parts[0], 10);
-    const minor = parseInt(parts[1], 10);
-    if (Number.isNaN(major) || Number.isNaN(minor)) return '';
-    return `${major}.${String(minor).padStart(2, '0')}`;
+    // Clean leading zero from first part, keep rest as is
+    return cv.replace(/^0/, '');
   }
+
+  /**
+   * Formats SDK version.
+   * @param {string} hex - SDK version hex.
+   * @returns {string} Formatted SDK.
+   */
   function formatSdkVersionHexToDisplay(hex) {
     if (!hex || typeof hex !== 'string') return '';
     const m = hex.trim().match(/^0x([0-9A-Fa-f]{2})/);
@@ -185,6 +232,12 @@
     if (Number.isNaN(major)) return '';
     return `${major}.xx`;
   }
+
+  /**
+   * Checks if SDK version should add plus.
+   * @param {string|Array} sdkValue - SDK value.
+   * @returns {boolean} Whether to add plus.
+   */
   function shouldAddPlus(sdkValue) {
     if (!sdkValue) return false;
     if (Array.isArray(sdkValue)) {
@@ -194,20 +247,44 @@
     return true;
   }
 
+  /**
+   * Gets identity key for deduplication.
+   * @param {object} item - Item object.
+   * @returns {string} Key.
+   */
   function identityKey(item) {
     const key = item.ppsa || item.contentId || item.displayTitle || item.dbTitle || item.folderName || '';
     return String(key).toLowerCase();
   }
+
+  /**
+   * Gets primary path of item.
+   * @param {object} item - Item object.
+   * @returns {string} Path.
+   */
   function primaryPathOf(item) {
     return item.ppsaFolderPath || item.folderPath || item.contentFolderPath || '';
   }
+
+  /**
+   * Checks if one path is nested in another.
+   * @param {string} child - Child path.
+   * @param {string} parent - Parent path.
+   * @returns {boolean} Is nested.
+   */
   function isNestedPath(child, parent) {
     if (!child || !parent) return false;
-    const c = String(child).replace(/\//g,'\\');
-    const p = String(parent).replace(/\//g,'\\');
+    const c = String(child).replace(/\//g, '\\');
+    const p = String(parent).replace(/\//g, '\\');
     if (c.toLowerCase() === p.toLowerCase()) return true;
     return c.toLowerCase().startsWith(p.toLowerCase() + '\\');
   }
+
+  /**
+   * Deduplicates items list.
+   * @param {Array} list - Items list.
+   * @returns {Array} Deduplicated list.
+   */
   function dedupeItems(list) {
     const groups = new Map();
     for (const r of list) {
@@ -217,7 +294,10 @@
     }
     const out = [];
     for (const [, arr] of groups) {
-      if (arr.length === 1) { out.push(arr[0]); continue; }
+      if (arr.length === 1) {
+        out.push(arr[0]);
+        continue;
+      }
       const keep = [];
       for (let i = 0; i < arr.length; i++) {
         const a = arr[i];
@@ -227,14 +307,20 @@
           if (i === j) continue;
           const b = arr[j];
           const bPath = primaryPathOf(b);
-          if (isNestedPath(aPath, bPath)) { nested = true; break; }
+          if (isNestedPath(aPath, bPath)) {
+            nested = true;
+            break;
+          }
         }
         if (!nested) keep.push(a);
       }
       const seenPaths = new Set();
       for (const k of keep) {
         const p = String(primaryPathOf(k)).toLowerCase();
-        if (!seenPaths.has(p)) { out.push(k); seenPaths.add(p); }
+        if (!seenPaths.has(p)) {
+          out.push(k);
+          seenPaths.add(p);
+        }
       }
     }
     return out;
@@ -242,19 +328,87 @@
 
   // Hover preview (1s delay)
   const Preview = {
-    container: null, img: null, visible: false, timer: null, lastX: 0, lastY: 0, delayMs: 1000,
-    init() { this.container = $('imgPreview'); this.img = $('imgPreviewImg'); if (!this.container || !this.img) return; this.container.style.display='none'; this.container.setAttribute('aria-hidden','true'); },
-    scheduleShow(src) { this.cancel(); this.timer = setTimeout(() => { this.show(src, this.lastX, this.lastY); }, this.delayMs); },
-    show(src, x, y) { if (!this.container || !this.img) return; this.img.src = src || ''; this.container.style.display='block'; this.container.setAttribute('aria-hidden','false'); this.visible=true; this.move(x,y); },
-    move(x,y){ if (!this.container || !this.visible){ this.lastX=x; this.lastY=y; return; } this.lastX=x; this.lastY=y; const cw=this.container.offsetWidth; const ch=this.container.offsetHeight; const vw=window.innerWidth; const vh=window.innerHeight; let left=x+18; let top=y+18; if (left+cw>vw-8) left=Math.max(8,x-cw-18); if (top+ch>vh-8) top=Math.max(8,y-ch-18); this.container.style.left=`${left}px`; this.container.style.top=`${top}px`; },
-    hide(){ if (!this.container) return; this.container.style.display='none'; this.container.setAttribute('aria-hidden','true'); this.visible=false; if (this.img) this.img.src=''; this.cancel(); },
-    cancel(){ if (this.timer){ clearTimeout(this.timer); this.timer=null; } }
+    container: null,
+    img: null,
+    visible: false,
+    timer: null,
+    lastX: 0,
+    lastY: 0,
+    delayMs: 1000,
+    init() {
+      this.container = $('imgPreview');
+      this.img = $('imgPreviewImg');
+      if (!this.container || !this.img) return;
+      this.container.style.display = 'none';
+      this.container.setAttribute('aria-hidden', 'true');
+    },
+    scheduleShow(src) {
+      this.cancel();
+      this.timer = setTimeout(() => {
+        this.show(src, this.lastX, this.lastY);
+      }, this.delayMs);
+    },
+    show(src, x, y) {
+      if (!this.container || !this.img) return;
+      this.img.src = src || '';
+      this.container.style.display = 'block';
+      this.container.setAttribute('aria-hidden', 'false');
+      this.visible = true;
+      this.move(x, y);
+    },
+    move(x, y) {
+      if (!this.container || !this.visible) {
+        this.lastX = x;
+        this.lastY = y;
+        return;
+      }
+      this.lastX = x;
+      this.lastY = y;
+      const cw = this.container.offsetWidth;
+      const ch = this.container.offsetHeight;
+      const vw = window.innerWidth;
+      const vh = window.innerHeight;
+      let left = x + 18;
+      let top = y + 18;
+      if (left + cw > vw - 8) left = Math.max(8, x - cw - 18);
+      if (top + ch > vh - 8) top = Math.max(8, y - ch - 18);
+      this.container.style.left = `${left}px`;
+      this.container.style.top = `${top}px`;
+    },
+    hide() {
+      if (!this.container) return;
+      this.container.style.display = 'none';
+      this.container.setAttribute('aria-hidden', 'true');
+      this.visible = false;
+      if (this.img) this.img.src = '';
+      this.cancel();
+    },
+    cancel() {
+      if (this.timer) {
+        clearTimeout(this.timer);
+        this.timer = null;
+      }
+    }
   };
+
+  /**
+   * Attaches preview handlers to image element.
+   * @param {HTMLElement} imgEl - Image element.
+   * @param {string} srcUrl - Source URL.
+   */
   function attachPreviewHandlers(imgEl, srcUrl) {
     if (!imgEl || !srcUrl) return;
-    const onEnter = (ev) => { Preview.lastX=ev.clientX; Preview.lastY=ev.clientY; Preview.scheduleShow(srcUrl); };
-    const onMove = (ev) => { Preview.move(ev.clientX, ev.clientY); };
-    const onLeave = () => { Preview.hide(); };
+    const onEnter = (ev) => {
+      Preview.lastX = ev.clientX;
+      Preview.lastY = ev.clientY;
+      Preview.scheduleShow(srcUrl);
+    };
+    const onMove = (ev) => {
+      Preview.move(ev.clientX, ev.clientY);
+    };
+    const onLeave = () => {
+      Preview.hide();
+    };
     imgEl.addEventListener('mouseenter', onEnter);
     imgEl.addEventListener('mousemove', onMove);
     imgEl.addEventListener('mouseleave', onLeave);
@@ -273,7 +427,8 @@
     }
     listEl.innerHTML = '';
     const ul = document.createElement('ul');
-    ul.style.margin = '0'; ul.style.paddingLeft = '18px';
+    ul.style.margin = '0';
+    ul.style.paddingLeft = '18px';
     for (const c of conflicts) {
       const li = document.createElement('li');
       li.innerHTML = `<strong>${Utils.escapeHtml(c.item || '')}</strong><br><span style="color:var(--muted)">${Utils.escapeHtml(c.target || '')}</span>`;
@@ -293,8 +448,15 @@
       proceedBtn.removeEventListener('click', onProceed);
       cancelBtn.removeEventListener('click', onCancel);
     };
-    const onProceed = () => { const val = getSelected(); cleanup(); onChoice && onChoice(val); };
-    const onCancel = () => { cleanup(); onChoice && onChoice('skip'); };
+    const onProceed = () => {
+      const val = getSelected();
+      cleanup();
+      onChoice && onChoice(val);
+    };
+    const onCancel = () => {
+      cleanup();
+      onChoice && onChoice('skip');
+    };
 
     proceedBtn.addEventListener('click', onProceed);
     cancelBtn.addEventListener('click', onCancel);
@@ -332,7 +494,7 @@
     for (const p of previewItems) {
       const row = document.createElement('div');
       row.className = 'modal-content-entry';
-      Object.assign(row.style, { display:'flex', flexDirection:'column', gap:'6px', padding:'8px 0', borderBottom:'1px solid rgba(255,255,255,0.04)' });
+      Object.assign(row.style, { display: 'flex', flexDirection: 'column', gap: '6px', padding: '8px 0', borderBottom: '1px solid rgba(255,255,255,0.04)' });
 
       const title = document.createElement('div');
       title.className = 'entry-title';
@@ -347,7 +509,7 @@
       const to = document.createElement('div');
       to.className = 'path-inline';
       to.innerHTML = '<span class="label-bold">To:</span> ' + Utils.escapeHtml(p.target || '');
-      Object.assign(pathRow.style, { display:'flex', flexDirection:'column', gap:'4px' });
+      Object.assign(pathRow.style, { display: 'flex', flexDirection: 'column', gap: '4px' });
       pathRow.appendChild(from);
       pathRow.appendChild(to);
       row.appendChild(pathRow);
@@ -357,18 +519,24 @@
 
     const cleanup = () => {
       backdrop.style.display = 'none';
-      backdrop.setAttribute('aria-hidden','true');
+      backdrop.setAttribute('aria-hidden', 'true');
       btnGo.removeEventListener('click', onGo);
       btnCancel.removeEventListener('click', onCancel);
     };
-    const onGo = () => { cleanup(); onProceedCb && onProceedCb(); };
-    const onCancel = () => { cleanup(); onCancelCb && onCancelCb(); };
+    const onGo = () => {
+      cleanup();
+      onProceedCb && onProceedCb();
+    };
+    const onCancel = () => {
+      cleanup();
+      onCancelCb && onCancelCb();
+    };
 
     btnGo.addEventListener('click', onGo);
     btnCancel.addEventListener('click', onCancel);
 
     backdrop.style.display = 'flex';
-    backdrop.setAttribute('aria-hidden','false');
+    backdrop.setAttribute('aria-hidden', 'false');
   }
 
   // Theme toggle
@@ -435,7 +603,12 @@
 
   // Helpers for mapping
   function computeFinalTargetForItem(it, dest, layout) {
-    const safeGame = Utils.sanitizeName(it.displayTitle || it.dbTitle || it.folderName || it.ppsa || 'Unknown Game');
+    let versionSuffix = '';
+    if (it.contentVersion && it.contentVersion !== '01.000.000') {
+      const cleanedVersion = formatContentVersionShort(it.contentVersion);
+      versionSuffix = ` (${cleanedVersion})`;
+    }
+    const safeGame = Utils.sanitizeName(it.displayTitle || it.dbTitle || it.folderName || it.ppsa || 'Unknown Game') + versionSuffix;
     let finalPpsaName = it.ppsa || (it.contentId && (String(it.contentId).match(/PPSA\d{4,6}/i) || [])[0]?.toUpperCase()) || null;
     if (!finalPpsaName) {
       const src = it.contentFolderPath || it.ppsaFolderPath || it.folderPath || '';
@@ -447,15 +620,17 @@
     if (layout === 'etahen') return pathJoin(dest, 'etaHEN', 'games', safeGame);
     if (layout === 'itemzflow') return pathJoin(dest, 'games', safeGame);
     if (layout === 'game-ppsa') return pathJoin(dest, safeGame, finalPpsaName);
-    return pathJoin(dest, safeGame);  // fallback
+    return pathJoin(dest, safeGame); // fallback
   }
+
   function pathJoin(...parts) {
     const sep = navigator.platform.includes('Win') ? '\\' : '/';
-    return parts.filter(Boolean).map((p,i)=> {
-      if (i===0) return String(p).replace(/[\/\\]+$/,'');
+    return parts.filter(Boolean).map((p, i) => {
+      if (i === 0) return String(p).replace(/[\/\\]+$/,'');
       return String(p).replace(/^[\/\\]+|[\/\\]+$/g,'');
     }).join(sep);
   }
+
   function computeSourceFolder(it) {
     // Mirror main process logic for display
     if (it.ppsaFolderPath) return it.ppsaFolderPath;
@@ -518,21 +693,28 @@
               contentId: orig.contentId || null,
               iconPath: orig.iconPath || null,
               dbTitle: orig.dbTitle || null,
-              skuFromParam: orig.skuFromParam || null
+              skuFromParam: orig.skuFromParam || null,
+              contentVersion: orig.contentVersion || null
             });
           }
         }
       });
-      if (!selected.length) { toast('No items selected'); return; }
+      if (!selected.length) {
+        toast('No items selected');
+        return;
+      }
 
       const dest = $('destPath') && $('destPath').value ? $('destPath').value.trim() : '';
-      if (!dest) { toast('Select destination'); return; }
+      if (!dest) {
+        toast('Select destination');
+        return;
+      }
       const action = $('action') ? $('action').value : 'move';
       const layout = $('layout') ? $('layout').value : 'etahen';
 
       // Build preview mapping for confirmation
       const preview = selected.map(it => ({
-        item: it.displayTitle || it.folderName || 'Unknown Game',
+        item: computeFinalTargetForItem(it, dest, layout).split(/[\\/]/).pop() || 'Unknown Game',
         source: computeSourceFolder(it),
         target: computeFinalTargetForItem(it, dest, layout)
       }));
@@ -594,7 +776,10 @@
           const actions2 = $('resultActionsRow');
           if (rp2) rp2.style.display = 'none';
           if (rl2) rl2.style.display = 'block';
-          if (actions2) { actions2.style.display = 'none'; actions2.setAttribute('aria-hidden','true'); }
+          if (actions2) {
+            actions2.style.display = 'none';
+            actions2.setAttribute('aria-hidden', 'true');
+          }
           if (close2) closeBtn.style.display = 'block';
 
           updateListSummary(res);
@@ -623,7 +808,7 @@
       const closeBtn2 = $('resultClose');
       if (rp2) rp2.style.display = 'none';
       if (rl2) rl2.style.display = 'block';
-      if (closeBtn2) closeBtn2.style.display = 'block';
+      if (closeBtn2) closeBtn.style.display = 'block';
       toast('Operation failed: ' + (e.message || String(e)));
     } finally {
       setResultModalBusy(false);
@@ -634,18 +819,34 @@
     const rl = $('resultList');
     if (!rl || !res || !Array.isArray(res.results)) return;
     rl.innerHTML = '';
-    let moved=0, copied=0, errors=0, total=0;
+    let moved = 0, copied = 0, errors = 0, total = 0;
     for (const r of res.results) {
       total++;
       let badge = '';
-      if (r.moved) { badge='moved'; moved++; }
-      else if (r.copied) { badge='copied'; copied++; }
-      else if (r.error) { badge='error'; errors++; }
-      else if (r.skipped) { badge='skipped'; }
+      if (r.moved) {
+        badge = 'moved';
+        moved++;
+      } else if (r.copied) {
+        badge = 'copied';
+        copied++;
+      } else if (r.error) {
+        badge = 'error';
+        errors++;
+      } else if (r.skipped) {
+        badge = 'skipped';
+      }
 
       const entry = document.createElement('div');
       entry.className = 'modal-content-entry';
-      Object.assign(entry.style, { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', paddingTop: '8px', paddingBottom: '8px', borderBottom: '1px solid rgba(255,255,255,0.02)' });
+      Object.assign(entry.style, {
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        gap: '12px',
+        paddingTop: '8px',
+        paddingBottom: '8px',
+        borderBottom: '1px solid rgba(255,255,255,0.02)'
+      });
 
       const left = document.createElement('div');
       left.style.flex = '1';
@@ -675,7 +876,7 @@
       if (badge) {
         const b = document.createElement('button');
         b.className = (badge === 'moved' || badge === 'copied') ? 'btn-go' : 'btn';
-        b.textContent = { moved:'Moved', copied:'Copied', error:'Error', skipped:'Skipped' }[badge] || badge;
+        b.textContent = { moved: 'Moved', copied: 'Copied', error: 'Error', skipped: 'Skipped' }[badge] || badge;
         b.disabled = true;
         b.style.pointerEvents = 'none';
         b.style.fontSize = '12px';
@@ -842,15 +1043,27 @@
     const header = $('chkHeader');
     if (!header) return;
     const visible = Array.from(document.querySelectorAll('#resultsBody tr')).filter(tr => tr.offsetParent !== null);
-    if (!visible.length) { header.checked = false; header.indeterminate = false; return; }
+    if (!visible.length) {
+      header.checked = false;
+      header.indeterminate = false;
+      return;
+    }
     const checked = visible.filter(tr => {
       const cb = tr.querySelector('input[type="checkbox"]');
       return cb && cb.checked;
     }).length;
-    if (checked === 0) { header.checked = false; header.indeterminate = false; }
-    else if (checked === visible.length) { header.checked = true; header.indeterminate = false; }
-    else { header.checked = false; header.indeterminate = true; }
+    if (checked === 0) {
+      header.checked = false;
+      header.indeterminate = false;
+    } else if (checked === visible.length) {
+      header.checked = true;
+      header.indeterminate = false;
+    } else {
+      header.checked = false;
+      header.indeterminate = true;
+    }
   }
+
   function toggleHeaderSelect() {
     const visible = Array.from(document.querySelectorAll('#resultsBody tr')).filter(tr => tr.offsetParent !== null);
     if (!visible.length) return;
@@ -874,7 +1087,7 @@
     if (!t) return;
     t.textContent = msg;
     t.style.display = 'block';
-    setTimeout(()=>{ t.style.display='none'; }, 3000);
+    setTimeout(() => { t.style.display = 'none'; }, 3000);
   }
 
   // Progress persistence
