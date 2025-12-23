@@ -25,11 +25,10 @@ process.on('unhandledRejection', (err) => {
 // State
 const activeCancelFlags = new Map();
 
-// Helpers
 /**
  * Checks if a directory name should be skipped during scanning.
  * @param {string} name - Directory name.
- * @returns {boolean}
+ * @returns {boolean} Whether to skip.
  */
 function isSkippableDir(name) {
   if (!name) return false;
@@ -43,7 +42,7 @@ function isSkippableDir(name) {
 /**
  * Extracts PPSA key from a string.
  * @param {string} value - Input string.
- * @returns {string|null}
+ * @returns {string|null} PPSA key or null.
  */
 function extractPpsaKey(value) {
   if (!value) return null;
@@ -58,7 +57,7 @@ function extractPpsaKey(value) {
 /**
  * Normalizes SKU string.
  * @param {string} s - SKU string.
- * @returns {string|null}
+ * @returns {string|null} Normalized SKU.
  */
 function normalizeSku(s) {
   if (!s) return null;
@@ -68,7 +67,7 @@ function normalizeSku(s) {
 /**
  * Safely reads and parses JSON from a file.
  * @param {string} fp - File path.
- * @returns {object|null}
+ * @returns {object|null} Parsed JSON or null.
  */
 async function readJsonSafe(fp) {
   try {
@@ -84,7 +83,7 @@ async function readJsonSafe(fp) {
  * @param {string} startDir - Starting directory.
  * @param {number} maxDepth - Maximum depth.
  * @param {AbortSignal} [signal] - Abort signal.
- * @returns {Promise<string[]>}
+ * @returns {Promise<string[]>} Array of param.json paths.
  */
 async function findAllParamJsons(startDir, maxDepth = MAX_SCAN_DEPTH, signal) {
   const out = [];
@@ -113,7 +112,7 @@ async function findAllParamJsons(startDir, maxDepth = MAX_SCAN_DEPTH, signal) {
  * Finds param.json in a PPSA directory.
  * @param {string} ppsaDir - PPSA directory.
  * @param {number} maxDepth - Maximum levels.
- * @returns {Promise<string|null>}
+ * @returns {Promise<string|null>} Path to param.json or null.
  */
 async function findParamJsonInPpsa(ppsaDir, maxDepth = 2) {
   const direct = path.join(ppsaDir, 'sce_sys', 'param.json');
@@ -139,7 +138,7 @@ async function findParamJsonInPpsa(ppsaDir, maxDepth = 2) {
  * Gets title from param.json.
  * @param {object} parsed - Parsed JSON.
  * @param {string} preferredRegion - Preferred region.
- * @returns {string|null}
+ * @returns {string|null} Title or null.
  */
 function getTitleFromParam(parsed, preferredRegion) {
   if (!parsed || typeof parsed !== 'object') return null;
@@ -174,7 +173,7 @@ function getTitleFromParam(parsed, preferredRegion) {
  * Gets canonical PPSA directory.
  * @param {string} candidatePath - Candidate path.
  * @param {number} maxLevels - Maximum levels.
- * @returns {string|null}
+ * @returns {string|null} Canonical PPSA path or null.
  */
 function getCanonicalPpsaDir(candidatePath, maxLevels = 8) {
   if (!candidatePath) return null;
@@ -286,7 +285,7 @@ async function findContentFoldersByTopLevelWithProgress(startDir, sender) {
 
     const normalizedFolder = path.resolve(folderPath);
     const ppsaFromCid = extractPpsaKey(parsed.contentId) || extractPpsaKey(JSON.stringify(parsed));
-    const seenKey = `${ppsaFromCid || ''}|${normalizedFolder}`;
+    const seenKey = `${ppsaFromCid || ''}|${normalizedFolder}|${parsed?.contentVersion || ''}`;
     if (seen.has(seenKey)) continue;
 
     let iconPath = null;
@@ -484,7 +483,7 @@ async function copyFolderContentsSafely(srcDir, finalTarget, options = {}) {
 
   progress?.({ type: 'go-start', totalFiles: 1, totalBytes: 0 }); // Placeholder
 
-  const tmpSuffix = `.tmp-${process.pid}-${Date.now()}-${Math.floor(Math.random) * 10000}`;
+  const tmpSuffix = `.tmp-${process.pid}-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
   const tempTarget = finalTarget + tmpSuffix;
   let tempCreated = false;
   try {
