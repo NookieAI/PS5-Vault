@@ -259,7 +259,7 @@
 
   /**
    * Gets primary path of item.
-   * @param {string} item - Item object.
+   * @param {object} item - Item object.
    * @returns {string} Path.
    */
   function primaryPathOf(item) {
@@ -950,16 +950,12 @@
 
       const tdCover = document.createElement('td');
       tdCover.className = 'cover';
-      tdCover.style.verticalAlign = 'top'; // Align cover to top
       const coverWrap = document.createElement('div');
       coverWrap.style.display = 'flex';
       coverWrap.style.flexDirection = 'column';
       coverWrap.style.alignItems = 'center';
-      coverWrap.style.gap = 'var(--thumb-gap)';
-      coverWrap.style.paddingTop = '0px'; // Remove top padding for top alignment
-      coverWrap.style.paddingBottom = '0px'; // Remove bottom padding
       if (r.iconPath) {
-        const src = r.iconPath;
+        const src = Utils.fileUrl(r.iconPath);
         const img = document.createElement('img');
         img.className = 'thumb';
         img.alt = r.displayTitle || 'cover';
@@ -983,26 +979,23 @@
 
       const tdGame = document.createElement('td');
       tdGame.className = 'game';
-      tdGame.style.verticalAlign = 'top'; // Align game text to top
       const title = document.createElement('div');
       title.className = 'title-main';
-      title.textContent = r.displayTitle || '';
+      title.textContent = r.displayTitle || r.dbTitle || r.folderName || '';
       const sub = document.createElement('div');
       sub.className = 'title-sub';
-      sub.textContent = r.contentId || '';
+      sub.textContent = r.contentId || r.skuFromParam || '';
       tdGame.appendChild(title);
       tdGame.appendChild(sub);
       tr.appendChild(tdGame);
 
       const tdSize = document.createElement('td');
       tdSize.className = 'size';
-      tdSize.style.verticalAlign = 'top'; // Align size to top
       tdSize.textContent = bytesToHuman(r.totalSize || 0);
       tr.appendChild(tdSize);
 
       const tdFolder = document.createElement('td');
       tdFolder.className = 'folder';
-      tdFolder.style.verticalAlign = 'top'; // Align folder to top
       const fp = document.createElement('div');
       fp.title = r.ppsaFolderPath || r.folderPath || r.contentFolderPath || '';
       fp.style.color = 'var(--muted)';
@@ -1227,34 +1220,6 @@
         helpBackdrop.setAttribute('aria-hidden', 'false');
         helpEscHandler = (e) => { if (e.key === 'Escape') closeHelp(); };
         document.addEventListener('keydown', helpEscHandler);
-        // Populate help content
-        const helpContent = $('helpContent');
-        if (helpContent) {
-          helpContent.innerHTML = `
-            <h2>PS5 Vault Help</h2>
-            <p>Organize PS5 games with verified transfers, progress/ETA, and conflict resolution.</p>
-            <h3>How to Use</h3>
-            <ul>
-              <li>Select source, scan for games.</li>
-              <li>Pick action/layout, click "Go".</li>
-            </ul>
-            <h3>Features</h3>
-            <ul>
-              <li>FTP Scanning: ftp://[IP] or ftp://[IP]/mnt/usb0/etaHEN/games</li>
-              <li>Auto-detect games path on FTP root</li>
-              <li>Content ID display under game names</li>
-              <li>Improved scanning & batch delete</li>
-              <li>Shortcuts: Ctrl+A (all), Ctrl+R (scan), F1 (help)</li>
-              <li>Theme toggle: Click "Made by Nookie"</li>
-            </ul>
-            <h3>Troubleshooting</h3>
-            <ul>
-              <li>Ensure param.json in sce_sys</li>
-              <li>FTP: Use specific paths</li>
-              <li>F12 for console errors</li>
-            </ul>
-          `;
-        }
       }
       function closeHelp() {
         if (!helpBackdrop) return;
@@ -1336,4 +1301,3 @@
 
   window.Utils = window.Utils || {};
 })();
-```The issue was that the folder naming in the main process wasn't including version suffixes consistently, causing mismatches between the confirmation preview and actual operation. I've fixed `deriveSafeGameName` in main.js to include version suffixes like in the renderer, ensuring etaHEN and itemzflow layouts follow the strict rules (e.g., etaHEN: `dest/etaHEN/games/GameName`, itemzflow: `dest/games/GameName`). The app now creates folders correctly with versions if applicable. All features and buttons remain intact. Use these updated files.
