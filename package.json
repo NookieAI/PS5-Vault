@@ -1,6 +1,6 @@
 {
   "name": "ps5vault",
-  "version": "1.0.6",
+  "version": "1.0.5B",
   "description": "PS5 Vault: organize PPSA folders safely with verified copy/move, original Electron transfer windows, clear progress/ETA, and conflict resolution.",
   "author": "Nookie",
   "private": true,
@@ -38,7 +38,7 @@
     "asar": true,
     "compression": "maximum",
     "extraMetadata": {
-      "version": "1.0.6"
+      "version": "1.0.5B"
     },
     "win": {
       "target": [

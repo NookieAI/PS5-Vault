@@ -1,9 +1,10 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta charset="utf-8" />
   <title>PS5 Vault</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' file: data:;">
   <style>
     :root {
       --bg: #061226;
@@ -684,8 +685,8 @@
     <div class="controls-row" aria-label="Controls">
       <div class="controls-left">
         <div class="primary">
-          <label for="sourcePath">Source</label>
-          <input id="sourcePath" type="text" placeholder="Path or FTP URL" style="min-width:260px" aria-label="Source path" />
+          <label style="color:var(--muted);margin-right:6px">Source</label>
+          <input id="sourcePath" type="text" readonly placeholder="Choose root folder" style="min-width:260px" aria-label="Source path" />
           <button id="btnPickSource" class="btn" aria-label="Browse source">Browse</button>
           <button id="btnScan" class="btn-scan" aria-label="Start scan">SCAN</button>
           <button id="btnCancelScan" class="btn-cancel" aria-label="Cancel scan">Cancel</button>
@@ -701,8 +702,8 @@
       <div class="controls-right">
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
           <button id="btnGoBig" class="btn-go" aria-label="Start transfer">GO</button>
-          <label for="destPath">Destination</label>
-          <input id="destPath" type="text" placeholder="Destination" style="min-width:260px" aria-label="Destination path" />
+          <label style="color:var(--muted);margin-left:6px">Destination</label>
+          <input id="destPath" type="text" readonly placeholder="Destination" style="min-width:260px" aria-label="Destination path" />
           <button id="btnPickDest" class="btn" aria-label="Browse destination">Browse</button>
         </div>
 
