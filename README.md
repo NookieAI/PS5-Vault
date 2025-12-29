@@ -5,7 +5,7 @@ PS5 Vault is an Electron-based application for organizing and managing PS5 game 
 ## Features
 
 ### Core Functionality
-- **Game Scanning**: Recursively scan local directories or FTP servers for PS5 game folders containing `param.json` files.
+- **Game Scanning**: Recursively scan local directories or FTP servers (**experimental**) for PS5 game folders containing `param.json` files.
 - **Verified Transfers**: Copy or move local games with hash verification to ensure data integrity.
 - **Progress Tracking**: Real-time progress bars, ETA calculations, and speed metrics during transfers.
 - **Conflict Resolution**: Handle existing files with options to skip, rename, or overwrite.
