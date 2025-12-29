@@ -3,7 +3,9 @@ const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
 
-// Constants for configuration
+// Add FTP support
+const ftp = require('basic-ftp');
+
 const MAX_SCAN_DEPTH = 12;
 const SCAN_CONCURRENCY = 24; // Reduced to 24 for better system stability
 const MAX_FILE_SIZE_BYTES = 200 * 1024 * 1024 * 1024; // 200GB limit for sanity
@@ -71,7 +73,8 @@ function normalizeSku(s) {
  */
 async function readJsonSafe(fp) {
   try {
-    const txt = await fs.promises.readFile(fp, 'utf8');
+    let txt = await fs.promises.readFile(fp, 'utf8');
+    txt = txt.replace(/^\uFEFF/, ''); // Remove BOM
     return JSON.parse(txt);
   } catch (_) {
     return null;
@@ -298,7 +301,14 @@ async function findContentFoldersByTopLevelWithProgress(startDir, sender) {
     }
 
     // Calculate total size
-    const srcFiles = await listAllFilesWithStats(folderPath);
+    let totalSize = 0;
+    try {
+      const srcFiles = await listAllFilesWithStats(folderPath);
+      totalSize = srcFiles.reduce((sum, f) => sum + f.size, 0);
+    } catch (e) {
+      console.error('[Local] Error calculating size for:', folderPath, e);
+      totalSize = 0;
+    }
 
     const rec = {
       ppsa: ppsaFromCid || null,
@@ -312,12 +322,15 @@ async function findContentFoldersByTopLevelWithProgress(startDir, sender) {
       iconPath,
       dbPresent: false,
       dbTitle: null,
-      displayTitle: getTitleFromParam(parsed, null),
+      displayTitle: parsed.localizedParameters?.[parsed.localizedParameters?.defaultLanguage]?.titleName || parsed.titleName,
       region: parsed.defaultLanguage || (parsed.localizedParameters?.defaultLanguage) || '',
       verified: false,
       contentVersion: parsed.contentVersion || null,
       sdkVersion: parsed.sdkVersion || null,
-      totalSize: srcFiles.reduce((sum, f) => sum + f.size, 0)  // New: total size
+      totalSize,
+      titleId: parsed.titleId,
+      version: parsed.masterVersion,
+      fwSku: parsed.requiredSystemSoftwareVersion
     };
     results.push(rec);
     seen.add(seenKey);
@@ -330,6 +343,151 @@ async function findContentFoldersByTopLevelWithProgress(startDir, sender) {
 
   activeCancelFlags.delete(sender.id);
   return results;
+}
+
+// FTP scan (new addition, does not affect local)
+async function scanFtpSource(ftpUrl) {
+  let url;
+  try {
+    url = new URL(ftpUrl);
+  } catch (e) {
+    throw new Error('Invalid FTP URL: ' + ftpUrl);
+  }
+  const host = url.hostname;
+  const port = url.port || 1337;
+  const user = url.username || 'anonymous';
+  const pass = url.password || '';
+  let remotePath = url.pathname || '/';
+
+  // Auto-detect USB games path if root is scanned
+  if (remotePath === '/' || remotePath === '') {
+    console.log('[FTP] Scanning root, looking for USB games path...');
+    const client = new ftp.Client();
+    try {
+      await client.access({ host, port: parseInt(port), user, password: pass, secure: false });
+      remotePath = await findUsbGamesPath(client);
+    } finally {
+      client.close();
+    }
+  }
+
+  console.log('[FTP] Connecting to:', { host, port, user, pass: pass ? '***' : 'none' });
+  const client = new ftp.Client();
+  try {
+    await client.access({ host, port: parseInt(port), user, password: pass, secure: false });
+    console.log('[FTP] Connected successfully');
+    const items = [];
+    console.log('[FTP] Starting recursive scan from:', remotePath);
+    await scanFtpRecursive(client, remotePath, items, 0);
+    console.log('[FTP] Scan complete, found items:', items.length);
+    return items;
+  } catch (e) {
+    console.error('[FTP] Connection or scan error:', e);
+    throw e;
+  } finally {
+    try {
+      client.close();
+      console.log('[FTP] Connection closed');
+    } catch (_) {}
+  }
+}
+
+async function findUsbGamesPath(client) {
+  // Check common USB paths
+  const candidates = ['/mnt/usb0/etaHEN/games', '/mnt/usb1/etaHEN/games', '/mnt/ps5/etaHEN/games'];
+  for (const cand of candidates) {
+    try {
+      const list = await client.list(cand);
+      if (list.some(item => item.isDirectory)) {
+        console.log('[FTP] Found games path:', cand);
+        return cand;
+      }
+    } catch (_) {}
+  }
+  return '/'; // Fallback
+}
+
+async function scanFtpRecursive(client, remotePath, items, depth) {
+  if (depth > MAX_SCAN_DEPTH) return;
+  if (remotePath.includes('/sce_sys/')) return;
+  try {
+    console.log('[FTP] Listing directory:', remotePath);
+    const list = await client.list(remotePath);
+    console.log('[FTP] Found', list.length, 'items in', remotePath);
+
+    // Check for param.json
+    if (!remotePath.includes('/sce_sys/')) {
+      const paramPath = path.posix.join(remotePath, 'sce_sys', 'param.json');
+      const tempFile = path.join(require('os').tmpdir(), 'param_' + Date.now() + '_' + Math.random() + '.json');
+      let cover = '';
+      try {
+        console.log('[FTP] Checking for param.json in:', remotePath);
+        await client.downloadTo(tempFile, paramPath);
+        const paramStr = await fs.promises.readFile(tempFile, 'utf8');
+        const data = JSON.parse(paramStr);
+        console.log('[FTP] Parsed param.json data:', data);
+        const ppsaKey = extractPpsaKey(data.titleId || data.contentId || '');
+        const sku = normalizeSku(data.localizedParameters?.en?.['@SKU'] || '');
+        const title = getTitleFromParam(data, null);
+        const folder = path.posix.basename(remotePath);
+        const size = 0; // No size calc for FTP
+        // Fetch cover
+        const coverPath = path.posix.join(remotePath, 'sce_sys', 'icon0.png');
+        const coverTempFile = path.join(require('os').tmpdir(), 'cover_' + Date.now() + '_' + Math.random() + '.png');
+        try {
+          await client.downloadTo(coverTempFile, coverPath);
+          const coverBuffer = await fs.promises.readFile(coverTempFile);
+          cover = 'data:image/png;base64,' + coverBuffer.toString('base64');
+          console.log('[FTP] Fetched cover for:', title);
+        } catch (e) {
+          console.log('[FTP] No cover for:', title, e.message);
+        } finally {
+          try { fs.unlinkSync(coverTempFile); } catch (_) {}
+        }
+        items.push({
+          ppsa: ppsaKey,
+          ppsaFolderPath: remotePath,
+          contentFolderPath: path.posix.join(remotePath, 'sce_sys'),
+          folderPath: remotePath,
+          folderName: folder,
+          contentId: data.contentId,
+          skuFromParam: sku,
+          displayTitle: title,
+          region: data.defaultLanguage || (data.localizedParameters?.defaultLanguage) || '',
+          contentVersion: data.masterVersion,
+          sdkVersion: data.sdkVersion,
+          totalSize: size,
+          iconPath: cover // Base64
+        });
+        console.log('[FTP] Found game:', title, 'in', folder);
+      } catch (e) {
+        console.log('[FTP] No param.json in', remotePath, e.message);
+      } finally {
+        try { fs.unlinkSync(tempFile); } catch (_) {}
+      }
+    }
+
+    // Check if this is a game dir (has sce_sys), if so, don't recurse
+    const hasSceSys = list.some(item => item.isDirectory && item.name === 'sce_sys');
+    if (hasSceSys) {
+      console.log('[FTP] Skipping recursion for game dir:', remotePath);
+      return;
+    }
+
+    // Recurse into subdirs only if not a game dir
+    for (const item of list) {
+      if (item.isDirectory) {
+        const subPath = path.posix.join(remotePath, item.name);
+        try {
+          await scanFtpRecursive(client, subPath, items, depth + 1);
+        } catch (e) {
+          console.error('[FTP] Error recursing into:', subPath, e);
+        }
+      }
+    }
+  } catch (e) {
+    console.error('[FTP] Error listing or recursing:', remotePath, e);
+  }
 }
 
 // FS + transfer helpers (optimized)
@@ -376,7 +534,7 @@ async function copyFileStream(src, dst, progressCallback, cancelCheck) {
     rs.on('data', (chunk) => { if (cancelCheck()) { rs.destroy(); ws.destroy(); reject(new Error('Cancelled')); } else progressCallback?.(chunk.length); });
     rs.on('error', (err) => { ws.destroy(); reject(err); });
     ws.on('error', (err) => { rs.destroy(); reject(err); });
-    ws.on('finish', resolve);
+    ws.on('finish', () => resolve());
     rs.pipe(ws);
   });
 }
@@ -563,35 +721,21 @@ ipcMain.handle('cancel-operation', async (event) => {
   return { ok: true };
 });
 
-ipcMain.handle('check-conflicts', async (event, items, dest, layout) => {
-  const conflicts = [];
-  for (const it of items) {
-    const safeGame = sanitize(deriveSafeGameName(it, null));
-    let finalPpsaName = it.ppsa || (it.contentId && (String(it.contentId).match(/PPSA\d{4,6}/i) || [])[0]?.toUpperCase()) || null;
-    if (!finalPpsaName) {
-      const src = it.contentFolderPath || it.ppsaFolderPath || it.folderPath || '';
-      const base = (src + '').split(/[\\/]/).pop() || '';
-      finalPpsaName = base.replace(/[-_]*app\d*.*$/i, '').replace(/[-_]+$/,'') || base;
-    }
-    let finalTarget;
-    if (layout === 'ppsa-only') finalTarget = path.join(dest, finalPpsaName);
-    else if (layout === 'game-only') finalTarget = path.join(dest, safeGame);
-    else if (layout === 'etahen') finalTarget = path.join(dest, 'etaHEN', 'games', safeGame);
-    else if (layout === 'itemzflow') finalTarget = path.join(dest, 'games', safeGame);
-    else finalTarget = path.join(dest, safeGame, finalPpsaName);  // game-ppsa creates GameName/PPSAName
-    const exists = await fs.promises.stat(finalTarget).catch(() => false);
-    if (exists) conflicts.push({ item: it.displayTitle || it.folderName || '', target: finalTarget });
-  }
-  return conflicts;
-});
-
 ipcMain.handle('scan-source', async (event, sourceDir) => {
-  if (!sourceDir || typeof sourceDir !== 'string' || !path.isAbsolute(sourceDir)) return { error: 'Invalid source directory' };
+  if (!sourceDir || typeof sourceDir !== 'string' || !path.isAbsolute(sourceDir) && !sourceDir.startsWith('ftp://') && !/^\d+\.\d+\.\d+\.\d+/.test(sourceDir)) return { error: 'Invalid source directory' };
   try {
-    const stat = await fs.promises.stat(sourceDir);
-    if (!stat.isDirectory()) return { error: 'Source is not a directory' };
-    const items = await findContentFoldersByTopLevelWithProgress(sourceDir, event.sender);
-    return items || [];
+    if (sourceDir.startsWith('ftp://')) {
+      const items = await scanFtpSource(sourceDir);
+      return items || [];
+    } else if (/^\d+\.\d+\.\d+\.\d+/.test(sourceDir)) {
+      const items = await scanFtpSource('ftp://' + sourceDir);
+      return items || [];
+    } else {
+      const stat = await fs.promises.stat(sourceDir);
+      if (!stat.isDirectory()) return { error: 'Source is not a directory' };
+      const items = await findContentFoldersByTopLevelWithProgress(sourceDir, event.sender);
+      return items || [];
+    }
   } catch (e) {
     console.error('[main] scan-source error', e);
     return { error: String(e?.message || e) };
@@ -739,6 +883,28 @@ ipcMain.handle('ensure-and-populate', async (event, opts) => {
   return { success: true, results };
 });
 
+ipcMain.handle('check-conflicts', async (event, items, dest, layout) => {
+  const conflicts = [];
+  for (const it of items) {
+    const safeGame = sanitize(deriveSafeGameName(it, null));
+    let finalPpsaName = it.ppsa || (it.contentId && (String(it.contentId).match(/PPSA\d{4,6}/i) || [])[0]?.toUpperCase()) || null;
+    if (!finalPpsaName) {
+      const src = it.contentFolderPath || it.ppsaFolderPath || it.folderPath || '';
+      const base = (src + '').split(/[\\/]/).pop() || '';
+      finalPpsaName = base.replace(/[-_]*app\d*.*$/i, '').replace(/[-_]+$/,'') || base;
+    }
+    let finalTarget;
+    if (layout === 'ppsa-only') finalTarget = path.join(dest, finalPpsaName);
+    else if (layout === 'game-only') finalTarget = path.join(dest, safeGame);
+    else if (layout === 'etahen') finalTarget = path.join(dest, 'etaHEN', 'games', safeGame);
+    else if (layout === 'itemzflow') finalTarget = path.join(dest, 'games', safeGame);
+    else finalTarget = path.join(dest, safeGame, finalPpsaName);  // game-ppsa creates GameName/PPSAName
+    const exists = await fs.promises.stat(finalTarget).catch(() => false);
+    if (exists) conflicts.push({ item: it.displayTitle || it.folderName || '', target: finalTarget });
+  }
+  return conflicts;
+});
+
 ipcMain.handle('show-in-folder', async (_event, targetPath) => {
   try {
     if (!targetPath || typeof targetPath !== 'string') throw new Error('Invalid path');
@@ -783,7 +949,7 @@ ipcMain.handle('rename-item', async (event, item, newName) => {
 });
 
 ipcMain.handle('move-to-layout', async (event, item, dest, layout) => {
-  await ensureAndPopulate(event, { items: [item], dest, action: 'move', layout });
+  await ipcMain.handle('ensure-and-populate', event, { items: [item], dest, action: 'move', layout });
   return { success: true };
 });
 
@@ -835,19 +1001,28 @@ function createWindow() {
   }
 }
 
-// Naming helpers (unchanged)
+// Naming helpers (updated to include version suffix consistently)
 function sanitize(name) {
   if (!name) return 'Unknown';
   return String(name).replace(/[<>:"/\\|?*\x00-\x1F]/g, '').trim().slice(0, 200) || 'Unknown';
 }
 function deriveSafeGameName(item, parsed) {
-  if (item?.displayTitle) return item.displayTitle;
-  if (item?.dbTitle) return item.dbTitle;
-  if (item?.folderName) return item.folderName;
-  if (parsed?.titleName) return parsed.titleName;
-  const p = item && (item.contentFolderPath || item.folderPath) || '';
-  const seg = (p + '').replace(/[\/\\]+$/,'').split(/[\/\\]/).pop() || '';
-  if (seg) return seg;
-  if (item?.ppsa) return item.ppsa;
-  return 'Unknown Game';
+  let baseName = item?.displayTitle || item?.dbTitle || item?.folderName;
+  if (parsed?.titleName && !baseName) baseName = parsed.titleName;
+  if (!baseName) {
+    const p = item && (item.contentFolderPath || item.folderPath) || '';
+    const seg = (p + '').replace(/[\/\\]+$/,'').split(/[\/\\]/).pop() || '';
+    if (seg) baseName = seg;
+  }
+  if (!baseName && item?.ppsa) baseName = item.ppsa;
+  if (!baseName) baseName = 'Unknown Game';
+
+  // Add version suffix if applicable, consistent with renderer
+  let versionSuffix = '';
+  const cv = item?.contentVersion || parsed?.contentVersion;
+  if (cv && cv !== '01.000.000') {
+    const cleanedVersion = cv.replace(/^0/, ''); // Clean leading zero
+    versionSuffix = ` (${cleanedVersion})`;
+  }
+  return baseName + versionSuffix;
 }
