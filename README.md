@@ -54,5 +54,5 @@ Organize games into various directory structures:
 3. Install dependencies:
 
 
-Support my prohject! 
+Support my project! 
 https://ko-fi.com/nookie_65120
