@@ -22,7 +22,7 @@ Organize games into various directory structures:
 ### FTP Support
 - Scan FTP servers (e.g., PS5 with etaHEN) directly.
 - Auto-detects common paths like `/mnt/ext1/etaHEN/games`.
-- Supports anonymous or authenticated access.
+- Supports anonymous access.
 - Default port 1337 for PS5 FTP.
 
 ### User Interface
