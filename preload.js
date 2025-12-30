@@ -8,7 +8,7 @@ contextBridge.exposeInMainWorld('ppsaApi', {
   scanSourceForPpsa: (sourceDir) => ipcRenderer.invoke('scan-source', sourceDir),
   ensureAndPopulate: (opts) => ipcRenderer.invoke('ensure-and-populate', opts),
   checkConflicts: (items, dest, layout) => ipcRenderer.invoke('check-conflicts', items, dest, layout),
-  showInFolder: (path) => ipcRenderer.invoke('show-in-folder', path),
+  showInFolder: (targetPath) => ipcRenderer.invoke('show-in-folder', targetPath),
   openExternal: (url) => ipcRenderer.invoke('open-external-link', url),
   copyToClipboard: (text) => ipcRenderer.invoke('clipboard-write', text),
   deleteItem: (item) => ipcRenderer.invoke('delete-item', item),
