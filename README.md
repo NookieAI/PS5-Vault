@@ -52,3 +52,7 @@ Organize games into various directory structures:
 1. Ensure [Node.js](https://nodejs.org/) is installed (v16+ recommended).
 2. Clone or download the repository.
 3. Install dependencies:
+
+
+Support my prohject! 
+https://ko-fi.com/nookie_65120
