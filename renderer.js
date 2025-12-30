@@ -6,6 +6,8 @@
   const LAST_RESULTS_KEY = 'ps5vault.lastResults';
   const SETTINGS_KEY = 'ps5vault.settings';
   const TRANSFER_STATE_KEY = 'ps5vault.transferState';
+  const RECENT_SOURCES_KEY = 'ps5vault.recentSources';
+  const RECENT_DESTS_KEY = 'ps5vault.recentDests';
 
   const $ = id => document.getElementById(id);
   const log = (...a) => console.log('[renderer]', ...a);
@@ -14,6 +16,76 @@
   let cancelOperation = false;
   let transferState = JSON.parse(localStorage.getItem(TRANSFER_STATE_KEY) || '{}');
   let settings = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}');
+  let scanStartTime = 0;
+  let transferStartTime = 0;
+
+  function getRecentSources() {
+    try {
+      const stored = localStorage.getItem(RECENT_SOURCES_KEY);
+      return stored ? JSON.parse(stored) : [];
+    } catch (_) {
+      return [];
+    }
+  }
+
+  function getRecentDests() {
+    try {
+      const stored = localStorage.getItem(RECENT_DESTS_KEY);
+      return stored ? JSON.parse(stored) : [];
+    } catch (_) {
+      return [];
+    }
+  }
+
+  function addRecentSource(path) {
+    if (!path) return;
+    console.log('Adding recent source:', path);
+    const recents = getRecentSources();
+    const filtered = recents.filter(p => p !== path);
+    filtered.unshift(path);
+    const limited = filtered.slice(0, 10);
+    try {
+      localStorage.setItem(RECENT_SOURCES_KEY, JSON.stringify(limited));
+    } catch (_) {}
+    updateSourceHistoryDatalist();
+  }
+
+  function addRecentDest(path) {
+    if (!path) return;
+    console.log('Adding recent dest:', path);
+    const recents = getRecentDests();
+    const filtered = recents.filter(p => p !== path);
+    filtered.unshift(path);
+    const limited = filtered.slice(0, 10);
+    try {
+      localStorage.setItem(RECENT_DESTS_KEY, JSON.stringify(limited));
+    } catch (_) {}
+    updateDestHistoryDatalist();
+  }
+
+  function updateSourceHistoryDatalist() {
+    const datalist = $('sourceHistory');
+    if (!datalist) return;
+    datalist.innerHTML = '';
+    const recents = getRecentSources();
+    for (const path of recents) {
+      const option = document.createElement('option');
+      option.value = path;
+      datalist.appendChild(option);
+    }
+  }
+
+  function updateDestHistoryDatalist() {
+    const datalist = $('destHistory');
+    if (!datalist) return;
+    datalist.innerHTML = '';
+    const recents = getRecentDests();
+    for (const path of recents) {
+      const option = document.createElement('option');
+      option.value = path;
+      datalist.appendChild(option);
+    }
+  }
 
   /**
    * Sets the result modal to busy state.
@@ -44,7 +116,6 @@
     if (!show && label) label.textContent = '';
     if (cancelBtn) cancelBtn.style.display = show ? 'inline-block' : 'none';
     if (show) {
-      // Animation is always active when shown
     }
   }
 
@@ -130,6 +201,7 @@
       setResultModalBusy(true);
       TransferStats.reset();
       completedFiles = [];
+      transferStartTime = Date.now();
       const rb = $('resultModalBackdrop');
       const rp = $('resultProgress');
       const rl = $('resultList');
@@ -195,7 +267,7 @@
       if (label) label.textContent = '';
       showScanUI(false);
       showNotification('Transfer Complete', 'PS5 Vault operation finished successfully.');
-      localStorage.removeItem(TRANSFER_STATE_KEY); // Clear state on success
+      localStorage.removeItem(TRANSFER_STATE_KEY);
       return;
     }
 
@@ -214,8 +286,7 @@
    */
   function formatContentVersionShort(cv) {
     if (!cv) return '';
-    // Clean leading zero from first part, keep rest as is
-    return cv.replace(/^0/, '');
+    return cv;
   }
 
   /**
@@ -239,12 +310,7 @@
    * @returns {boolean} Whether to add plus.
    */
   function shouldAddPlus(sdkValue) {
-    if (!sdkValue) return false;
-    if (Array.isArray(sdkValue)) {
-      const uniq = new Set(sdkValue.filter(Boolean).map(v => String(v)));
-      return uniq.size === 1;
-    }
-    return true;
+    return false;
   }
 
   /**
@@ -259,7 +325,7 @@
 
   /**
    * Gets primary path of item.
-   * @param {object} item - Item object.
+   * @param {string} item - Item object.
    * @returns {string} Path.
    */
   function primaryPathOf(item) {
@@ -477,7 +543,6 @@
       return;
     }
 
-    // Summary: counts + action/layout
     const count = previewItems.length;
     const act = String(meta.action || '').toUpperCase();
     const layoutLabel = {
@@ -489,7 +554,6 @@
     }[meta.layout] || meta.layout;
     if (summaryEl) summaryEl.textContent = `${count} item(s) • Action: ${act} • Layout: ${layoutLabel}`;
 
-    // List of mappings
     listEl.innerHTML = '';
     for (const p of previewItems) {
       const row = document.createElement('div');
@@ -603,12 +667,7 @@
 
   // Helpers for mapping
   function computeFinalTargetForItem(it, dest, layout) {
-    let versionSuffix = '';
-    if (it.contentVersion && it.contentVersion !== '01.000.000') {
-      const cleanedVersion = formatContentVersionShort(it.contentVersion);
-      versionSuffix = ` (${cleanedVersion})`;
-    }
-    const safeGame = Utils.sanitizeName(it.displayTitle || it.dbTitle || it.folderName || it.ppsa || 'Unknown Game') + versionSuffix;
+    const safeGame = Utils.sanitizeName(it.displayTitle || it.dbTitle || it.folderName || it.ppsa || 'Unknown Game');
     let finalPpsaName = it.ppsa || (it.contentId && (String(it.contentId).match(/PPSA\d{4,6}/i) || [])[0]?.toUpperCase()) || null;
     if (!finalPpsaName) {
       const src = it.contentFolderPath || it.ppsaFolderPath || it.folderPath || '';
@@ -620,7 +679,7 @@
     if (layout === 'etahen') return pathJoin(dest, 'etaHEN', 'games', safeGame);
     if (layout === 'itemzflow') return pathJoin(dest, 'games', safeGame);
     if (layout === 'game-ppsa') return pathJoin(dest, safeGame, finalPpsaName);
-    return pathJoin(dest, safeGame); // fallback
+    return pathJoin(dest, safeGame);
   }
 
   function pathJoin(...parts) {
@@ -632,7 +691,6 @@
   }
 
   function computeSourceFolder(it) {
-    // Mirror main process logic for display
     if (it.ppsaFolderPath) return it.ppsaFolderPath;
     if (it.folderPath) return it.folderPath;
     if (it.contentFolderPath) {
@@ -655,7 +713,7 @@
         toast(`Error deleting ${item.safeGameName}: ${e.message}`);
       }
     }
-    await refreshResultsAfterOperation();
+    refreshResultsAfterOperation();
   });
 
   // Helper to get selected items
@@ -677,26 +735,25 @@
       const tbody = $('resultsBody');
       const trs = Array.from(tbody.querySelectorAll('tr'));
       const selected = [];
-      trs.forEach(tr => {
+      const selectedIndices = [];
+      trs.forEach((tr, idx) => {
         const cb = tr.querySelector('input[type="checkbox"]');
         if (cb && cb.checked) {
-          const idx = parseInt(tr.dataset.index || '-1', 10);
-          if (!Number.isNaN(idx) && window.__ps5_lastRenderedItems && window.__ps5_lastRenderedItems[idx]) {
-            const orig = window.__ps5_lastRenderedItems[idx];
-            selected.push({
-              displayTitle: orig.displayTitle || orig.dbTitle || orig.folderName || '',
-              contentFolderPath: orig.contentFolderPath || orig.folderPath || '',
-              folderPath: orig.folderPath || orig.contentFolderPath || '',
-              folderName: orig.folderName || '',
-              ppsa: orig.ppsa || null,
-              paramPath: orig.paramPath || null,
-              contentId: orig.contentId || null,
-              iconPath: orig.iconPath || null,
-              dbTitle: orig.dbTitle || null,
-              skuFromParam: orig.skuFromParam || null,
-              contentVersion: orig.contentVersion || null
-            });
-          }
+          selectedIndices.push(idx);
+          const orig = window.__ps5_lastRenderedItems[idx];
+          selected.push({
+            displayTitle: orig.displayTitle || orig.dbTitle || orig.folderName || '',
+            contentFolderPath: orig.contentFolderPath || orig.folderPath || '',
+            folderPath: orig.folderPath || orig.contentFolderPath || '',
+            folderName: orig.folderName || '',
+            ppsa: orig.ppsa || null,
+            paramPath: orig.paramPath || null,
+            contentId: orig.contentId || null,
+            iconPath: orig.iconPath || null,
+            dbTitle: orig.dbTitle || null,
+            skuFromParam: orig.skuFromParam || null,
+            contentVersion: orig.contentVersion || null
+          });
         }
       });
       if (!selected.length) {
@@ -704,25 +761,32 @@
         return;
       }
 
+      // Append version to displayTitle for ALL versions to include version in folder name
+      for (const item of selected) {
+        if (item.contentVersion) {
+          item.displayTitle += ` (${item.contentVersion})`;
+        }
+      }
+
       const dest = $('destPath') && $('destPath').value ? $('destPath').value.trim() : '';
       if (!dest) {
         toast('Select destination');
         return;
       }
+      addRecentDest(dest);
+
       const action = $('action') ? $('action').value : 'move';
       const layout = $('layout') ? $('layout').value : 'etahen';
 
-      // Build preview mapping for confirmation
       const preview = selected.map(it => ({
         item: computeFinalTargetForItem(it, dest, layout).split(/[\\/]/).pop() || 'Unknown Game',
         source: computeSourceFolder(it),
         target: computeFinalTargetForItem(it, dest, layout)
       }));
 
-      // After confirmation, continue with the existing flow (conflicts → run)
       const proceedAfterConfirm = async () => {
         const conflicts = await window.ppsaApi.checkConflicts(selected, dest, layout);
-        let overwriteMode = 'rename'; // Default to rename, no overwrite
+        let overwriteMode = 'rename';
 
         const runOperation = async () => {
           const rb = $('resultModalBackdrop');
@@ -777,13 +841,29 @@
           if (rp2) rp2.style.display = 'none';
           if (rl2) rl2.style.display = 'block';
           if (actions2) {
-            actions2.style.display = 'none';
+            actions2.display = 'none';
             actions2.setAttribute('aria-hidden', 'true');
           }
           if (close2) closeBtn.style.display = 'block';
 
           updateListSummary(res);
-          await refreshResultsAfterOperation();
+
+          // Show the results list immediately after operation completes
+          const rp3 = $('resultProgress');
+          const rl3 = $('resultList');
+          const close3 = $('resultClose');
+          const rs3 = $('resultSubText');
+          const label3 = $('currentScanLabel');
+          if (rp3) rp3.style.display = 'none';
+          if (rl3) rl3.style.display = 'block';
+          if (close3) closeBtn.style.display = 'block';
+          if (rs3) rs3.textContent = 'Operation complete';
+          if (label3) label3.textContent = '';
+          showScanUI(false);
+
+          refreshResultsAfterOperation(); // Refresh the game results list after operation
+
+          // Modal stays open until user clicks close
         };
 
         if (conflicts.length) {
@@ -796,9 +876,7 @@
         }
       };
 
-      const cancelAfterConfirm = () => {
-        // user cancelled — do nothing
-      };
+      const cancelAfterConfirm = () => {};
 
       openConfirmModal(preview, { action, layout }, proceedAfterConfirm, cancelAfterConfirm);
     } catch (e) {
@@ -819,16 +897,18 @@
     const rl = $('resultList');
     if (!rl || !res || !Array.isArray(res.results)) return;
     rl.innerHTML = '';
-    let moved = 0, copied = 0, errors = 0, total = 0;
+    let moved = 0, copied = 0, errors = 0, total = 0, totalBytes = 0;
     for (const r of res.results) {
       total++;
       let badge = '';
       if (r.moved) {
         badge = 'moved';
         moved++;
+        totalBytes += r.totalSize || 0;
       } else if (r.copied) {
         badge = 'copied';
         copied++;
+        totalBytes += r.totalSize || 0;
       } else if (r.error) {
         badge = 'error';
         errors++;
@@ -838,15 +918,7 @@
 
       const entry = document.createElement('div');
       entry.className = 'modal-content-entry';
-      Object.assign(entry.style, {
-        display: 'flex',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        gap: '12px',
-        paddingTop: '8px',
-        paddingBottom: '8px',
-        borderBottom: '1px solid rgba(255,255,255,0.02)'
-      });
+      Object.assign(entry.style, { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', paddingTop: '8px', paddingBottom: '8px', borderBottom: '1px solid rgba(255,255,255,0.02)' });
 
       const left = document.createElement('div');
       left.style.flex = '1';
@@ -894,6 +966,11 @@
       if (copied) parts.push(`${copied} copied`);
       if (moved) parts.push(`${moved} moved`);
       if (errors) parts.push(`${errors} errors`);
+      const scanDuration = scanStartTime ? Math.round((Date.now() - scanStartTime) / 1000) : 0;
+      const transferDuration = transferStartTime ? Math.round((Date.now() - transferStartTime) / 1000) : 0;
+      parts.push(`Scan time: ${scanDuration}s`);
+      parts.push(`Transfer time: ${transferDuration}s`);
+      if (totalBytes > 0) parts.push(`Total transferred: ${bytesToHuman(totalBytes)}`);
       rs.textContent = parts.length ? parts.join(' • ') : 'Operation complete';
     }
     const rcEl = $('resultCount');
@@ -913,7 +990,7 @@
     }
   }
 
-  function renderResults(arr) {
+  function renderResults(arr, scanDuration) {
     const tbody = $('resultsBody');
     if (!tbody) return;
     tbody.innerHTML = '';
@@ -942,6 +1019,7 @@
       tr.dataset.index = String(i);
 
       const tdChk = document.createElement('td');
+      tdChk.style.verticalAlign = 'top';
       const chk = document.createElement('input');
       chk.type = 'checkbox';
       chk.className = 'chk';
@@ -950,12 +1028,16 @@
 
       const tdCover = document.createElement('td');
       tdCover.className = 'cover';
+      tdCover.style.verticalAlign = 'top';
       const coverWrap = document.createElement('div');
       coverWrap.style.display = 'flex';
       coverWrap.style.flexDirection = 'column';
       coverWrap.style.alignItems = 'center';
+      coverWrap.style.gap = 'var(--thumb-gap)';
+      coverWrap.style.paddingTop = '0px';
+      coverWrap.style.paddingBottom = '0px';
       if (r.iconPath) {
-        const src = Utils.fileUrl(r.iconPath);
+        const src = r.iconPath;
         const img = document.createElement('img');
         img.className = 'thumb';
         img.alt = r.displayTitle || 'cover';
@@ -979,23 +1061,26 @@
 
       const tdGame = document.createElement('td');
       tdGame.className = 'game';
+      tdGame.style.verticalAlign = 'top';
       const title = document.createElement('div');
       title.className = 'title-main';
-      title.textContent = r.displayTitle || r.dbTitle || r.folderName || '';
+      title.textContent = r.displayTitle || '';
       const sub = document.createElement('div');
       sub.className = 'title-sub';
-      sub.textContent = r.contentId || r.skuFromParam || '';
+      sub.textContent = r.contentId || '';
       tdGame.appendChild(title);
       tdGame.appendChild(sub);
       tr.appendChild(tdGame);
 
       const tdSize = document.createElement('td');
       tdSize.className = 'size';
+      tdSize.style.verticalAlign = 'top';
       tdSize.textContent = bytesToHuman(r.totalSize || 0);
       tr.appendChild(tdSize);
 
       const tdFolder = document.createElement('td');
       tdFolder.className = 'folder';
+      tdFolder.style.verticalAlign = 'top';
       const fp = document.createElement('div');
       fp.title = r.ppsaFolderPath || r.folderPath || r.contentFolderPath || '';
       fp.style.color = 'var(--muted)';
@@ -1033,7 +1118,8 @@
       tr.appendChild(tdFolder);
       tbody.appendChild(tr);
     }
-    $('scanCount') && ($('scanCount').textContent = `${list.length} games found`);
+    const durationText = scanDuration ? ` (scanned in ${scanDuration}s)` : '';
+    $('scanCount') && ($('scanCount').textContent = `${list.length} games found${durationText}`);
     updateHeaderCheckboxState();
     showScanUI(false);
     try { localStorage.setItem(LAST_RESULTS_KEY, JSON.stringify(list)); } catch (_) {}
@@ -1090,13 +1176,11 @@
     setTimeout(() => { t.style.display = 'none'; }, 3000);
   }
 
-  // Progress persistence
   function saveTransferState(state) {
     transferState = state;
     localStorage.setItem(TRANSFER_STATE_KEY, JSON.stringify(state));
   }
 
-  // Notifications
   function showNotification(title, body) {
     if (Notification.permission === 'granted') {
       new Notification(title, { body });
@@ -1111,8 +1195,27 @@
     try {
       Preview.init();
       applySettings();
+      updateSourceHistoryDatalist();
+      updateDestHistoryDatalist();
 
-      // Load last results on startup
+      // Click logo to clear recent paths
+      const brandLogo = $('brandLogo');
+      if (brandLogo) {
+        brandLogo.addEventListener('click', () => {
+          if (confirm('Clear all recent sources and destinations?')) {
+            try {
+              localStorage.removeItem(RECENT_SOURCES_KEY);
+              localStorage.removeItem(RECENT_DESTS_KEY);
+              updateSourceHistoryDatalist();
+              updateDestHistoryDatalist();
+              toast('Recent paths cleared');
+            } catch (_) {
+              toast('Failed to clear recent paths');
+            }
+          }
+        });
+      }
+
       try {
         const lastResults = localStorage.getItem(LAST_RESULTS_KEY);
         if (lastResults) {
@@ -1123,33 +1226,48 @@
         }
       } catch (_) {}
 
-      // Resume transfer if state exists
       if (transferState.items && confirm('Resume previous transfer?')) {
-        // Load and proceed
       }
-
-      try {
-        const ls = localStorage.getItem(LAST_SRC_KEY);
-        if (ls && $('sourcePath') && !$('sourcePath').value) $('sourcePath').value = ls;
-      } catch (_) {}
-      try {
-        const ld = localStorage.getItem(LAST_DST_KEY);
-        if (ld && $('destPath') && !$('destPath').value) $('destPath').value = ld;
-      } catch (_) {}
 
       if (window.ppsaApi && typeof window.ppsaApi.onScanProgress === 'function') {
         window.ppsaApi.onScanProgress(onProgressMessage);
       }
 
-      $('madeBy').addEventListener('click', toggleTheme);
-      $('btnExport').addEventListener('click', exportData);
-      $('btnImport').addEventListener('click', importData);
+      const btnDeleteSelected = $('btnDeleteSelected');
+      if (btnDeleteSelected) {
+        btnDeleteSelected.addEventListener('click', async () => {
+          const selected = getSelectedItems();
+          if (!selected.length) return toast('No items selected');
+          if (!confirm(`Delete ${selected.length} selected items? This cannot be undone.`)) return;
+          for (const item of selected) {
+            try {
+              await window.ppsaApi.deleteItem(item);
+            } catch (e) {
+              toast(`Error deleting ${item.safeGameName}: ${e.message}`);
+            }
+          }
+          refreshResultsAfterOperation();
+        });
+      }
 
-      // Keyboard shortcuts
+      const madeBy = $('madeBy');
+      if (madeBy) {
+        madeBy.addEventListener('click', toggleTheme);
+      }
+
+      const btnExport = $('btnExport');
+      if (btnExport) {
+        btnExport.addEventListener('click', exportData);
+      }
+
+      const btnImport = $('btnImport');
+      if (btnImport) {
+        btnImport.addEventListener('click', importData);
+      }
+
       document.addEventListener('keydown', e => {
         if (e.ctrlKey && e.key === 'a') {
           e.preventDefault();
-          // Select all visible
           Array.from($('resultsBody').querySelectorAll('input[type="checkbox"]')).forEach(cb => {
             cb.checked = true;
             cb.closest('tr')?.classList.add('row-selected');
@@ -1157,12 +1275,13 @@
           updateHeaderCheckboxState();
         } else if (e.ctrlKey && e.key === 'r') {
           e.preventDefault();
-          $('btnScan').click();
+          const btnScan = $('btnScan');
+          if (btnScan) btnScan.click();
         } else if (e.key === 'F1') {
           e.preventDefault();
-          $('btnHelp').click();
+          const btnHelp = $('btnHelp');
+          if (btnHelp) btnHelp.click();
         } else if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
-          // Navigate table rows
           const rows = Array.from($('resultsBody').querySelectorAll('tr'));
           const activeRow = document.activeElement.closest('tr');
           const idx = rows.indexOf(activeRow);
@@ -1171,43 +1290,83 @@
         }
       });
 
-      $('btnPickSource')?.addEventListener('click', async () => {
-        const result = await window.ppsaApi.pickDirectory();
-        if (!result.canceled && result.path) {
-          $('sourcePath').value = result.path;
-          try { localStorage.setItem(LAST_SRC_KEY, result.path); } catch (_) {}
-        }
-      });
-      $('btnPickDest')?.addEventListener('click', async () => {
-        const result = await window.ppsaApi.pickDirectory();
-        if (!result.canceled && result.path) {
-          $('destPath').value = result.path;
-          try { localStorage.setItem(LAST_DST_KEY, result.path); } catch (_) {}
-        }
-      });
-      $('btnScan')?.addEventListener('click', async () => {
-        const src = $('sourcePath') && $('sourcePath').value ? $('sourcePath').value.trim() : '';
-        if (!src) { toast('Select source first'); return; }
-        try { localStorage.setItem(LAST_SRC_KEY, src); } catch (_) {}
-        showScanUI(true);
-        $('btnGoBig').disabled = true;
-        $('currentScanLabel') && ($('currentScanLabel').textContent = 'Scanning...');
-        const res = await window.ppsaApi.scanSourceForPpsa(src);
-        const arr = Array.isArray(res) ? res : (Array.isArray(res?.items) ? res.items : []);
-        renderResults(arr);
-        $('btnGoBig').disabled = false;
-      });
-
-      $('btnCancelScan')?.addEventListener('click', async () => {
-        try {
-          if (window.ppsaApi && typeof window.ppsaApi.cancelOperation === 'function') {
-            await window.ppsaApi.cancelOperation();
+      const btnPickSource = $('btnPickSource');
+      if (btnPickSource) {
+        btnPickSource.addEventListener('click', async () => {
+          const result = await window.ppsaApi.pickDirectory();
+          if (!result.canceled && result.path) {
+            $('sourcePath').value = result.path;
+            addRecentSource(result.path);
+            try { localStorage.setItem(LAST_SRC_KEY, result.path); } catch (_) {}
           }
-          toast('Scan cancelled');
-          showScanUI(false);
+        });
+      }
+      const btnPickDest = $('btnPickDest');
+      if (btnPickDest) {
+        btnPickDest.addEventListener('click', async () => {
+          const result = await window.ppsaApi.pickDirectory();
+          if (!result.canceled && result.path) {
+            $('destPath').value = result.path;
+            addRecentDest(result.path);
+            try { localStorage.setItem(LAST_DST_KEY, result.path); } catch (_) {}
+          }
+        });
+      }
+      const btnScan = $('btnScan');
+      if (btnScan) {
+        btnScan.addEventListener('click', async () => {
+          const src = $('sourcePath') && $('sourcePath').value ? $('sourcePath').value.trim() : '';
+          if (!src) { toast('Select source first'); return; }
+          let actualSrc = src;
+          if (src === 'browse') {
+            const result = await window.ppsaApi.pickDirectory();
+            if (!result.canceled && result.path) {
+              actualSrc = result.path;
+              addRecentSource(result.path);
+            } else {
+              return;
+            }
+          } else if (src === 'ftp') {
+            const ftpUrl = prompt('Enter FTP URL (e.g., ftp://192.168.1.100 or 192.168.1.100/mnt/ext1/etaHEN/games):');
+            if (ftpUrl) {
+              actualSrc = ftpUrl.startsWith('ftp://') ? ftpUrl : 'ftp://' + ftpUrl;
+              addRecentSource(ftpUrl);
+            } else {
+              return;
+            }
+          } else if (src.startsWith('ftp://') || /^\d+\.\d+\.\d+\.\d+/.test(src)) {
+            // Auto-detect FTP if entered as IP/path
+            actualSrc = src.startsWith('ftp://') ? src : 'ftp://' + src;
+            addRecentSource(src);
+          } else {
+            addRecentSource(src);
+          }
+          try { localStorage.setItem(LAST_SRC_KEY, actualSrc); } catch (_) {}
+          showScanUI(true);
+          $('btnGoBig').disabled = true;
+          $('currentScanLabel') && ($('currentScanLabel').textContent = 'Scanning...');
+          scanStartTime = Date.now();
+          const res = await window.ppsaApi.scanSourceForPpsa(actualSrc);
+          const arr = Array.isArray(res) ? res : (Array.isArray(res?.items) ? res.items : []);
+          const duration = Math.round((Date.now() - scanStartTime) / 1000);
+          renderResults(arr, duration);
           $('btnGoBig').disabled = false;
-        } catch (_) {}
-      });
+        });
+      }
+
+      const btnCancelScan = $('btnCancelScan');
+      if (btnCancelScan) {
+        btnCancelScan.addEventListener('click', async () => {
+          try {
+            if (window.ppsaApi && typeof window.ppsaApi.cancelOperation === 'function') {
+              await window.ppsaApi.cancelOperation();
+            }
+            toast('Scan cancelled');
+            showScanUI(false);
+            $('btnGoBig').disabled = false;
+          } catch (_) {}
+        });
+      }
 
       const helpBackdrop = $('helpModalBackdrop');
       const helpOpenBtn = $('btnHelp');
@@ -1215,11 +1374,51 @@
       let helpEscHandler = null;
       function openHelp(ev) {
         if (ev) ev.preventDefault();
-        if (!helpBackdrop) return;
         helpBackdrop.style.display = 'flex';
         helpBackdrop.setAttribute('aria-hidden', 'false');
         helpEscHandler = (e) => { if (e.key === 'Escape') closeHelp(); };
         document.addEventListener('keydown', helpEscHandler);
+        const helpContent = $('helpContent');
+        if (helpContent) {
+          helpContent.innerHTML = `
+            <h2>PS5 Vault Help v1.0.6</h2>
+            <p>Organize PS5 games with verified transfers, progress/ETA, and conflict resolution.</p>
+            <h3>New in v1.0.6</h3>
+            <ul>
+              <li>Improved version formatting (full display without leading zero removal)</li>
+              <li>Size caching for FTP scans</li>
+              <li>Recent sources and destinations dropdown</li>
+              <li>Scan time display in results</li>
+              <li>Enhanced FTP support with better error handling</li>
+              <li>Click PS5 logo to clear recent paths</li>
+              <li>Version-based folder naming: Always append version in brackets (e.g., GameName (01.000.002))</li>
+            </ul>
+            <h3>How to Use</h3>
+            <ul>
+              <li>Select source from dropdown or browse/FTP</li>
+              <li>Scan for games</li>
+              <li>Pick action/layout, click "Go"</li>
+            </ul>
+            <h3>Features</h3>
+            <ul>
+              <li>FTP Scanning: ftp://[IP] or ftp://[IP]/mnt/usb0/etaHEN/games</li>
+              <li>Auto-detect games path on FTP root</li>
+              <li>Content ID display under game names</li>
+              <li>Improved scanning & batch delete</li>
+              <li>Shortcuts: Ctrl+A (all), Ctrl+R (scan), F1 (help)</li>
+              <li>Theme toggle: Click "Made by Nookie"</li>
+              <li>Recent paths: Last 10 sources and destinations</li>
+              <li>Click PS5 logo to clear recent paths</li>
+              <li>Version-based folder naming: Always append version in brackets (e.g., GameName (01.000.002))</li>
+            </ul>
+            <h3>Troubleshooting</h3>
+            <ul>
+              <li>Ensure param.json in sce_sys</li>
+              <li>FTP: Use specific paths</li>
+              <li>F12 for console errors</li>
+            </ul>
+          `;
+        }
       }
       function closeHelp() {
         if (!helpBackdrop) return;
@@ -1230,44 +1429,57 @@
           helpEscHandler = null;
         }
       }
-      helpOpenBtn?.addEventListener('click', openHelp);
-      helpCloseBtn?.addEventListener('click', closeHelp);
+      if (helpOpenBtn) helpOpenBtn.addEventListener('click', openHelp);
+      if (helpCloseBtn) helpCloseBtn.addEventListener('click', closeHelp);
 
-      $('btnSelectAll')?.addEventListener('click', () => {
-        Array.from(document.querySelectorAll('#resultsBody input[type="checkbox"]')).forEach(cb => {
-          cb.checked = true;
-          cb.closest('tr')?.classList.add('row-selected');
+      const btnSelectAll = $('btnSelectAll');
+      if (btnSelectAll) {
+        btnSelectAll.addEventListener('click', () => {
+          Array.from(document.querySelectorAll('#resultsBody input[type="checkbox"]')).forEach(cb => {
+            cb.checked = true;
+            cb.closest('tr')?.classList.add('row-selected');
+          });
+          updateHeaderCheckboxState();
         });
-        updateHeaderCheckboxState();
-      });
-      $('btnUnselectAll')?.addEventListener('click', () => {
-        Array.from(document.querySelectorAll('#resultsBody input[type="checkbox"]')).forEach(cb => {
-          cb.checked = false;
-          cb.closest('tr')?.classList.remove('row-selected');
+      }
+      const btnUnselectAll = $('btnUnselectAll');
+      if (btnUnselectAll) {
+        btnUnselectAll.addEventListener('click', () => {
+          Array.from(document.querySelectorAll('#resultsBody input[type="checkbox"]')).forEach(cb => {
+            cb.checked = false;
+            cb.closest('tr')?.classList.remove('row-selected');
+          });
+          updateHeaderCheckboxState();
         });
-        updateHeaderCheckboxState();
-      });
-      $('btnClear')?.addEventListener('click', () => {
-        Array.from(document.querySelectorAll('#resultsBody input[type="checkbox"]')).forEach(cb => {
-          cb.checked = false;
-          cb.closest('tr')?.classList.remove('row-selected');
+      }
+      const btnClear = $('btnClear');
+      if (btnClear) {
+        btnClear.addEventListener('click', () => {
+          Array.from(document.querySelectorAll('#resultsBody input[type="checkbox"]')).forEach(cb => {
+            cb.checked = false;
+            cb.closest('tr')?.classList.remove('row-selected');
+          });
+          const tb = $('resultsBody');
+          if (tb) tb.innerHTML = `<tr><td colspan="5" style="color:var(--muted);padding:12px">No scan performed yet.</td></tr>`;
+          $('scanCount') && ($('scanCount').textContent='');
+          updateHeaderCheckboxState();
+          try { localStorage.removeItem(LAST_RESULTS_KEY); } catch (_) {}
         });
-        const tb = $('resultsBody');
-        if (tb) tb.innerHTML = `<tr><td colspan="5" style="color:var(--muted);padding:12px">No scan performed yet.</td></tr>`;
-        $('scanCount') && ($('scanCount').textContent='');
-        updateHeaderCheckboxState();
-        try { localStorage.removeItem(LAST_RESULTS_KEY); } catch (_) {}
-      });
+      }
 
       const headerChk = $('chkHeader');
-      headerChk?.addEventListener('click', (e) => {
-        e.preventDefault();
-        toggleHeaderSelect();
-      });
+      if (headerChk) {
+        headerChk.addEventListener('click', (e) => {
+          e.preventDefault();
+          toggleHeaderSelect();
+        });
+      }
 
-      $('btnGoBig')?.addEventListener('click', goClickHandler);
+      const btnGoBig = $('btnGoBig');
+      if (btnGoBig) {
+        btnGoBig.addEventListener('click', goClickHandler);
+      }
 
-      // Discord button
       const discordLink = $('discordLink');
       if (discordLink) {
         const DISCORD_USERNAME = 'nookie_65120';
@@ -1289,10 +1501,14 @@
         });
       }
 
-      $('resultClose')?.addEventListener('click', () => {
-        const rb = $('resultModalBackdrop');
-        if (rb) { rb.style.display = 'none'; rb.setAttribute('aria-hidden', 'true'); }
-      });
+      const resultClose = $('resultClose');
+      if (resultClose) {
+        resultClose.addEventListener('click', () => {
+          refreshResultsAfterOperation(); // Refresh when user clicks close
+          const rb = $('resultModalBackdrop');
+          if (rb) { rb.style.display = 'none'; rb.setAttribute('aria-hidden', 'true'); }
+        });
+      }
     } catch (e) {
       err(e);
     }

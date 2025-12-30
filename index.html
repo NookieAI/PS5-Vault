@@ -658,7 +658,7 @@
         <div class="logo-wrap" aria-hidden="false" role="img" aria-label="PS5 Vault logo">
           <img id="brandLogo" class="brand-logo" src="./assets/logo.png" alt="PS5 Logo" />
           <svg id="brand-fallback" class="brand-fallback" viewBox="0 0 100 100" role="img" aria-label="PS5 Vault logo" xmlns="http://www.w3.org/2000/svg" style="display:none" preserveAspectRatio="xMidYMid meet">
-            <rect x="0" y="0" width="100" rx="10" fill="#0b2740"/>
+            <rect x="0" y="0" width="100" height="100" fill="#0b2740"/>
             <text x="50" y="58" text-anchor="middle" font-size="28" font-family="Segoe UI, Roboto, Arial" fill="#eaf3ff" font-weight="700">PS5</text>
           </svg>
         </div>
@@ -686,7 +686,7 @@
       <div class="controls-left">
         <div class="primary">
           <label style="color:var(--muted);margin-right:6px">Source</label>
-          <input id="sourcePath" type="text" readonly placeholder="Choose root folder" style="min-width:260px" aria-label="Source path" />
+          <input id="sourcePath" type="text" placeholder="Choose root folder" style="min-width:260px" aria-label="Source path" list="sourceHistory" />
           <button id="btnPickSource" class="btn" aria-label="Browse source">Browse</button>
           <button id="btnScan" class="btn-scan" aria-label="Start scan">SCAN</button>
           <button id="btnCancelScan" class="btn-cancel" aria-label="Cancel scan">Cancel</button>
@@ -703,7 +703,7 @@
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
           <button id="btnGoBig" class="btn-go" aria-label="Start transfer">GO</button>
           <label style="color:var(--muted);margin-left:6px">Destination</label>
-          <input id="destPath" type="text" readonly placeholder="Destination" style="min-width:260px" aria-label="Destination path" />
+          <input id="destPath" type="text" placeholder="Destination" style="min-width:260px" aria-label="Destination path" list="destHistory" />
           <button id="btnPickDest" class="btn" aria-label="Browse destination">Browse</button>
         </div>
 
@@ -857,6 +857,9 @@
 
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
   <div id="imgPreview" class="img-preview" aria-hidden="true"><img id="imgPreviewImg" src="" alt="preview"></div>
+
+  <datalist id="sourceHistory"></datalist>
+  <datalist id="destHistory"></datalist>
 
   <script src="utils.js"></script>
   <script src="renderer.js"></script>

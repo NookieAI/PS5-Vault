@@ -1,6 +1,6 @@
 {
   "name": "ps5vault",
-  "version": "1.0.5B",
+  "version": "1.0.6",
   "description": "PS5 Vault: organize PPSA folders safely with verified copy/move, original Electron transfer windows, clear progress/ETA, and conflict resolution.",
   "author": "Nookie",
   "private": true,
@@ -11,6 +11,9 @@
     "dev": "electron .",
     "dist": "electron-builder -w portable --publish never",
     "dist:x64": "electron-builder -w portable --x64 --publish never"
+  },
+  "dependencies": {
+    "basic-ftp": "^5.0.5"
   },
   "devDependencies": {
     "electron": "22.3.27",
@@ -38,7 +41,7 @@
     "asar": true,
     "compression": "maximum",
     "extraMetadata": {
-      "version": "1.0.5B"
+      "version": "1.0.6"
     },
     "win": {
       "target": [
