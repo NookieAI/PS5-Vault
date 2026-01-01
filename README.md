@@ -20,7 +20,7 @@ Organize games into various directory structures:
 - **itemZFlow Default**: `Destination/games/GameName`
 
 ### FTP Support
-- Scan FTP servers (e.g., PS5 with etaHEN) directly. eg: 192.168.137.100/mnt/usb0/etaHEN
+- Scan FTP servers (e.g., PS5 with etaHEN) directly. (192.168.137.100/mnt/usb0/etaHEN)
 - Not working for root scans, must know folder path. 
 - Auto-detects common paths like `/mnt/ext1/etaHEN/games`.
 - Supports anonymous access.
