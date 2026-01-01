@@ -1,3 +1,5 @@
+:heart: Support my project! https://ko-fi.com/nookie_65120 :heart:
+
 <img width="1919" height="1003" alt="image" src="https://github.com/user-attachments/assets/44ea0d82-54c3-4451-a9e7-5a301184426a" />
 
 PS5 Vault is an Electron-based application for organizing and managing PS5 game folders (PPSA packages). It provides safe, verified transfers with progress tracking, conflict resolution, and support for both local and FTP sources. Ideal for PS5 homebrew users managing games on external storage or network shares.
