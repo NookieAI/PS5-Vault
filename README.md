@@ -51,11 +51,7 @@ Organize games into various directory structures:
 - **Cancellation**: Abort scans or transfers at any time.
 
 ## Installation
-
-1. Ensure [Node.js](https://nodejs.org/) is installed (v16+ recommended).
-2. Clone or download the repository.
-3. Install dependencies:
-
+https://github.com/NookieAI/PS5-Vault/releases/tag/1.0.6
 
 Support my project! 
 https://ko-fi.com/nookie_65120
