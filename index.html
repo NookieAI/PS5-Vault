@@ -560,6 +560,10 @@
       flex: 1;
     }
 
+    .modal-body a {
+      color: var(--accent);
+    }
+
     .modal-actions {
       display: flex;
       justify-content: flex-end;
@@ -651,7 +655,7 @@
 
   <link rel="stylesheet" href="./ui-overrides.css">
 </head>
-<body>
+<body data-theme="dark">
   <div class="container">
     <div class="topbar">
       <div class="brand">
@@ -724,6 +728,8 @@
               <option value="ppsa-only">PPSA only</option>
               <option value="etahen" selected>etaHEN default</option>
               <option value="itemzflow">itemZFlow default</option>
+              <option value="dump_runner">Dump Runner default</option>
+              <option value="custom">Custom</option>
             </select>
           </div>
         </div>
@@ -822,36 +828,70 @@
     <div class="modal" role="dialog" aria-modal="true" aria-labelledby="helpTitle">
       <div class="modal-header"><h4 id="helpTitle">How to use PS5 Vault</h4></div>
       <div class="modal-body">
-        <div style="color:var(--muted);line-height:1.4">
-          <h4 style="margin-top:0">Quick start</h4>
-          <ol style="margin-left:14px">
-            <li>Click "Browse" next to Source and choose the folder or drive that contains your game folders.</li>
-            <li>Click SCAN. The app will locate validated game folders and list them with thumbnails.</li>
-            <li>Select the entries you want to process using the checkboxes (use Select All / Unselect All to help).</li>
-            <li>Pick a Destination where the organized folders should be created or moved to.</li>
-            <li>Choose Action and Layout (these controls are under Destination). Action controls whether to create folders, copy, or move. Layout selects the destination folder structure.</li>
-            <li>Click GO. A confirmation dialog (From → To) appears. Confirm to start.</li>
-            <li>During transfers, only the Cancel button is shown. Wait for completion.</li>
-          </ol>
+        <ol style="margin-left:14px">
+          <li><strong>Set Source:</strong> Click "Browse" next to Source to select a local folder/drive, or enter an FTP URL (see FTP section below) to scan games directly from your PS5.</li>
+          <li><strong>Scan:</strong> Click SCAN. The app will locate validated game folders (with param.json) and list them with thumbnails.</li>
+          <li><strong>Select Items:</strong> Use checkboxes to pick games (Ctrl+A to select all, or use Select All/Unselect All buttons).</li>
+          <li><strong>Set Destination:</strong> Click "Browse" to choose where organized folders go.</li>
+          <li><strong>Choose Action & Layout:</strong> Action = folder creation, copy, or move. Layout = destination folder structure (see below).</li>
+          <li><strong>Transfer:</strong> Click GO. Review the confirmation dialog (shows From → To paths), then confirm to start.</li>
+          <li><strong>Monitor Progress:</strong> Watch the progress bar and details. Use Cancel if needed. Results show after completion.</li>
+        </ol>
 
-          <h4 style="margin-top:8px">Layout directory structures</h4>
-          <ul style="margin-left:14px">
-            <li><strong>Game / PPSA</strong> — Destination/GameName/PPSAName</li>
-            <li><strong>Game only</strong> — Destination/GameName</li>
-            <li><strong>PPSA only</strong> — Destination/PPSAName</li>
-            <li><strong>etaHEN default</strong> — Destination/etaHEN/games/GameName</li>
-            <li><strong>itemZFlow default</strong> — Destination/games/GameName</li>
-          </ul>
+        <h3>FTP Scanning (Direct from PS5)</h3>
+        <p>Use FTP to scan games. Still experimental. This is not ideal for large libraries or slow networks.</p>
+        <ul style="margin-left:14px">
+          <li><strong>Enter Source:</strong> In PS5 Vault, type the FTP URL in Source: <code>ftp://192.168.1.100</code> or <code>192.168.1.100/mnt/ps5/games</code> (app auto-detects). Click SCAN.</li>
+          <li><strong>Tips:</strong> Ensure PS5 and PC are on the same network. If scanning fails, check firewall, IP, or try a different FTP app. Scans are slower over FTP, use for scanning only when needed.</li>
+          <li><strong>Supported Paths:</strong> Scans common USB/game paths automatically (e.g., /mnt/usb0/etaHEN/games). If custom, specify the full path.</li>
+        </ul>
 
-          <h4 style="margin-top:8px">Notes</h4>
-          <ul style="margin-left:14px">
-            <li>If a target already exists you will be prompted (or default) to handle conflicts via skip or rename.</li>
-            <li>For fastest moves, place Destination on the same drive as Source and use Move. If drives differ, Copy+verify is used for safety.</li>
-            <li>The PPSA folder is removed, but internal game folder structure (e.g., sce_sys) is preserved.</li>
-          </ul>
-        </div>
+        <h3>Layout Directory Structures</h3>
+        <ul style="margin-left:14px">
+          <li><strong>Game / PPSA</strong> — Destination/GameName/PPSAName (default, keeps PPSA separate)</li>
+          <li><strong>Game only</strong> — Destination/GameName (flattens PPSA into game folder)</li>
+          <li><strong>PPSA only</strong> — Destination/PPSAName (PPSA folders only, no game wrapper)</li>
+          <li><strong>etaHEN default</strong> — Destination/etaHEN/games/GameName</li>
+          <li><strong>itemZFlow default</strong> — Destination/games/GameName</li>
+          <li><strong>Dump Runner default</strong> — Destination/homebrew/GameName</li>
+          <li><strong>Custom</strong> — Destination/CustomName (enter your own name, single game only)</li>
+        </ul>
+
+        <h3>Tips and Troubleshooting</h3>
+        <ul style="margin-left:14px">
+          <li><strong>Conflicts:</strong> If a target folder exists, the app renames (e.g., "Game (1)") or skips—review before confirming.</li>
+          <li><strong>Performance:</strong> For fastest transfers, use Move on the same drive. Copy verifies files for safety (slower on different drives). Avoid deep folders (limit: 12 levels).</li>
+          <li><strong>File Safety:</strong> PPSA folders are removed post-transfer, but game data (e.g., sce_sys) is preserved. Always back up originals.</li>
+          <li><strong>Common Issues:</strong>
+            <ul>
+              <li>No games found? Ensure folders have param.json in sce_sys. Check permissions or try a different source.</li>
+              <li>FTP timeouts? Use a wired connection, check PS5 FTP settings, or switch to local scanning.</li>
+              <li>Transfers stuck? Cancel and retry. Check disk space/free up RAM if needed.</li>
+              <li>Large FTP scans slow? For 100+ games, scans over FTP may take minutes.</li>
+            </ul>
+          </li>
+          <li><strong>Best Practices:</strong> Test with one game first. Use meaningful custom names. Keep sources/dests on fast drives. Update PS5 firmware for compatibility.</li>
+          <li><strong>Keyboard Shortcuts:</strong> Ctrl+A (select all), Ctrl+R (rescan), F1 (help), Arrow keys (navigate list).</li>
+          <li><strong>Need More Help?</strong> Contact @Nookie_65120 via Discord or check GitHub for updates.</li>
+        </ul>
+        <p><a href="https://github.com/NookieAI/PS5-Vault" target="_blank" rel="noopener noreferrer">https://github.com/NookieAI/PS5-Vault</a></p>
+        <p>Please donate to the project: <a href="https://ko-fi.com/nookie_65120" target="_blank" rel="noopener noreferrer">https://ko-fi.com/nookie_65120</a></p>
       </div>
       <div class="modal-actions"><button id="helpClose" class="btn" aria-label="Close">Close</button></div>
+    </div>
+  </div>
+
+  <!-- Custom name modal -->
+  <div id="customModalBackdrop" class="modal-backdrop" aria-hidden="true">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="customTitle">
+      <div class="modal-header"><h4 id="customTitle">Enter Custom Folder Name</h4></div>
+      <div class="modal-body">
+        <input id="customNameInput" type="text" placeholder="Custom folder name" style="width:100%;padding:8px;border:1px solid var(--card-border);background:var(--select-bg);color:var(--title);border-radius:4px;" />
+      </div>
+      <div class="modal-actions">
+        <button id="customCancel" class="btn" aria-label="Cancel">Cancel</button>
+        <button id="customProceed" class="btn-go" aria-label="OK">OK</button>
+      </div>
     </div>
   </div>
 

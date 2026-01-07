@@ -5,6 +5,7 @@ const crypto = require('crypto');
 
 // Add FTP support
 const ftp = require('basic-ftp');
+const readdirp = require('readdirp');
 
 const MAX_SCAN_DEPTH = 12;
 const SCAN_CONCURRENCY = 24; // Reduced to 24 for better system stability
@@ -12,7 +13,7 @@ const MAX_FILE_SIZE_BYTES = 200 * 1024 * 1024 * 1024; // 200GB limit for sanity
 const RETRY_ATTEMPTS = 3;
 const RETRY_DELAY_MS = 100;
 
-const VERSION = '1.0.6'; // Updated version
+const VERSION = '1.0.7'; // Updated version
 
 console.log('[main] Starting PS5 Vault v' + VERSION);
 
@@ -117,14 +118,14 @@ async function findAllParamJsons(startDir, maxDepth = MAX_SCAN_DEPTH, signal) {
 /**
  * Finds param.json in a PPSA directory.
  * @param {string} ppsaDir - PPSA directory.
- * @param {number} maxDepth - Maximum levels.
+ * @param {number} maxLevels - Maximum levels.
  * @returns {Promise<string|null>} Path to param.json or null.
  */
-async function findParamJsonInPpsa(ppsaDir, maxDepth = 2) {
+async function findParamJsonInPpsa(ppsaDir, maxLevels = 2) {
   const direct = path.join(ppsaDir, 'sce_sys', 'param.json');
   try { await fs.promises.access(direct); return direct; } catch (_) {}
   async function search(dir, depth) {
-    if (depth > maxDepth) return null;
+    if (depth > maxLevels) return null;
     try {
       const entries = await fs.promises.readdir(dir, { withFileTypes: true });
       for (const ent of entries) {
@@ -306,7 +307,7 @@ async function findContentFoldersByTopLevelWithProgress(startDir, sender) {
     // Calculate total size
     let totalSize = 0;
     try {
-      const srcFiles = await listAllFilesWithStats(folderPath);
+      const srcFiles = await listAllFilesWithStats(folderPath, controller.signal);
       totalSize = srcFiles.reduce((sum, f) => sum + f.size, 0);
     } catch (e) {
       console.error('[Local] Error calculating size for:', folderPath, e);
@@ -363,10 +364,10 @@ async function withFtpLock(fn) {
   }
 }
 
-async function getFtpFolderSize(client, remotePath, maxDepth = 5) { // Increased depth for accuracy
+async function getFtpFolderSize(client, remotePath, maxDepth = 5) { // Back to 5 for stability
   if (sizeCache.has(remotePath)) return sizeCache.get(remotePath);
   let total = 0;
-  const timeoutMs = 15000; // Increased to 15s
+  const timeoutMs = 15000; // Increased from 10000 to 15s for better reliability
   const visited = new Set();
   async function recurse(currPath, depth) {
     if (depth > maxDepth || visited.has(currPath)) return;
@@ -801,7 +802,8 @@ ipcMain.handle('ensure-and-populate', async (event, opts) => {
   if (!dest || !path.isAbsolute(dest)) throw new Error('Invalid destination');
 
   const action = opts.action || 'folder-only';
-  const layout = opts.layout || 'game-ppsa';
+  const layout = opts.layout || 'etahen';
+  const customName = opts.customName || null;
   const overwriteMode = opts.overwriteMode || 'rename';
 
   const controller = new AbortController();
@@ -830,7 +832,7 @@ ipcMain.handle('ensure-and-populate', async (event, opts) => {
         }
 
         const safeGameName = deriveSafeGameName(it, parsed);
-        const safeGame = sanitize(safeGameName);
+        const safeGame = customName && layout === 'custom' ? sanitize(customName) : sanitize(safeGameName);
 
         let srcFolder = it.ppsaFolderPath || it.folderPath || null;
         if (!srcFolder && it.contentFolderPath) {
@@ -864,6 +866,8 @@ ipcMain.handle('ensure-and-populate', async (event, opts) => {
         else if (layout === 'game-only') finalTarget = path.join(dest, safeGame);
         else if (layout === 'etahen') finalTarget = path.join(dest, 'etaHEN', 'games', safeGame);
         else if (layout === 'itemzflow') finalTarget = path.join(dest, 'games', safeGame);
+        else if (layout === 'dump_runner') finalTarget = path.join(dest, 'homebrew', safeGame);
+        else if (layout === 'custom') finalTarget = path.join(dest, safeGame);  // Just the custom folder name
         else finalTarget = path.join(dest, safeGame, finalPpsaName);  // game-ppsa creates GameName/PPSAName
 
         const normalizedSrc = path.resolve(srcFolder);
@@ -881,10 +885,21 @@ ipcMain.handle('ensure-and-populate', async (event, opts) => {
         let totalBytesCopiedSoFar = 0;
         const progressFn = (info) => {
           if (event.sender && !event.sender.isDestroyed()) {
-            if (info.type === 'go-file-complete' || info.type === 'go-file-progress') {
+            if (info.type === 'go-file-complete') {
               totalBytesCopiedSoFar += info.totalBytesCopied || 0;
             }
-            event.sender?.send('scan-progress', { ...info, totalBytes: itemTotalBytes, totalBytesCopied: totalBytesCopiedSoFar, itemIndex: idx + 1, totalItems: items.length });
+            // For progress, send current cumulative + file progress
+            let cumulativeCopied = totalBytesCopiedSoFar;
+            if (info.type === 'go-file-progress') {
+              cumulativeCopied += info.totalBytesCopied || 0;
+            }
+            event.sender?.send('scan-progress', { 
+              ...info, 
+              totalBytes: itemTotalBytes, 
+              totalBytesCopied: cumulativeCopied,  // Now truly cumulative
+              itemIndex: idx + 1, 
+              totalItems: items.length 
+            });
           }
         };
 
@@ -900,7 +915,9 @@ ipcMain.handle('ensure-and-populate', async (event, opts) => {
         }
 
         if (action === 'folder-only') {
+          event.sender?.send('scan-progress', { type: 'go-item', path: finalTarget, itemIndex: idx + 1, totalItems: items.length });
           await fs.promises.mkdir(finalTarget, { recursive: true });
+          event.sender?.send('scan-progress', { type: 'go-file-complete', fileRel: 'Folder created', totalBytesCopied: 0, totalBytes: 0 });
           results.push({ item: safeGameName, target: finalTarget, created: true, source: srcFolder, safeGameName });
         } else if (action === 'copy') {
           progressFn({ type: 'go-file-progress', totalBytesCopied: 0, totalBytes: itemTotalBytes });
@@ -935,10 +952,10 @@ ipcMain.handle('ensure-and-populate', async (event, opts) => {
   return { success: true, results };
 });
 
-ipcMain.handle('check-conflicts', async (event, items, dest, layout) => {
+ipcMain.handle('check-conflicts', async (event, items, dest, layout, customName) => {
   const conflicts = [];
   for (const it of items) {
-    const safeGame = sanitize(deriveSafeGameName(it, null));
+    const safeGame = customName && layout === 'custom' ? sanitize(customName) : sanitize(deriveSafeGameName(it, null));
     let finalPpsaName = it.ppsa || (it.contentId && (String(it.contentId).match(/PPSA\d{4,6}/i) || [])[0]?.toUpperCase()) || null;
     if (!finalPpsaName) {
       const src = it.contentFolderPath || it.ppsaFolderPath || it.folderPath || '';
@@ -950,6 +967,8 @@ ipcMain.handle('check-conflicts', async (event, items, dest, layout) => {
     else if (layout === 'game-only') finalTarget = path.join(dest, safeGame);
     else if (layout === 'etahen') finalTarget = path.join(dest, 'etaHEN', 'games', safeGame);
     else if (layout === 'itemzflow') finalTarget = path.join(dest, 'games', safeGame);
+    else if (layout === 'dump_runner') finalTarget = path.join(dest, 'homebrew', safeGame);
+    else if (layout === 'custom') finalTarget = path.join(dest, safeGame);  // Just the custom folder name
     else finalTarget = path.join(dest, safeGame, finalPpsaName);  // game-ppsa creates GameName/PPSAName
     const exists = await fs.promises.stat(finalTarget).catch(() => false);
     if (exists) conflicts.push({ item: it.displayTitle || it.folderName || '', target: finalTarget });
@@ -1005,6 +1024,12 @@ ipcMain.handle('move-to-layout', async (event, item, dest, layout) => {
   return { success: true };
 });
 
+// Resume IPC
+ipcMain.handle('resume-transfer', async (event, state) => {
+  // Reuse ensureAndPopulate logic with state.items, etc.
+  return await ensureAndPopulate(event, state);
+});
+
 // App bootstrap (unchanged)
 let mainWindow;
 const gotTheLock = app.requestSingleInstanceLock();
@@ -1056,7 +1081,7 @@ function createWindow() {
 // Naming helpers (unchanged)
 function sanitize(name) {
   if (!name) return 'Unknown';
-  return String(name).replace(/[<>:"/\\|?*\x00-\x1F]/g, '').trim().slice(0, 200) || 'Unknown';
+  return String(name).replace(/[<>:"/\\|?*\x00-\x1F!'™@#$%^&[\]{}=+;,`~]/g, '').trim().slice(0, 200) || 'Unknown';
 }
 function deriveSafeGameName(item, parsed) {
   if (item?.displayTitle) return item.displayTitle;
