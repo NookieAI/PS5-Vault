@@ -14,6 +14,7 @@ contextBridge.exposeInMainWorld('ppsaApi', {
   deleteItem: (item) => ipcRenderer.invoke('delete-item', item),
   renameItem: (item, newName) => ipcRenderer.invoke('rename-item', item, newName),
   moveToLayout: (item, dest, layout) => ipcRenderer.invoke('move-to-layout', item, dest, layout),
+  resumeTransfer: (state) => ipcRenderer.invoke('resume-transfer', state),
 
   // Listener for progress updates
   onScanProgress: (callback) => {
