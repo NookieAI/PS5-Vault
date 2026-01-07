@@ -6,14 +6,22 @@ PS5 Vault is an Electron-based application for organizing and managing PS5 game 
 
 ## Features
 
-### Core Functionality
-- **Game Scanning**: Recursively scan local directories or FTP servers (**experimental**) for PS5 game folders containing `param.json` files.
-- **Verified Transfers**: Copy or move local games with hash verification to ensure data integrity.
-- **Progress Tracking**: Real-time progress bars, ETA calculations, and speed metrics during transfers.
-- **Conflict Resolution**: Handle existing files with options to skip, rename, or overwrite.
-- **Batch Operations**: Select multiple games for bulk operations, including batch delete.
+- **Scan & Organize**: Automatically detect validated game folders (containing `param.json`) with thumbnails.
+- **Flexible Transfers**: Copy, move, or create folders with various layout options (e.g., etaHEN, itemZFlow, dump_runner, Custom).
+- **FTP Support**: Scan games directly from PS5 (experimental, for smaller libraries, avoid Astro Bot with ftp).
+- **Conflict Resolution**: Handle existing files safely with skip or rename options only.
+- **Progress Monitoring**: Real-time progress bars and detailed results.
+- **Themes**: Dark/light mode toggle.
+- **Keyboard Shortcuts**: Ctrl+A (select all), Ctrl+R (rescan), F1 (help).
 
-### Layout Options
+## Usage
+
+1. **Set Source**: Browse local folder or (`C:\, Z:\`) or ftp (`ftp://192.168.1.100/mnt/usb0/games, 192.168.1.100/mnt/usb0/games `).
+2. **Scan**: Click SCAN to list games.
+3. **Select & Configure**: Choose games, set destination, action (copy/move), and layout.
+4. **Transfer**: Click GO, confirm, and monitor progress.
+
+## Layout Options
 Organize games into various directory structures:
 - **Game / PPSA**: `Destination/GameName/PPSAName`
 - **Game Only**: `Destination/GameName`
@@ -21,14 +29,14 @@ Organize games into various directory structures:
 - **etaHEN Default**: `Destination/etaHEN/games/GameName`
 - **itemZFlow Default**: `Destination/games/GameName`
 
-### FTP Support
+## FTP Support
 - Scan FTP servers (e.g., PS5 with etaHEN) directly. (192.168.137.100/mnt/usb0/etaHEN)
 - Not working for root scans, must know folder path. 
 - Auto-detects common paths like `/mnt/ext1/etaHEN/games`.
 - Supports anonymous access.
 - Default port 1337 for PS5 FTP.
 
-### User Interface
+## User Interface
 - **Dark/Light Theme Toggle**: Click "Made by Nookie" to switch themes.
 - **Recent Paths**: Dropdowns for last 10 source and destination paths.
 - **Image Previews**: Hover over game covers for enlarged previews.
@@ -42,7 +50,7 @@ Organize games into various directory structures:
   - Conflict resolution modal.
   - Detailed transfer results modal with success/error badges.
 
-### Additional Features
+## Additional Features
 - **Version-Based Naming**: Appends game version in brackets (e.g., `GameName (01.000.002)`) to folder names.
 - **Size Calculation**: Displays total size for each game, including FTP size caching.
 - **Batch Delete**: Permanently delete selected games with confirmation.
@@ -51,9 +59,23 @@ Organize games into various directory structures:
 - **Cancellation**: Abort scans or transfers at any time.
 
 ## Installation
-[https://github.com/NookieAI/PS5-Vault/releases/tag/1.0.6
-](https://github.com/NookieAI/PS5-Vault/releases/tag/1.0.7)
 
+1. Download the latest release from [GitHub Releases](https://github.com/NookieAI/PS5-Vault/releases). (no installation required)
+2. For FTP scanning, ensure your PS5 and PC are on the same network. Check Help button in app for more help.
 
-Support my project! 
-https://ko-fi.com/nookie_65120
+## Tips
+- Test with one game first.
+- Use Move for fastest transfers on the same drive.
+- Back up originals before transferring.
+- For large libraries, prefer local scanning over FTP.
+
+## Contributing
+
+Contributions welcome! Fork the repo, make changes, and submit a PR. Report issues or request features via [GitHub Issues](https://github.com/NookieAI/PS5-Vault/issues).
+
+## Support
+
+- **Discord**: @Nookie_65120
+- **Donate**: [Ko-fi](https://ko-fi.com/nookie_65120)
+
+Made with ❤️ by NookieSupport my project!
