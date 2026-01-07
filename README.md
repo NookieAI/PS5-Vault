@@ -69,10 +69,6 @@ Organize games into various directory structures:
 - Back up originals before transferring.
 - For large libraries, prefer local scanning over FTP.
 
-## Contributing
-
-Contributions welcome! Fork the repo, make changes, and submit a PR. Report issues or request features via [GitHub Issues](https://github.com/NookieAI/PS5-Vault/issues).
-
 ## Support
 
 - **Discord**: @Nookie_65120
