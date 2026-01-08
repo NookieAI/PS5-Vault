@@ -28,13 +28,16 @@ Organize games into various directory structures:
 - **PPSA Only**: `Destination/PPSAName`
 - **etaHEN Default**: `Destination/etaHEN/games/GameName`
 - **itemZFlow Default**: `Destination/games/GameName`
+- **Dump Runner Default**: `Destination/homebrew/GameName`
+
 
 ## FTP Support
-- Scan FTP servers (e.g., PS5 with etaHEN) directly. (192.168.137.100/mnt/usb0/etaHEN)
-- Not working for root scans, must know folder path. 
+- Limited to read-only for FTP scanning.
+- Displays games found in FTP servers (PS5 with etaHEN) using standard FTP format (192.168.137.100/mnt/usb0/etaHEN)
+- Not working for root scans, must know the folder path. 
 - Auto-detects common paths like `/mnt/ext1/etaHEN/games`.
 - Supports anonymous access.
-- Default port 1337 for PS5 FTP.
+- Default port 1337 for PS5 FTP. 
 
 ## User Interface
 - **Dark/Light Theme Toggle**: Click "Made by Nookie" to switch themes.
