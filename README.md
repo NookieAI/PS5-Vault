@@ -75,6 +75,6 @@ Organize games into various directory structures:
 ## Support
 
 - **Discord**: @Nookie_65120
-- **Donate**: [Ko-fi](https://ko-fi.com/nookie_65120)
+- **Donate**: [Nookie](https://ko-fi.com/nookie_65120)
 
-Made with ❤️ by NookieSupport my project!
+Made with ❤️ by Nookie
