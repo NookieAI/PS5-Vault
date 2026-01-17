@@ -4,22 +4,19 @@
 
 PS5 Vault is an Electron-based application for organizing and managing PS5 game folders (PPSA packages). It provides safe, verified transfers with progress tracking, conflict resolution, and support for both local and FTP sources. Ideal for PS5 homebrew users managing games on external storage or network shares.
 
-## Features
+Features
 
-- **Scan & Organize**: Automatically detect validated game folders (containing `param.json`) with thumbnails.
-- **Flexible Transfers**: Copy, move, or create folders with various layout options (e.g., etaHEN, itemZFlow, dump_runner, Custom).
-- **FTP Support**: Scan games directly from PS5 (experimental, for smaller libraries, avoid Astro Bot with ftp).
-- **Conflict Resolution**: Handle existing files safely with skip or rename options only.
-- **Progress Monitoring**: Real-time progress bars and detailed results.
-- **Themes**: Dark/light mode toggle.
-- **Keyboard Shortcuts**: Ctrl+A (select all), Ctrl+R (rescan), F1 (help).
+    Local Scanning: Scan local folders for validated PS5 game entries (requires param.json).
+    FTP Support: Directly scan and transfer games from your PS5 via FTP (using ftpsrv or etaHEN). Copy or move files from FTP source to local destination. Redesigned modal in v1.0.8 for better usability.
+    Multiple Layouts: Choose from various destination folder structures (Game/PPSA, Game only, PPSA only, etaHEN default, etc.).
+    Batch Operations: Select, rename, delete, or move multiple games at once.
+    Conflict Resolution: Automatically handle existing files with skip or rename options.
+    Progress Tracking: Real-time progress bars, ETA, and transfer statistics.
+    Help System: Comprehensive in-app help with step-by-step instructions.
+    Dark/Light Theme: Toggle between themes for comfortable viewing.
+    Keyboard Shortcuts: Ctrl+A (select all), Ctrl+R (rescan), F1 (help), Arrow keys (navigate).
+    Cross-Platform: Built with Electron for Windows, macOS, and Linux.
 
-## Usage
-
-1. **Set Source**: Browse local folder or (`C:\, Z:\`) or ftp (`ftp://192.168.1.100/mnt/usb0/games, 192.168.1.100/mnt/usb0/games `).
-2. **Scan**: Click SCAN to list games.
-3. **Select & Configure**: Choose games, set destination, action (copy/move), and layout.
-4. **Transfer**: Click GO, confirm, and monitor progress.
 
 ## Layout Options
 Organize games into various directory structures:
