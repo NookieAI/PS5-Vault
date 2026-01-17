@@ -9,7 +9,7 @@
 ## Features
 
 - **Local Scanning**: Scan local folders for validated PS5 game entries (requires param.json).
-- **FTP Support**: Directly scan and transfer games from your PS5 via FTP (using ftpsrv or etaHEN). Copy or move files from FTP source to local destination. Redesigned modal in v1.0.8 for better usability, with port-based path auto-detection (e.g., port 1337 defaults to `/mnt/ext1/etaHEN/games` for etaHEN; port 2121 to `/mnt/ps5/games` for ftpsrv).
+- **FTP Support**: Directly scan and transfer games from your PS5 via FTP (using ftpsrv or etaHEN). Copy or move files from FTP source to local destination. Redesigned modal in v1.0.8 for better usability, with port-based path auto-detection (e.g., port 1337 defaults to `/mnt/ext1/etaHEN/games` for etaHEN; port 2121 to `/mnt/usb0/games` for ftpsrv).
 - **Multiple Layouts**: Choose from various destination folder structures (Game/PPSA, Game only, PPSA only, etaHEN default, etc.).
 - **Batch Operations**: Select, rename, delete, or move multiple games at once.
 - **Rename Modal**: Use genuine game names from `param.json` for default renaming, or enter custom names for single items.
