@@ -50,15 +50,6 @@ For FTP: Ensure your PS5 has ftpsrv running (port 2121) or use etaHEN default (p
 - **Dump Runner default**: `Destination/homebrew/GameName`
 - **Custom**: Specify your own folder name (opens rename modal for single-item selection).
 
-## Changelog
-
-### [1.0.9] - 2026-01-17
-- **Fixed**: FTP modal port assignment bug (was incorrectly using host for port).
-- **Improved**: Rename modal now uses genuine names from `param.json` for default preset.
-- **Added**: Port-based path auto-detection in FTP modal (1337: etaHEN path; 2121: ftpsrv path).
-- **Enhanced**: Synced recent lists and autocomplete dropdowns, including full FTP URLs in source history.
-- **Updated**: Better error handling and user guidance for FTP connections.
-
 ## Support & Links
 
 - [GitHub Repository](https://github.com/NookieAI/PS5-Vault)
