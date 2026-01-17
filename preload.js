@@ -3,9 +3,9 @@ const { contextBridge, ipcRenderer } = require('electron');
 // Expose protected methods that allow the renderer process to use
 // the ipcRenderer without exposing the entire object
 contextBridge.exposeInMainWorld('ppsaApi', {
-  pickDirectory: () => ipcRenderer.invoke('open-directory'),
+  openDirectory: () => ipcRenderer.invoke('open-directory'),
   cancelOperation: () => ipcRenderer.invoke('cancel-operation'),
-  scanSourceForPpsa: (sourceDir) => ipcRenderer.invoke('scan-source', sourceDir),
+  scanSource: (sourceDir) => ipcRenderer.invoke('scan-source', sourceDir),
   ensureAndPopulate: (opts) => ipcRenderer.invoke('ensure-and-populate', opts),
   checkConflicts: (items, dest, layout) => ipcRenderer.invoke('check-conflicts', items, dest, layout),
   showInFolder: (targetPath) => ipcRenderer.invoke('show-in-folder', targetPath),
@@ -13,6 +13,8 @@ contextBridge.exposeInMainWorld('ppsaApi', {
   copyToClipboard: (text) => ipcRenderer.invoke('clipboard-write', text),
   deleteItem: (item) => ipcRenderer.invoke('delete-item', item),
   renameItem: (item, newName) => ipcRenderer.invoke('rename-item', item, newName),
+  ftpRenameItem: (config, oldPath, newPath) => ipcRenderer.invoke('ftp-rename-item', config, oldPath, newPath),
+  ftpDeleteItem: (config, path) => ipcRenderer.invoke('ftp-delete-item', config, path),
   moveToLayout: (item, dest, layout) => ipcRenderer.invoke('move-to-layout', item, dest, layout),
   resumeTransfer: (state) => ipcRenderer.invoke('resume-transfer', state),
 

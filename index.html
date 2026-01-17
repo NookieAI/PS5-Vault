@@ -302,7 +302,7 @@
       will-change: transform;
     }
 
-    input[type="text"], select {
+    input[type="text"], input[type="password"], select {
       padding: 6px 8px;
       border-radius: 8px;
       border: 1px solid var(--card-border);
@@ -324,6 +324,10 @@
       color: var(--muted);
       cursor: pointer;
       font-weight: 700;
+    }
+
+    .btn:hover {
+      background: rgba(255,255,255,0.05);
     }
 
     .btn-scan {
@@ -530,27 +534,34 @@
       gap: 8px;
     }
 
-    .modal-header {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      position: relative;
-      gap: 12px;
+    .ftp-modal {
+      --modal-max-width: 500px;
     }
 
-    .modal-header h4 {
-      margin: 0;
+    .modal-header {
+      position: relative;
+      text-align: center;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .modal-header .result-summary-title {
       font-size: 18px;
       font-weight: 800;
       color: var(--title);
       letter-spacing: 0.2px;
     }
 
-    .result-eta {
-      font-size: 18px;
-      font-weight: 800;
-      color: var(--accent);
-      letter-spacing: 0.5px;
+    .modal-header .result-count {
+      font-size: 14px;
+      color: var(--muted);
+      font-weight: 600;
+    }
+
+    .modal-header .result-summary-sub {
+      font-size: 12px;
+      color: var(--muted);
     }
 
     .modal-body {
@@ -558,10 +569,6 @@
       overflow-y: auto;
       padding-top: 6px;
       flex: 1;
-    }
-
-    .modal-body a {
-      color: var(--accent);
     }
 
     .modal-actions {
@@ -633,6 +640,10 @@
       color: var(--muted);
     }
 
+    .search-input {
+      width: 200px;
+    }
+
     @media (max-width: 980px) {
       .controls-row {
         flex-direction: column;
@@ -661,27 +672,27 @@
       <div class="brand">
         <div class="logo-wrap" aria-hidden="false" role="img" aria-label="PS5 Vault logo">
           <img id="brandLogo" class="brand-logo" src="./assets/logo.png" alt="PS5 Logo" />
-          <svg id="brand-fallback" class="brand-fallback" viewBox="0 0 100 100" role="img" aria-label="PS5 Vault logo" xmlns="http://www.w3.org/2000/svg" style="display:none" preserveAspectRatio="xMidYMid meet">
+          <svg id="brand-fallback" class="brand-fallback" viewBox="0 0 100 100" width="48" height="48" role="img" aria-label="PS5 Vault logo" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet">
             <rect x="0" y="0" width="100" height="100" fill="#0b2740"/>
             <text x="50" y="58" text-anchor="middle" font-size="28" font-family="Segoe UI, Roboto, Arial" fill="#eaf3ff" font-weight="700">PS5</text>
           </svg>
         </div>
         <div class="meta">
           <div class="app-title">PS5 Vault</div>
-          <div class="app-sub">Organize PPSA folders</div>
+          <div class="app-sub">Organize PPSA folders v1.0.9</div>
         </div>
       </div>
 
       <div class="topbar-right">
         <div id="madeBy" class="made-by" title="Click to toggle theme">Made by Nookie</div>
         <div style="display:flex;gap:6px;align-items:center;">
-          <button id="btnHelp" class="btn">Help</button>
-          <button id="btnSelectAll" class="btn">Select All</button>
-          <button id="btnUnselectAll" class="btn">Unselect All</button>
-          <button id="btnClear" class="btn">Clear</button>
-          <button id="btnExport" class="btn" style="display:none;">Export</button>
-          <button id="btnImport" class="btn" style="display:none;">Import</button>
-          <a id="discordLink" class="discord-link" href="#" title="Click to copy 'nookie_65120' and open Discord">💬 Discord</a>
+          <button id="btnExport" class="btn" title="Export settings and results">Export</button>
+          <button id="btnImport" class="btn" title="Import settings and results">Import</button>
+          <button id="btnHelp" class="btn" title="Open help">Help</button>
+          <button id="btnSelectAll" class="btn" title="Select all visible">Select All</button>
+          <button id="btnUnselectAll" class="btn" title="Unselect all">Unselect All</button>
+          <button id="btnClear" class="btn" title="Clear results">Clear</button>
+          <a id="discordLink" class="discord-link" href="https://discord.gg/nj45kDSBEd" target="_blank" rel="noopener" title="Join Discord">💬 Discord</a>
         </div>
       </div>
     </div>
@@ -690,10 +701,10 @@
       <div class="controls-left">
         <div class="primary">
           <label style="color:var(--muted);margin-right:6px">Source</label>
-          <input id="sourcePath" type="text" placeholder="Choose root folder" style="min-width:260px" aria-label="Source path" list="sourceHistory" />
-          <button id="btnPickSource" class="btn" aria-label="Browse source">Browse</button>
-          <button id="btnScan" class="btn-scan" aria-label="Start scan">SCAN</button>
-          <button id="btnCancelScan" class="btn-cancel" aria-label="Cancel scan">Cancel</button>
+          <input id="sourcePath" type="text" placeholder="Choose root folder or drop here" style="width: 260px;" autocomplete="off" list="sourceHistory" />
+          <button id="btnPickSource" class="btn" title="Browse for source">Browse</button>
+          <button id="btnScan" class="btn-scan" title="Start scan">SCAN</button>
+          <button id="btnCancelScan" class="btn-cancel">Cancel</button>
         </div>
         <div class="scan-display" id="scanDisplay" style="display:none;">
           <div id="currentScanLabel" class="current-scan"></div>
@@ -705,24 +716,24 @@
 
       <div class="controls-right">
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-          <button id="btnGoBig" class="btn-go" aria-label="Start transfer">GO</button>
+          <button id="btnGoBig" class="btn-go" title="Start transfer">GO</button>
           <label style="color:var(--muted);margin-left:6px">Destination</label>
-          <input id="destPath" type="text" placeholder="Destination" style="min-width:260px" aria-label="Destination path" list="destHistory" />
-          <button id="btnPickDest" class="btn" aria-label="Browse destination">Browse</button>
+          <input id="destPath" type="text" placeholder="Destination or drop here" style="width: 260px;" autocomplete="off" list="destHistory" />
+          <button id="btnPickDest" class="btn" title="Browse for destination">Browse</button>
         </div>
 
         <div class="action-layout-row" aria-hidden="false">
           <div class="action-block">
             <label style="color:var(--muted);font-size:12px;display:block;margin-bottom:4px">Action</label>
-            <select id="action" aria-label="Transfer action">
+            <select id="action">
               <option value="folder-only">Create folder</option>
               <option value="copy">Copy (verified)</option>
               <option value="move" selected>Move</option>
             </select>
           </div>
           <div class="layout-block">
-            <label style="color:var(--muted);font-size:12px;display:block;margin-bottom:4px">Layout</label>
-            <select id="layout" aria-label="Folder layout">
+            <label style="color:var(--muted);font-size:11px;display:block;margin-bottom:4px">Layout</label>
+            <select id="layout">
               <option value="game-ppsa">Game / PPSA</option>
               <option value="game-only">Game only</option>
               <option value="ppsa-only">PPSA only</option>
@@ -738,10 +749,15 @@
 
     <div class="content">
       <div class="results" role="main">
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
-          <div style="font-weight:800;font-size:14px">Scan Results <span id="scanCount" style="font-size:12px;color:var(--muted);margin-left:8px"></span></div>
-          <div class="batch-actions" style="display:flex;gap:8px;">
-            <button id="btnDeleteSelected" class="btn" style="opacity:0.6;">Delete Selected</button>
+        <div style="display:flex;align-items:center;margin-bottom:6px">
+          <div style="flex:1;font-weight:800;font-size:14px">Scan Results <span id="scanCount" style="font-size:12px;color:var(--muted);margin-left:8px"></span></div>
+          <div style="display:flex;align-items:center;gap:12px;flex:1;justify-content:center;">
+            <label for="searchInput" style="color:var(--muted);font-size:12px;">Search Games:</label>
+            <input id="searchInput" class="search-input" type="text" placeholder="Filter by game name..." />
+          </div>
+          <div class="batch-actions" style="display:flex;gap:8px;flex:1;justify-content:flex-end;">
+            <button id="btnRenameSelected" class="btn" style="min-width:120px; opacity:0.6;" title="Rename selected games">Rename Selected</button>
+            <button id="btnDeleteSelected" class="btn" style="min-width:120px; opacity:0.6;" title="Delete selected games">Delete Selected</button>
           </div>
         </div>
 
@@ -749,7 +765,7 @@
           <table>
             <thead>
               <tr>
-                <th class="check"><input id="chkHeader" type="checkbox" title="Select visible" aria-label="Select all" /></th>
+                <th class="check"><input id="chkHeader" type="checkbox" title="Select visible" /></th>
                 <th class="cover">COVER</th>
                 <th class="game">GAME</th>
                 <th class="size">SIZE</th>
@@ -769,20 +785,19 @@
   <div id="resultModalBackdrop" class="modal-backdrop" aria-hidden="true">
     <div class="modal result-modal-wide" role="dialog" aria-modal="true" aria-labelledby="resultTitle">
       <div class="modal-header">
-        <div style="display:flex;flex-direction:column;gap:4px">
+        <div class="result-summary-title" id="resultTitleText">Operation results</div>
+        <div style="display:flex;gap:12px;align-items:center;justify-content:center;">
           <div class="result-count" id="resultCount">0</div>
-          <div class="result-eta" id="resultEta">--:--</div>
-        </div>
-        <div style="flex:1;text-align:center">
-          <div class="result-summary-title" id="resultTitleText">Operation results</div>
           <div class="result-summary-sub" id="resultSubText">Summary</div>
         </div>
-        <button id="resultClose" class="close-btn" title="Close" aria-label="Close modal">✕</button>
+        <button id="resultClose" class="close-btn" title="Close">✕</button>
       </div>
       <div id="resultProgress" style="display:none; margin-bottom:8px;">
         <div class="bar"><div id="resultProgressBar" class="bar-fill"></div></div>
       </div>
       <div id="currentFileInfo" style="margin-bottom:8px; font-size:14px; color:var(--muted)">Preparing...</div>
+      <div id="transferStats" style="margin-bottom:8px; font-size:12px; color:var(--muted)">Speed: -- ETA: --</div>
+      <div id="transferETA" style="margin-bottom:8px; font-size:14px; color:var(--muted); font-weight:600;">ETA: --</div>
       <div id="completedFiles" style="margin-bottom:8px; max-height:150px; overflow-y:auto;" role="list" aria-label="Completed files"></div>
       <div class="result-actions-row" style="display:none;" id="resultActionsRow" aria-hidden="true"></div>
       <div class="modal-body"><div id="resultList"></div></div>
@@ -798,8 +813,8 @@
         <div id="confirmList"></div>
       </div>
       <div class="modal-actions">
-        <button id="confirmCancel" class="btn" aria-label="Cancel">Cancel</button>
-        <button id="confirmProceed" class="btn-go" aria-label="Start transfer">Start</button>
+        <button id="confirmCancel" class="btn">Cancel</button>
+        <button id="confirmProceed" class="btn-go">Start</button>
       </div>
     </div>
   </div>
@@ -812,13 +827,13 @@
         <div id="conflictList" style="margin-bottom:12px"></div>
         <div style="margin-top:6px">Choose how to handle existing targets (applies to all conflicts):</div>
         <div style="margin-top:8px;display:flex;gap:8px;flex-direction:column">
-          <label><input type="radio" name="conflictAction" value="skip" aria-label="Skip conflicting items"> Skip items with existing targets</label>
-          <label><input type="radio" name="conflictAction" value="rename" checked aria-label="Rename conflicting targets"> Rename conflicting targets (keep originals)</label>
+          <label><input type="radio" name="conflictAction" value="skip"> Skip items with existing targets</label>
+          <label><input type="radio" name="conflictAction" value="rename" checked> Rename conflicting targets (keep originals)</label>
         </div>
       </div>
       <div class="modal-actions">
-        <button id="conflictCancel" class="btn" aria-label="Cancel">Cancel</button>
-        <button id="conflictProceed" class="btn-go" aria-label="Proceed">Proceed</button>
+        <button id="conflictCancel" class="btn">Cancel</button>
+        <button id="conflictProceed" class="btn-go">Proceed</button>
       </div>
     </div>
   </div>
@@ -827,57 +842,10 @@
   <div id="helpModalBackdrop" class="modal-backdrop" aria-hidden="true">
     <div class="modal" role="dialog" aria-modal="true" aria-labelledby="helpTitle">
       <div class="modal-header"><h4 id="helpTitle">How to use PS5 Vault</h4></div>
-      <div class="modal-body">
-        <ol style="margin-left:14px">
-          <li><strong>Set Source:</strong> Click "Browse" next to Source to select a local folder/drive, or enter an FTP URL (see FTP section below) to scan games directly from your PS5.</li>
-          <li><strong>Scan:</strong> Click SCAN. The app will locate validated game folders (with param.json) and list them with thumbnails.</li>
-          <li><strong>Select Items:</strong> Use checkboxes to pick games (Ctrl+A to select all, or use Select All/Unselect All buttons).</li>
-          <li><strong>Set Destination:</strong> Click "Browse" to choose where organized folders go.</li>
-          <li><strong>Choose Action & Layout:</strong> Action = folder creation, copy, or move. Layout = destination folder structure (see below).</li>
-          <li><strong>Transfer:</strong> Click GO. Review the confirmation dialog (shows From → To paths), then confirm to start.</li>
-          <li><strong>Monitor Progress:</strong> Watch the progress bar and details. Use Cancel if needed. Results show after completion.</li>
-        </ol>
-
-        <h3>FTP Scanning (Direct from PS5)</h3>
-        <p>Use FTP to scan games. Still experimental. This is not ideal for large libraries or slow networks.</p>
-        <ul style="margin-left:14px">
-          <li><strong>Enter Source:</strong> In PS5 Vault, type the FTP URL in Source: <code>ftp://192.168.1.100</code> or <code>192.168.1.100/mnt/ps5/games</code> (app auto-detects). Click SCAN.</li>
-          <li><strong>Tips:</strong> Ensure PS5 and PC are on the same network. If scanning fails, check firewall, IP, or try a different FTP app. Scans are slower over FTP, use for scanning only when needed.</li>
-          <li><strong>Supported Paths:</strong> Scans common USB/game paths automatically (e.g., /mnt/usb0/etaHEN/games). If custom, specify the full path.</li>
-        </ul>
-
-        <h3>Layout Directory Structures</h3>
-        <ul style="margin-left:14px">
-          <li><strong>Game / PPSA</strong> — Destination/GameName/PPSAName (default, keeps PPSA separate)</li>
-          <li><strong>Game only</strong> — Destination/GameName (flattens PPSA into game folder)</li>
-          <li><strong>PPSA only</strong> — Destination/PPSAName (PPSA folders only, no game wrapper)</li>
-          <li><strong>etaHEN default</strong> — Destination/etaHEN/games/GameName</li>
-          <li><strong>itemZFlow default</strong> — Destination/games/GameName</li>
-          <li><strong>Dump Runner default</strong> — Destination/homebrew/GameName</li>
-          <li><strong>Custom</strong> — Destination/CustomName (enter your own name, single game only)</li>
-        </ul>
-
-        <h3>Tips and Troubleshooting</h3>
-        <ul style="margin-left:14px">
-          <li><strong>Conflicts:</strong> If a target folder exists, the app renames (e.g., "Game (1)") or skips—review before confirming.</li>
-          <li><strong>Performance:</strong> For fastest transfers, use Move on the same drive. Copy verifies files for safety (slower on different drives). Avoid deep folders (limit: 12 levels).</li>
-          <li><strong>File Safety:</strong> PPSA folders are removed post-transfer, but game data (e.g., sce_sys) is preserved. Always back up originals.</li>
-          <li><strong>Common Issues:</strong>
-            <ul>
-              <li>No games found? Ensure folders have param.json in sce_sys. Check permissions or try a different source.</li>
-              <li>FTP timeouts? Use a wired connection, check PS5 FTP settings, or switch to local scanning.</li>
-              <li>Transfers stuck? Cancel and retry. Check disk space/free up RAM if needed.</li>
-              <li>Large FTP scans slow? For 100+ games, scans over FTP may take minutes.</li>
-            </ul>
-          </li>
-          <li><strong>Best Practices:</strong> Test with one game first. Use meaningful custom names. Keep sources/dests on fast drives. Update PS5 firmware for compatibility.</li>
-          <li><strong>Keyboard Shortcuts:</strong> Ctrl+A (select all), Ctrl+R (rescan), F1 (help), Arrow keys (navigate list).</li>
-          <li><strong>Need More Help?</strong> Contact @Nookie_65120 via Discord or check GitHub for updates.</li>
-        </ul>
-        <p><a href="https://github.com/NookieAI/PS5-Vault" target="_blank" rel="noopener noreferrer">https://github.com/NookieAI/PS5-Vault</a></p>
-        <p>Please donate to the project: <a href="https://ko-fi.com/nookie_65120" target="_blank" rel="noopener noreferrer">https://ko-fi.com/nookie_65120</a></p>
+      <div class="modal-body" id="helpModalBody">
+        <!-- content is set by JS -->
       </div>
-      <div class="modal-actions"><button id="helpClose" class="btn" aria-label="Close">Close</button></div>
+      <div class="modal-actions"><button id="helpClose" class="btn">Close</button></div>
     </div>
   </div>
 
@@ -889,8 +857,87 @@
         <input id="customNameInput" type="text" placeholder="Custom folder name" style="width:100%;padding:8px;border:1px solid var(--card-border);background:var(--select-bg);color:var(--title);border-radius:4px;" />
       </div>
       <div class="modal-actions">
-        <button id="customCancel" class="btn" aria-label="Cancel">Cancel</button>
-        <button id="customProceed" class="btn-go" aria-label="OK">OK</button>
+        <button id="customCancel" class="btn">Cancel</button>
+        <button id="customProceed" class="btn-go">OK</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Rename modal -->
+  <div id="renameModalBackdrop" class="modal-backdrop" aria-hidden="true">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="renameTitle">
+      <div class="modal-header"><h4 id="renameTitle">Rename Selected Item</h4></div>
+      <div class="modal-body">
+        <div style="margin-bottom:8px;">
+          <label style="color:var(--muted);font-size:12px;font-weight:600;margin-bottom:4px;display:block;">Name Preset</label>
+          <select id="renamePreset">
+            <option value="default">Default</option>
+            <option value="custom">Custom Name</option>
+          </select>
+        </div>
+        <input id="renameNameInput" type="text" placeholder="New folder name" style="width:100%;padding:8px;border:1px solid var(--card-border);background:var(--select-bg);color:var(--title);border-radius:4px;" />
+      </div>
+      <div class="modal-actions">
+        <button id="renameCancel" class="btn">Cancel</button>
+        <button id="renameProceed" class="btn-go">Rename</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Batch Rename Modal -->
+  <div id="batchRenameBackdrop" class="modal-backdrop" aria-hidden="true">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="batchRenameTitle">
+      <div class="modal-header"><h4 id="batchRenameTitle">Batch Rename</h4></div>
+      <div class="modal-body">
+        <div style="margin-bottom:8px;">
+          <label style="color:var(--muted);font-size:12px;font-weight:600;margin-bottom:4px;display:block;">Pattern (use {name} for original)</label>
+          <input id="batchRenamePattern" type="text" placeholder="{name} - Backup" style="width:100%;padding:8px;border:1px solid var(--card-border);background:var(--select-bg);color:var(--title);border-radius:4px;" />
+        </div>
+        <div id="batchRenamePreview"></div>
+      </div>
+      <div class="modal-actions">
+        <button id="batchRenameCancel" class="btn">Cancel</button>
+        <button id="batchRenameProceed" class="btn-go">Apply</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- FTP Config Modal -->
+  <div id="ftpModalBackdrop" class="modal-backdrop" aria-hidden="true">
+    <div class="modal ftp-modal" role="dialog" aria-modal="true" aria-labelledby="ftpTitle">
+      <div class="modal-header"><h4 id="ftpTitle">FTP Configuration</h4></div>
+      <div class="modal-body">
+        <div style="display:flex;gap:6px;margin-bottom:6px;">
+          <div style="flex:1;">
+            <label style="color:var(--muted);font-size:11px;font-weight:600;margin-bottom:2px;display:block;">Host</label>
+            <input id="ftpHost" type="text" placeholder="192.168.137.100" autocomplete="off" />
+          </div>
+          <div style="flex:0 0 80px;">
+            <label style="color:var(--muted);font-size:11px;font-weight:600;margin-bottom:2px;display:block;">Port</label>
+            <input id="ftpPort" type="text" placeholder="1337" autocomplete="off" />
+          </div>
+        </div>
+        <div style="margin-bottom:6px;">
+          <label style="color:var(--muted);font-size:11px;font-weight:600;margin-bottom:2px;display:block;">Path</label>
+          <input id="ftpPath" type="text" placeholder="/mnt/ext1/etaHEN/games" autocomplete="off" list="pathHistory" />
+        </div>
+        <div style="display:flex;gap:6px;margin-bottom:0;">
+          <div style="flex:1;">
+            <label style="color:var(--muted);font-size:11px;font-weight:600;margin-bottom:2px;display:block;">User</label>
+            <input id="ftpUser" type="text" placeholder="anonymous" autocomplete="off" />
+          </div>
+          <div style="flex:0 0 80px;">
+            <label style="color:var(--muted);font-size:11px;font-weight:600;margin-bottom:2px;display:block;">Pass</label>
+            <input id="ftpPass" type="password" placeholder="(leave empty)" autocomplete="off" />
+          </div>
+        </div>
+        <div style="margin-top:8px;font-size:11px;color:var(--muted);">
+          <strong>Security Note:</strong> Passwords are stored locally in plaintext. Avoid storing sensitive info or clear via logo click.
+        </div>
+      </div>
+      <div class="modal-actions">
+        <button id="ftpCancel" class="btn">Cancel</button>
+        <button id="ftpProceed" class="btn-go">Connect</button>
       </div>
     </div>
   </div>
@@ -898,10 +945,21 @@
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
   <div id="imgPreview" class="img-preview" aria-hidden="true"><img id="imgPreviewImg" src="" alt="preview"></div>
 
+  <datalist id="hostHistory"></datalist>
+  <datalist id="portHistory"></datalist>
+  <datalist id="pathHistory">
+    <option value="/mnt/usb0"></option>
+    <option value="/mnt/usb1"></option>
+    <option value="/mnt/ext1"></option>
+  </datalist>
+  <datalist id="userHistory"></datalist>
   <datalist id="sourceHistory"></datalist>
   <datalist id="destHistory"></datalist>
 
   <script src="utils.js"></script>
+  <script src="help.js"></script>
+  <script src="scan.js"></script>
+  <script src="ftp.js"></script>
   <script src="renderer.js"></script>
 </body>
 </html>

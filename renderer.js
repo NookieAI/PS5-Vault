@@ -1,5 +1,34 @@
+// PS5 Vault Renderer
 (function () {
   'use strict';
+
+  const Utils = {
+    sanitizeName(name) {
+      if (!name) return 'Unknown';
+      return String(name).replace(/[<>:"/\\|?*\x00-\x1F!'™@#$%^&[\]{}=+;,`~]/g, '').trim().slice(0, 200) || 'Unknown';
+    },
+    escapeHtml(text) {
+      const div = document.createElement('div');
+      div.textContent = text;
+      return div.innerHTML;
+    },
+    normalizeDisplayPath(path) {
+      if (!path) return '';
+      const p = String(path);
+      if (p.startsWith('/mnt/ext1/')) return p.replace('/mnt/ext1/', 'PS5:/');
+      if (p.startsWith('/mnt/usb0/')) return p.replace('/mnt/usb0/', 'USB0:/');
+      if (p.startsWith('/mnt/usb1/')) return p.replace('/mnt/usb1/', 'USB1:/');
+      if (p.startsWith('ftp://')) {
+        const u = new URL(p);
+        return `FTP://${u.hostname}:${u.port}${u.pathname}`;
+      }
+      return p;
+    },
+    pathEndsWithSceSys(path) {
+      if (!path) return false;
+      return String(path).toLowerCase().endsWith('/sce_sys');
+    }
+  };
 
   const LAST_SRC_KEY = 'ps5vault.lastSource';
   const LAST_DST_KEY = 'ps5vault.lastDest';
@@ -18,8 +47,22 @@
   let settings = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}');
   let scanStartTime = 0;
   let transferStartTime = 0;
-  let currentSortBy = 'name';  // Track current sort column ('name', 'size', 'folder')
+  let currentSortBy = 'name';
   let resumeState = null;
+  let searchFilter = '';
+
+  let isFtpScan = false;
+  let ftpConfig = null;
+  let maxSpeed = 0;
+  let lastFile = '';
+  let completedFiles = [];
+  let shouldRefreshAfterClose = false;
+  let totalTransferred = 0;
+
+  function sanitize(name) {
+    if (!name) return 'Unknown';
+    return String(name).replace(/[<>:"/\\|?*\x00-\x1F!'™@#$%^&[\]{}=+;,`~]/g, '').trim().slice(0, 200) || 'Unknown';
+  }
 
   function getRecentSources() {
     try {
@@ -39,9 +82,17 @@
     }
   }
 
+  function getRecentFtp() {
+    try {
+      const stored = localStorage.getItem('ps5vault.recentFtp');
+      return stored ? JSON.parse(stored) : [];
+    } catch (_) {
+      return [];
+    }
+  }
+
   function addRecentSource(path) {
     if (!path) return;
-    console.log('Adding recent source:', path);
     const recents = getRecentSources();
     const filtered = recents.filter(p => p !== path);
     filtered.unshift(path);
@@ -54,7 +105,6 @@
 
   function addRecentDest(path) {
     if (!path) return;
-    console.log('Adding recent dest:', path);
     const recents = getRecentDests();
     const filtered = recents.filter(p => p !== path);
     filtered.unshift(path);
@@ -63,6 +113,19 @@
       localStorage.setItem(RECENT_DESTS_KEY, JSON.stringify(limited));
     } catch (_) {}
     updateDestHistoryDatalist();
+  }
+
+  function addRecentFtp(config) {
+    if (!config) return;
+    const recents = getRecentFtp();
+    const key = `${config.host}:${config.port}:${config.path}:${config.user}`;
+    const filtered = recents.filter(c => `${c.host}:${c.port}:${c.path}:${c.user}` !== key);
+    filtered.unshift(config);
+    const limited = filtered.slice(0, 5);
+    try {
+      localStorage.setItem('ps5vault.recentFtp', JSON.stringify(limited));
+    } catch (_) {}
+    updateFtpHistoryDatalist();
   }
 
   function updateSourceHistoryDatalist() {
@@ -89,10 +152,9 @@
     }
   }
 
-  /**
-   * Sets the result modal to busy state.
-   * @param {boolean} busy - Whether the modal is busy.
-   */
+  function updateFtpHistoryDatalist() {
+  }
+
   function setResultModalBusy(busy) {
     const modal = document.querySelector('.result-modal-wide');
     const closeBtn = $('resultClose');
@@ -106,10 +168,6 @@
     }
   }
 
-  /**
-   * Shows or hides the scan UI.
-   * @param {boolean} show - Whether to show the UI.
-   */
   function showScanUI(show) {
     const sd = $('scanDisplay');
     const label = $('currentScanLabel');
@@ -117,8 +175,7 @@
     if (sd) sd.style.display = show ? 'block' : 'none';
     if (!show && label) label.textContent = '';
     if (cancelBtn) cancelBtn.style.display = show ? 'inline-block' : 'none';
-    if (show) {
-    }
+    if (show) {}
   }
 
   const TransferStats = {
@@ -126,15 +183,18 @@
     lastTime: 0,
     lastBytes: 0,
     emaSpeed: 0,
+    totalElapsed: 0,
     reset() {
       this.startTime = Date.now();
       this.lastTime = this.startTime;
       this.lastBytes = 0;
       this.emaSpeed = 0;
+      this.totalElapsed = 0;
     },
     update(totalBytesCopied, totalBytes) {
       const now = Date.now();
       const dt = Math.max(1, (now - this.lastTime) / 1000);
+      this.totalElapsed += dt;
       const delta = Math.max(0, totalBytesCopied - this.lastBytes);
       const instSpeed = delta / dt;
       const alpha = 0.25;
@@ -142,7 +202,8 @@
       this.lastTime = now;
       this.lastBytes = totalBytesCopied;
       const remaining = Math.max(0, totalBytes - totalBytesCopied);
-      const etaSec = this.emaSpeed > 0 ? (remaining / this.emaSpeed) : 0;
+      const overallSpeed = this.totalElapsed > 0 ? (totalBytesCopied / this.totalElapsed) : 0;
+      const etaSec = overallSpeed > 0 ? (remaining / overallSpeed) : 0;
       return {
         speedBps: Number.isFinite(this.emaSpeed) ? this.emaSpeed : 0,
         etaSec: Number.isFinite(etaSec) ? etaSec : 0
@@ -150,11 +211,6 @@
     }
   };
 
-  /**
-   * Converts bytes to human-readable format.
-   * @param {number} b - Bytes.
-   * @returns {string} Formatted string.
-   */
   function bytesToHuman(b) {
     const units = ['B', 'KB', 'MB', 'GB', 'TB'];
     let i = 0;
@@ -166,11 +222,6 @@
     return `${v.toFixed(1)} ${units[i]}`;
   }
 
-  /**
-   * Converts seconds to H:MM:SS format.
-   * @param {number} s - Seconds.
-   * @returns {string} Formatted time.
-   */
   function secToHMS(s) {
     const sec = Math.round(Number.isFinite(s) ? s : 0);
     if (sec < 1) return sec >= 0 ? '0:00' : '--:--';
@@ -180,121 +231,11 @@
     return h > 0 ? `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(r).padStart(2, '0')}` : `${String(m).padStart(2, '0')}:${String(r).padStart(2, '0')}`;
   }
 
-  let lastFile = '';
-  let completedFiles = [];
-
-  /**
-   * Handles progress messages from the main process.
-   * @param {object} d - Progress data.
-   */
-  function onProgressMessage(d) {
-    if (!d || !d.type) return;
-
-    if (d.type === 'scan') {
-      const label = $('currentScanLabel');
-      if (label) {
-        const pathText = d.folder || d.path || '';
-        label.textContent = Utils.normalizeDisplayPath(pathText) || 'Scanning...';
-      }
-      return;
-    }
-
-    if (d.type === 'go-start') {
-      setResultModalBusy(true);
-      TransferStats.reset();
-      completedFiles = [];
-      transferStartTime = Date.now();
-      const rb = $('resultModalBackdrop');
-      const rp = $('resultProgress');
-      const rl = $('resultList');
-      const rc = $('resultCount');
-      const rs = $('resultSubText');
-      const cf = $('currentFileInfo');
-      const comp = $('completedFiles');
-      if (rb && rp && rl && rc && rs && cf && comp) {
-        rp.style.display = 'block';
-        rl.style.display = 'none';
-        rc.textContent = '0';
-        rs.textContent = 'Transferring...';
-        cf.textContent = 'Preparing...';
-        comp.innerHTML = '';
-        rb.style.display = 'flex';
-        rb.setAttribute('aria-hidden', 'false');
-      }
-      cancelOperation = false;
-      return;
-    }
-
-    if (d.type === 'go-file-progress' || d.type === 'go-file-complete') {
-      if (cancelOperation) return;
-      if (d.fileRel) lastFile = d.fileRel;
-      // Use d.totalBytesCopied directly (now cumulative from main)
-      const stats = TransferStats.update(d.totalBytesCopied || 0, d.totalBytes || 0);
-      const rs = $('resultSubText');
-      const re = $('resultEta');
-      const cf = $('currentFileInfo');
-      if (rs && re && cf) {
-        const speedHuman = bytesToHuman(stats.speedBps || 0) + '/s';
-        const etaText = secToHMS(stats.etaSec);
-        const baseText = `Progress: ${Math.round((d.totalBytesCopied / d.totalBytes) * 100)}% • ${speedHuman}${lastFile ? ' • ' + lastFile : ''}`;
-        rs.textContent = baseText;
-        re.textContent = etaText;
-        cf.textContent = lastFile ? `Current: ${lastFile} (${Math.round((d.totalBytesCopied / d.totalBytes) * 100)}%)` : 'Preparing...';
-      }
-      if (d.type === 'go-file-complete') {
-        completedFiles.push(d.fileRel);
-        const comp = $('completedFiles');
-        if (comp) {
-          const div = document.createElement('div');
-          div.className = 'completed-file';
-          div.textContent = d.fileRel;
-          comp.insertBefore(div, comp.firstChild);
-        }
-      }
-      return;
-    }
-
-    if (d.type === 'go-complete') {
-      setResultModalBusy(false);
-      const rp = $('resultProgress');
-      const rl = $('resultList');
-      const rs = $('resultSubText');
-      const closeBtn = $('resultClose');
-      const label = $('currentScanLabel');
-      if (rp) rp.style.display = 'none';
-      if (rl) rl.style.display = 'block';
-      if (closeBtn) closeBtn.style.display = 'block';
-      if (rs) rs.textContent = 'Operation complete';
-      if (label) label.textContent = '';
-      showScanUI(false);
-      showNotification('Transfer Complete', 'PS5 Vault operation finished successfully.');
-      localStorage.removeItem(TRANSFER_STATE_KEY);
-      return;
-    }
-
-    if (d.type === 'go-item') {
-      const label = $('currentScanLabel');
-      const raw = d.folder || d.path || '';
-      if (label) label.textContent = Utils.pathEndsWithSceSys(raw) ? '' : (Utils.normalizeDisplayPath(raw) || '');
-      return;
-    }
-  }
-
-  /**
-   * Formats content version (keeps original, cleans leading zeros).
-   * @param {string} cv - Content version.
-   * @returns {string} Cleaned version.
-   */
   function formatContentVersionShort(cv) {
     if (!cv) return '';
     return cv;
   }
 
-  /**
-   * Formats SDK version.
-   * @param {string} hex - SDK version hex.
-   * @returns {string} Formatted SDK.
-   */
   function formatSdkVersionHexToDisplay(hex) {
     if (!hex || typeof hex !== 'string') return '';
     const m = hex.trim().match(/^0x([0-9A-Fa-f]{2})/);
@@ -305,40 +246,19 @@
     return `${major}.xx`;
   }
 
-  /**
-   * Checks if SDK version should add plus.
-   * @param {string|Array} sdkValue - SDK value.
-   * @returns {boolean} Whether to add plus.
-   */
   function shouldAddPlus(sdkValue) {
     return false;
   }
 
-  /**
-   * Gets identity key for deduplication.
-   * @param {object} item - Item object.
-   * @returns {string} Key.
-   */
   function identityKey(item) {
     const key = item.ppsa || item.contentId || item.displayTitle || item.dbTitle || item.folderName || '';
     return String(key).toLowerCase();
   }
 
-  /**
-   * Gets primary path of item.
-   * @param {string} item - Item object.
-   * @returns {string} Path.
-   */
   function primaryPathOf(item) {
     return item.ppsaFolderPath || item.folderPath || item.contentFolderPath || '';
   }
 
-  /**
-   * Checks if one path is nested in another.
-   * @param {string} child - Child path.
-   * @param {string} parent - Parent path.
-   * @returns {boolean} Is nested.
-   */
   function isNestedPath(child, parent) {
     if (!child || !parent) return false;
     const c = String(child).replace(/\//g, '\\');
@@ -347,11 +267,6 @@
     return c.toLowerCase().startsWith(p.toLowerCase() + '\\');
   }
 
-  /**
-   * Deduplicates items list.
-   * @param {Array} list - Items list.
-   * @returns {Array} Deduplicated list.
-   */
   function dedupeItems(list) {
     const groups = new Map();
     for (const r of list) {
@@ -393,7 +308,6 @@
     return out;
   }
 
-  // Hover preview (1s delay)
   const Preview = {
     container: null,
     img: null,
@@ -458,11 +372,6 @@
     }
   };
 
-  /**
-   * Attaches preview handlers to image element.
-   * @param {HTMLElement} imgEl - Image element.
-   * @param {string} srcUrl - Source URL.
-   */
   function attachPreviewHandlers(imgEl, srcUrl) {
     if (!imgEl || !srcUrl) return;
     const onEnter = (ev) => {
@@ -473,7 +382,7 @@
     const onMove = (ev) => {
       Preview.move(ev.clientX, ev.clientY);
     };
-    const onLeave = () => {
+    const onLeave = (ev) => {
       Preview.hide();
     };
     imgEl.addEventListener('mouseenter', onEnter);
@@ -482,7 +391,6 @@
     imgEl.addEventListener('click', onLeave);
   }
 
-  // Conflict modal (existing)
   function openConflictModal(conflicts, onChoice) {
     const backdrop = $('conflictModalBackdrop');
     const listEl = $('conflictList');
@@ -532,7 +440,6 @@
     backdrop.setAttribute('aria-hidden', 'true');
   }
 
-  // NEW: Confirmation modal (before transfer)
   function openConfirmModal(previewItems, meta, onProceedCb, onCancelCb) {
     const backdrop = $('confirmModalBackdrop');
     const listEl = $('confirmList');
@@ -568,18 +475,18 @@
       title.textContent = p.item || 'Unknown Game';
       row.appendChild(title);
 
-      const pathRow = document.createElement('div');
-      pathRow.className = 'path-row';
+      const row2 = document.createElement('div');
+      row2.className = 'path-row';
+      row2.style.marginTop = '6px';
       const from = document.createElement('div');
       from.className = 'path-inline';
       from.innerHTML = '<span class="label-bold">From:</span> ' + Utils.escapeHtml(Utils.normalizeDisplayPath(p.source || ''));
       const to = document.createElement('div');
       to.className = 'path-inline';
       to.innerHTML = '<span class="label-bold">To:</span> ' + Utils.escapeHtml(p.target || '');
-      Object.assign(pathRow.style, { display: 'flex', flexDirection: 'column', gap: '4px' });
-      pathRow.appendChild(from);
-      pathRow.appendChild(to);
-      row.appendChild(pathRow);
+      row2.appendChild(from);
+      row2.appendChild(to);
+      row.appendChild(row2);
 
       listEl.appendChild(row);
     }
@@ -606,7 +513,263 @@
     backdrop.setAttribute('aria-hidden', 'true');
   }
 
-  // Theme toggle
+  function openRenameModal(currentName) {
+    return new Promise((resolve) => {
+      const backdrop = $('renameModalBackdrop');
+      const presetSelect = $('renamePreset');
+      const input = $('renameNameInput');
+      const proceedBtn = $('renameProceed');
+      const cancelBtn = $('renameCancel');
+
+      if (!backdrop || !presetSelect || !input || !proceedBtn || !cancelBtn) {
+        resolve(null);
+        return;
+      }
+
+      function cleanGameName(name) {
+        return name.replace(/^games/, '').trim();
+      }
+
+      currentName = cleanGameName(currentName || '');
+
+      input.value = currentName;
+      presetSelect.value = 'default';
+      input.disabled = true;
+
+      backdrop.style.display = 'flex';
+      backdrop.setAttribute('aria-hidden', 'false');
+      input.focus();
+
+      const updateInput = () => {
+        const preset = presetSelect.value;
+        if (preset === 'default') {
+          input.disabled = true;
+          input.value = currentName;
+        } else {
+          input.disabled = false;
+          input.value = '';
+        }
+      };
+
+      presetSelect.addEventListener('change', updateInput);
+
+      const cleanup = () => {
+        backdrop.style.display = 'none';
+        backdrop.setAttribute('aria-hidden', 'true');
+        presetSelect.removeEventListener('change', updateInput);
+        proceedBtn.removeEventListener('click', onProceed);
+        cancelBtn.removeEventListener('click', onCancel);
+        input.removeEventListener('keydown', onKeydown);
+      };
+
+      const onProceed = () => {
+        const value = input.value.trim();
+        cleanup();
+        resolve(value);
+      };
+
+      const onCancel = () => {
+        cleanup();
+        resolve(null);
+      };
+
+      const onKeydown = (e) => {
+        if (e.key === 'Enter') onProceed();
+        else if (e.key === 'Escape') onCancel();
+      };
+
+      proceedBtn.addEventListener('click', onProceed);
+      cancelBtn.addEventListener('click', onCancel);
+      input.addEventListener('keydown', onKeydown);
+    });
+  }
+
+  function openBatchRenameModal(selected) {
+    return new Promise((resolve) => {
+      const backdrop = $('batchRenameBackdrop');
+      if (!backdrop) {
+        const newBackdrop = document.createElement('div');
+        newBackdrop.id = 'batchRenameBackdrop';
+        newBackdrop.className = 'modal-backdrop';
+        newBackdrop.innerHTML = `
+          <div class="modal" role="dialog" aria-modal="true" aria-labelledby="batchRenameTitle">
+            <div class="modal-header"><h4 id="batchRenameTitle">Batch Rename</h4></div>
+            <div class="modal-body">
+              <div style="margin-bottom:8px;">
+                <label style="color:var(--muted);font-size:12px;font-weight:600;margin-bottom:4px;display:block;">Pattern (use {name} for original)</label>
+                <input id="batchRenamePattern" type="text" placeholder="{name} - Backup" style="width:100%;padding:8px;border:1px solid var(--card-border);background:var(--select-bg);color:var(--title);border-radius:4px;" />
+              </div>
+              <div id="batchRenamePreview"></div>
+            </div>
+            <div class="modal-actions">
+              <button id="batchRenameCancel" class="btn">Cancel</button>
+              <button id="batchRenameProceed" class="btn-go">Apply</button>
+            </div>
+          </div>
+        `;
+        document.body.appendChild(newBackdrop);
+      }
+      const backdropEl = $('batchRenameBackdrop');
+      const patternInput = $('batchRenamePattern');
+      const previewEl = $('batchRenamePreview');
+      const proceedBtn = $('batchRenameProceed');
+      const cancelBtn = $('batchRenameCancel');
+
+      function updatePreview() {
+        const pattern = patternInput.value;
+        previewEl.innerHTML = selected.map(item => {
+          const newName = pattern.replace('{name}', item.displayTitle);
+          return `<div>${item.displayTitle} → ${newName}</div>`;
+        }).join('');
+      }
+
+      patternInput.addEventListener('input', updatePreview);
+      updatePreview();
+
+      const cleanup = () => {
+        backdropEl.style.display = 'none';
+        proceedBtn.removeEventListener('click', onProceed);
+        cancelBtn.removeEventListener('click', onCancel);
+      };
+
+      const onProceed = () => {
+        const pattern = patternInput.value.trim();
+        if (!pattern) return;
+        const renamed = selected.map(item => ({
+          ...item,
+          displayTitle: pattern.replace('{name}', item.displayTitle)
+        }));
+        cleanup();
+        resolve(renamed);
+      };
+
+      const onCancel = () => {
+        cleanup();
+        resolve(null);
+      };
+
+      proceedBtn.addEventListener('click', onProceed);
+      cancelBtn.addEventListener('click', onCancel);
+      backdropEl.style.display = 'flex';
+    });
+  }
+
+  function openFtpModal(initialUrl) {
+    return new Promise((resolve) => {
+      const backdrop = $('ftpModalBackdrop');
+      const hostInput = $('ftpHost');
+      const portInput = $('ftpPort');
+      const pathInput = $('ftpPath');
+      const userInput = $('ftpUser');
+      const passInput = $('ftpPass');
+      const proceedBtn = $('ftpProceed');
+      const cancelBtn = $('ftpCancel');
+
+      if (!backdrop || !hostInput || !portInput || !pathInput || !userInput || !passInput || !proceedBtn || !cancelBtn) {
+        return Promise.resolve(null);
+      }
+
+      if (initialUrl) {
+        try {
+          const url = new URL(initialUrl.startsWith('ftp://') ? initialUrl : 'ftp://' + initialUrl);
+          hostInput.value = url.hostname;
+          portInput.value = (url.port && /^\d+$/.test(url.port)) ? url.port : '1337';
+          pathInput.value = url.pathname || '/';
+          userInput.value = url.username || 'anonymous';
+          passInput.value = url.password || '';
+        } catch (e) {
+          hostInput.value = initialUrl.replace('ftp://', '').split(':')[0] || '';
+          portInput.value = '1337';
+          pathInput.value = '/';
+          userInput.value = 'anonymous';
+          passInput.value = '';
+        }
+      } else {
+        const lastConfig = getRecentFtp().length > 0 ? getRecentFtp()[0] : null;
+        if (lastConfig) {
+          hostInput.value = lastConfig.host || '';
+          portInput.value = lastConfig.port || '1337';
+          pathInput.value = lastConfig.path || '/mnt/ext1/etaHEN/games';
+          userInput.value = lastConfig.user || 'anonymous';
+          passInput.value = lastConfig.pass || '';
+        } else {
+          hostInput.value = '';
+          portInput.value = '1337';
+          pathInput.value = '/mnt/ext1/etaHEN/games';
+          userInput.value = 'anonymous';
+          passInput.value = '';
+        }
+      }
+
+      const setDefaultPath = () => {
+        pathInput.value = '/';
+      };
+
+      setDefaultPath();
+
+      backdrop.style.display = 'flex';
+      backdrop.setAttribute('aria-hidden', 'false');
+      hostInput.focus();
+
+      portInput.addEventListener('change', setDefaultPath);
+
+      const cleanup = () => {
+        backdrop.style.display = 'none';
+        backdrop.setAttribute('aria-hidden', 'true');
+        portInput.removeEventListener('change', setDefaultPath);
+        proceedBtn.removeEventListener('click', onProceed);
+        cancelBtn.removeEventListener('click', onCancel);
+      };
+
+      const onProceed = () => {
+        const config = {
+          host: hostInput.value.trim(),
+          port: portInput.value.trim(),
+          path: pathInput.value.trim(),
+          user: userInput.value.trim(),
+          pass: passInput.value.trim()
+        };
+
+        // Validate port
+        const portNum = parseInt(config.port);
+        if (isNaN(portNum) || portNum < 1 || portNum > 65535) {
+          alert('Invalid port number. Must be between 1 and 65535.');
+          return;
+        }
+        config.port = String(portNum);
+
+        cleanup();
+        resolve(config);
+      };
+
+      const onCancel = () => {
+        cleanup();
+        resolve(null);
+      };
+
+      proceedBtn.addEventListener('click', onProceed);
+      cancelBtn.addEventListener('click', onCancel);
+    });
+  }
+
+  function setupDragDrop() {
+    const sourceInput = $('sourcePath');
+    const destInput = $('destPath');
+    [sourceInput, destInput].forEach(input => {
+      if (!input) return;
+      input.addEventListener('dragover', (e) => {
+        e.preventDefault();
+      });
+      input.addEventListener('drop', (e) => {
+        e.preventDefault();
+        const files = Array.from(e.dataTransfer.files);
+        if (files.length && files[0].type === '') {
+          input.value = files[0].path;
+        }
+      });
+    });
+  }
+
   function toggleTheme() {
     const body = document.body;
     const current = body.getAttribute('data-theme') || 'dark';
@@ -617,7 +780,6 @@
     toast(`Theme switched to ${newTheme}`);
   }
 
-  // Export/Import (hidden for now)
   function exportData() {
     const data = {
       results: window.__ps5_lastRenderedItems || [],
@@ -668,7 +830,6 @@
     body.setAttribute('data-theme', settings.theme || 'dark');
   }
 
-  // Helpers for mapping
   function computeFinalTargetForItem(it, dest, layout, customName) {
     const safeGame = customName && layout === 'custom' ? Utils.sanitizeName(customName) : Utils.sanitizeName(it.displayTitle || it.dbTitle || it.folderName || it.ppsa || 'Unknown Game');
     let finalPpsaName = it.ppsa || (it.contentId && (String(it.contentId).match(/PPSA\d{4,6}/i) || [])[0]?.toUpperCase()) || null;
@@ -677,36 +838,24 @@
       const base = (src + '').split(/[\\/]/).pop() || '';
       finalPpsaName = base.replace(/[-_]*app\d*.*$/i, '').replace(/[-_]+$/,'') || base;
     }
+    const pathJoin = (...parts) => parts.filter(Boolean).join('/');
     if (layout === 'ppsa-only') return pathJoin(dest, finalPpsaName);
     if (layout === 'game-only') return pathJoin(dest, safeGame);
     if (layout === 'etahen') return pathJoin(dest, 'etaHEN', 'games', safeGame);
     if (layout === 'itemzflow') return pathJoin(dest, 'games', safeGame);
     if (layout === 'dump_runner') return pathJoin(dest, 'homebrew', safeGame);
-    if (layout === 'custom') return pathJoin(dest, safeGame);  // Just the custom folder name
+    if (layout === 'custom') return pathJoin(dest, safeGame);
     if (layout === 'game-ppsa') return pathJoin(dest, safeGame, finalPpsaName);
     return pathJoin(dest, safeGame);
   }
 
-  function pathJoin(...parts) {
-    const sep = navigator.platform.includes('Win') ? '\\' : '/';
-    return parts.filter(Boolean).map((p, i) => {
-      if (i === 0) return String(p).replace(/[\/\\]+$/,'');
-      return String(p).replace(/^[\/\\]+|[\/\\]+$/g,'');
-    }).join(sep);
-  }
-
   function computeSourceFolder(it) {
-    if (it.ppsaFolderPath) return it.ppsaFolderPath;
-    if (it.folderPath) return it.folderPath;
-    if (it.contentFolderPath) {
-      const base = String(it.contentFolderPath).split(/[\\/]/).pop()?.toLowerCase() || '';
-      if (base === 'sce_sys') return it.contentFolderPath.replace(/[\\/]+sce_sys$/i, '');
-      return it.contentFolderPath;
-    }
-    return '';
+    let path = it.ppsaFolderPath || it.folderPath || it.contentFolderPath || '';
+    if (!path) return '';
+    path = path.replace(/\/sce_sys$/i, '');
+    return path;
   }
 
-  // Helper to get selected items
   function getSelectedItems() {
     const tbody = $('resultsBody');
     const trs = Array.from(tbody.querySelectorAll('tr'));
@@ -719,7 +868,21 @@
     }).filter(Boolean);
   }
 
-  // GO click with confirmation + conflict modal
+  function applySearchFilter() {
+    const tbody = $('resultsBody');
+    if (!tbody || !window.__ps5_lastRenderedItems) return;
+    const rows = Array.from(tbody.querySelectorAll('tr'));
+    const filter = searchFilter.toLowerCase();
+    rows.forEach((tr, idx) => {
+      const item = window.__ps5_lastRenderedItems[idx];
+      if (!item) return;
+      const name = (item.displayTitle || item.folderName || '').toLowerCase();
+      const visible = !filter || name.includes(filter);
+      tr.style.display = visible ? '' : 'none';
+    });
+    updateHeaderCheckboxState();
+  }
+
   async function goClickHandler() {
     try {
       const tbody = $('resultsBody');
@@ -727,11 +890,12 @@
       const selected = [];
       const selectedIndices = [];
       trs.forEach((tr, idx) => {
+        if (tr.style.display === 'none') return;
         const cb = tr.querySelector('input[type="checkbox"]');
         if (cb && cb.checked) {
           selectedIndices.push(idx);
           const orig = window.__ps5_lastRenderedItems[idx];
-          selected.push({
+          const item = {
             displayTitle: orig.displayTitle || orig.dbTitle || orig.folderName || '',
             contentFolderPath: orig.contentFolderPath || orig.folderPath || '',
             folderPath: orig.folderPath || orig.contentFolderPath || '',
@@ -740,10 +904,24 @@
             paramPath: orig.paramPath || null,
             contentId: orig.contentId || null,
             iconPath: orig.iconPath || null,
-            dbTitle: orig.dbTitle || null,
+            dbPresent: false,
+            dbTitle: null,
             skuFromParam: orig.skuFromParam || null,
             contentVersion: orig.contentVersion || null
-          });
+          };
+          const correctPath = computeSourceFolder(item);
+          item.folderPath = correctPath;
+          item.contentFolderPath = correctPath;
+          item.ppsaFolderPath = correctPath;
+          if (isFtpScan && ftpConfig) {
+            const encodedFolderPath = encodeURIComponent(item.folderPath).replace(/%2F/g, '/');
+            if (ftpConfig.path === '/') {
+              item.source = 'ftp://' + ftpConfig.host + ':' + ftpConfig.port + '/' + encodedFolderPath;
+            } else {
+              item.source = 'ftp://' + ftpConfig.host + ':' + ftpConfig.port + ftpConfig.path + '/' + encodedFolderPath;
+            }
+          }
+          selected.push(item);
         }
       });
       if (!selected.length) {
@@ -751,41 +929,64 @@
         return;
       }
 
-      // Append version to displayTitle for ALL versions to include version in folder name
       for (const item of selected) {
         if (item.contentVersion) {
           item.displayTitle += ` (${item.contentVersion})`;
         }
       }
 
-      const dest = $('destPath') && $('destPath').value ? $('destPath').value.trim() : '';
+      let dest = $('destPath') && $('destPath').value ? $('destPath').value.trim() : '';
       if (!dest) {
         toast('Select destination');
         return;
       }
-      addRecentDest(dest);
+
+      // Check if destination is FTP
+      let ftpDestConfig = null;
+      if (/^(\d+\.\d+\.\d+\.\d+(:\d+)?|ftp:\/\/)/.test(dest)) {
+        ftpDestConfig = await window.FtpApi.openFtpModal(dest.startsWith('ftp://') ? dest : 'ftp://' + dest);
+        if (!ftpDestConfig) {
+          toast('FTP destination config required');
+          return;
+        }
+        addRecentFtp(ftpDestConfig);
+        // For FTP dest, set actual dest to FTP URL
+        dest = 'ftp://' + ftpDestConfig.host + ':' + ftpDestConfig.port + ftpDestConfig.path;
+      } else {
+        addRecentDest(dest);
+      }
+
+      const src = $('sourcePath').value.trim();
+      if (dest === src) shouldRefreshAfterClose = true;
 
       const action = $('action') ? $('action').value : 'move';
-      const layout = $('layout') ? $('layout').value : 'game-ppsa';  // Changed default to match HTML first option
+      const layout = $('layout') ? $('layout').value : 'etahen';
 
       let customName = null;
       if (layout === 'custom') {
         if (selected.length > 1) {
-          alert('Custom layout is only allowed for single game selection. Please select only one game.');
-          return;
-        }
-        customName = await openCustomModal();
-        if (!customName || !customName.trim()) {
-          alert('Custom name cannot be empty. Using default.');
-          customName = null;
+          const batchRenamed = await openBatchRenameModal(selected);
+          if (batchRenamed) {
+            selected = batchRenamed;
+            customName = null;
+          } else {
+            alert('Custom layout is only allowed for single game selection. Please select only one game.');
+            return;
+          }
         } else {
-          customName = customName.trim();
+          customName = await openRenameModal();
+          if (!customName || !customName.trim()) {
+            alert('Custom name cannot be empty. Using default.');
+            customName = null;
+          } else {
+            customName = customName.trim();
+          }
         }
       }
 
       const preview = selected.map(it => ({
         item: computeFinalTargetForItem(it, dest, layout, customName).split(/[\\/]/).pop() || 'Unknown Game',
-        source: computeSourceFolder(it),
+        source: it.source || computeSourceFolder(it),
         target: computeFinalTargetForItem(it, dest, layout, customName)
       }));
 
@@ -802,7 +1003,7 @@
           const closeBtn = $('resultClose');
           const actionsRow = $('resultActionsRow');
 
-          if (rb && rl && rp && rs && rc) {
+          if (rb && rl && rp && rc && rs) {
             rl.innerHTML = '';
             TransferStats.reset();
             rs.textContent = 'Transferring...';
@@ -814,29 +1015,57 @@
             if (closeBtn) closeBtn.style.display = 'none';
             if (actionsRow) {
               actionsRow.innerHTML = '';
-              const cancelBtn = document.createElement('button');
-              cancelBtn.id = 'resultCancel';
-              cancelBtn.className = 'btn-danger modal-close';
-              cancelBtn.textContent = 'Cancel';
-              cancelBtn.addEventListener('click', async () => {
+              const operationCancelBtn = document.createElement('button');
+              operationCancelBtn.id = 'resultCancel';
+              operationCancelBtn.className = 'btn-danger modal-close';
+              operationCancelBtn.textContent = 'Cancel';
+              operationCancelBtn.addEventListener('click', async () => {
                 try {
-                  cancelBtn.disabled = true;
-                  cancelBtn.textContent = 'Cancelling...';
+                  operationCancelBtn.disabled = true;
+                  operationCancelBtn.textContent = 'Cancelling...';
                   cancelOperation = true;
                   if (window.ppsaApi && typeof window.ppsaApi.cancelOperation === 'function') {
                     await window.ppsaApi.cancelOperation();
                   }
                 } catch (_) {}
               });
-              actionsRow.appendChild(cancelBtn);
+              actionsRow.appendChild(operationCancelBtn);
               actionsRow.style.display = 'flex';
               actionsRow.setAttribute('aria-hidden', 'false');
             }
+
+            let closeX = rb.querySelector('.close-x');
+            if (!closeX) {
+              closeX = document.createElement('button');
+              closeX.className = 'close-x';
+              closeX.textContent = '×';
+              closeX.style.position = 'absolute';
+              closeX.style.top = '10px';
+              closeX.style.right = '10px';
+              closeX.style.fontSize = '24px';
+              closeX.style.background = 'none';
+              closeX.style.border = 'none';
+              closeX.style.color = 'var(--text)';
+              closeX.style.cursor = 'pointer';
+              closeX.style.width = '30px';
+              closeX.style.height = '30px';
+              closeX.style.display = 'flex';
+              closeX.style.alignItems = 'center';
+              closeX.style.justifyContent = 'center';
+              closeX.style.zIndex = '1001';
+              closeX.addEventListener('click', () => {
+                rb.style.display = 'none';
+                rb.setAttribute('aria-hidden', 'true');
+                refreshResultsAfterOperation();
+              });
+              rb.appendChild(closeX);
+            }
+            closeX.style.display = 'none';
           }
           setResultModalBusy(true);
 
-          saveTransferState({ items: selected, dest, action, layout, customName, overwriteMode });
-          const res = await window.ppsaApi.ensureAndPopulate({ items: selected, dest, action, layout, customName, overwriteMode });
+          saveTransferState({ items: selected, dest, action, layout, customName, overwriteMode, ftpConfig: isFtpScan ? ftpConfig : null, ftpDestConfig });
+          const res = await window.ppsaApi.ensureAndPopulate({ items: selected, dest, action, layout, customName, overwriteMode, ftpConfig: isFtpScan ? ftpConfig : null, ftpDestConfig });
           if (!res) throw new Error('No response');
           if (res.error) throw new Error(res.error);
 
@@ -846,15 +1075,14 @@
           const actions2 = $('resultActionsRow');
           if (rp2) rp2.style.display = 'none';
           if (rl2) rl2.style.display = 'block';
-          if (actions2) {
-            actions2.display = 'none';
-            actions2.setAttribute('aria-hidden', 'true');
-          }
+          if (actions2) actions2.display = 'none';
           if (close2) closeBtn.style.display = 'block';
+
+          const closeX = rb.querySelector('.close-x');
+          if (closeX) closeX.style.display = 'block';
 
           updateListSummary(res);
 
-          // Show the results list immediately after operation completes
           const rp3 = $('resultProgress');
           const rl3 = $('resultList');
           const close3 = $('resultClose');
@@ -864,12 +1092,11 @@
           if (rl3) rl3.style.display = 'block';
           if (close3) closeBtn.style.display = 'block';
           if (rs3) rs3.textContent = 'Operation complete';
-          if (label3) label3.textContent = '';
+          if (label3) label.textContent = '';
           showScanUI(false);
 
-          refreshResultsAfterOperation(); // Refresh the game results list after operation
+          refreshResultsAfterOperation();
 
-          // Modal stays open until user clicks close
         };
 
         if (conflicts.length) {
@@ -887,64 +1114,10 @@
       openConfirmModal(preview, { action, layout }, proceedAfterConfirm, cancelAfterConfirm);
     } catch (e) {
       err('ensureAndPopulate error', e);
-      const rp2 = $('resultProgress');
-      const rl2 = $('resultList');
-      const closeBtn = $('resultClose');
-      if (rp2) rp2.style.display = 'none';
-      if (rl2) rl2.style.display = 'block';
-      if (closeBtn) closeBtn.style.display = 'block';
       toast('Operation failed: ' + (e.message || String(e)));
     } finally {
       setResultModalBusy(false);
     }
-  }
-
-  // Function to open custom name modal
-  function openCustomModal() {
-    return new Promise((resolve) => {
-      const backdrop = $('customModalBackdrop');
-      const input = $('customNameInput');
-      const proceedBtn = $('customProceed');
-      const cancelBtn = $('customCancel');
-
-      if (!backdrop || !input || !proceedBtn || !cancelBtn) {
-        resolve(null);
-        return;
-      }
-
-      input.value = '';
-      backdrop.style.display = 'flex';
-      backdrop.setAttribute('aria-hidden', 'false');
-      input.focus();
-
-      const cleanup = () => {
-        backdrop.style.display = 'none';
-        backdrop.setAttribute('aria-hidden', 'true');
-        proceedBtn.removeEventListener('click', onProceed);
-        cancelBtn.removeEventListener('click', onCancel);
-        input.removeEventListener('keydown', onKeydown);
-      };
-
-      const onProceed = () => {
-        const value = input.value.trim();
-        cleanup();
-        resolve(value);
-      };
-
-      const onCancel = () => {
-        cleanup();
-        resolve(null);
-      };
-
-      const onKeydown = (e) => {
-        if (e.key === 'Enter') onProceed();
-        else if (e.key === 'Escape') onCancel();
-      };
-
-      proceedBtn.addEventListener('click', onProceed);
-      cancelBtn.addEventListener('click', onCancel);
-      input.addEventListener('keydown', onKeydown);
-    });
   }
 
   function saveTransferState(state) {
@@ -954,11 +1127,7 @@
 
   function resumeTransfer() {
     if (!resumeState) return;
-    // Restore UI state (e.g., select items, set dest/action/layout)
-    // For simplicity, re-run goClickHandler with resumeState, but skip confirmation
-    // (Implement based on your needs; this is a stub)
     toast('Resuming transfer...');
-    // Call main IPC to resume
     window.ppsaApi.resumeTransfer(resumeState).then(() => {
       localStorage.removeItem(TRANSFER_STATE_KEY);
       resumeState = null;
@@ -983,6 +1152,9 @@
       } else if (r.copied) {
         badge = 'copied';
         copied++;
+        totalBytes += r.totalSize || 0;
+      } else if (r.uploaded) {
+        badge = 'uploaded';
         totalBytes += r.totalSize || 0;
       } else if (r.error) {
         badge = 'error';
@@ -1022,8 +1194,8 @@
       right.style.flex = '0 0 auto';
       if (badge) {
         const b = document.createElement('button');
-        b.className = (badge === 'moved' || badge === 'copied' || badge === 'created') ? 'btn-go' : 'btn';
-        b.textContent = { moved: 'Moved', copied: 'Copied', created: 'Created', error: 'Error', skipped: 'Skipped' }[badge] || badge;
+        b.className = (badge === 'moved' || badge === 'copied' || badge === 'created' || badge === 'uploaded') ? 'btn-go' : 'btn';
+        b.textContent = { moved: 'Moved', copied: 'Copied', created: 'Created', uploaded: 'Uploaded', error: 'Error', skipped: 'Skipped' }[badge] || badge;
         b.disabled = true;
         b.style.pointerEvents = 'none';
         b.style.fontSize = '12px';
@@ -1041,28 +1213,28 @@
       if (copied) parts.push(`${copied} copied`);
       if (moved) parts.push(`${moved} moved`);
       if (created) parts.push(`${created} created`);
-      if (errors) parts.push(`${errors} errors`);
-      const scanDuration = scanStartTime ? Math.round((Date.now() - scanStartTime) / 1000) : 0;
-      const transferDuration = transferStartTime ? Math.round((Date.now() - transferStartTime) / 1000) : 0;
-      parts.push(`Scan time: ${scanDuration}s`);
-      parts.push(`Transfer time: ${transferDuration}s`);
       if (totalBytes > 0) parts.push(`Total transferred: ${bytesToHuman(totalBytes)}`);
+      if (maxSpeed > 0) parts.push(`Max speed: ${bytesToHuman(maxSpeed)}/s`);
       rs.textContent = parts.length ? parts.join(' • ') : 'Operation complete';
     }
     const rcEl = $('resultCount');
     if (rcEl) rcEl.textContent = String(total);
+    totalTransferred = totalBytes;
   }
 
   async function refreshResultsAfterOperation() {
     const src = $('sourcePath') && $('sourcePath').value ? $('sourcePath').value.trim() : '';
     if (!src) return;
     try {
-      if (!window.ppsaApi || typeof window.ppsaApi.scanSourceForPpsa !== 'function') return;
-      const res = await window.ppsaApi.scanSourceForPpsa(src);
+      toast('Refreshing results...');
+      if (window.ppsaApi && typeof window.ppsaApi.scanSource !== 'function') return;
+      const res = await window.ppsaApi.scanSource(src);
       const arr = Array.isArray(res) ? res : (Array.isArray(res?.items) ? res.items : []);
       renderResults(arr);
+      toast('Results refreshed');
     } catch (scanErr) {
       err('Refresh error:', scanErr);
+      toast('Refresh failed: ' + (scanErr.message || 'Unknown error'));
     }
   }
 
@@ -1074,7 +1246,6 @@
     const list = dedupeItems(raw);
     window.__ps5_lastRenderedItems = list;
 
-    // Sort only if currentSortBy is 'name', else rely on manual sort
     if (currentSortBy === 'name') {
       list.sort((a, b) => {
         const sa = String((a && (a.displayTitle || a.dbTitle || a.folderName)) || '').toLowerCase();
@@ -1154,7 +1325,11 @@
       const tdSize = document.createElement('td');
       tdSize.className = 'size';
       tdSize.style.verticalAlign = 'top';
-      tdSize.textContent = bytesToHuman(r.totalSize || 0);
+      if (r.totalSize === 0) {
+        tdSize.textContent = '';
+      } else {
+        tdSize.textContent = bytesToHuman(r.totalSize || 0);
+      }
       tr.appendChild(tdSize);
 
       const tdFolder = document.createElement('td');
@@ -1164,8 +1339,8 @@
       fp.title = r.ppsaFolderPath || r.folderPath || r.contentFolderPath || '';
       fp.style.color = 'var(--muted)';
       fp.style.fontWeight = '700';
-      fp.textContent = fp.title;
       fp.style.cursor = 'pointer';
+      fp.textContent = fp.title;
       fp.addEventListener('click', () => {
         if (fp.title) {
           window.ppsaApi.showInFolder(fp.title);
@@ -1208,12 +1383,13 @@
     updateHeaderCheckboxState();
     showScanUI(false);
     try { localStorage.setItem(LAST_RESULTS_KEY, JSON.stringify(list)); } catch (_) {}
+    applySearchFilter();
   }
 
   function updateHeaderCheckboxState() {
     const header = $('chkHeader');
     if (!header) return;
-    const visible = Array.from(document.querySelectorAll('#resultsBody tr')).filter(tr => tr.offsetParent !== null);
+    const visible = Array.from(document.querySelectorAll('#resultsBody tr')).filter(tr => tr.offsetParent !== null && tr.style.display !== 'none');
     if (!visible.length) {
       header.checked = false;
       header.indeterminate = false;
@@ -1236,7 +1412,7 @@
   }
 
   function toggleHeaderSelect() {
-    const visible = Array.from(document.querySelectorAll('#resultsBody tr')).filter(tr => tr.offsetParent !== null);
+    const visible = Array.from(document.querySelectorAll('#resultsBody tr')).filter(tr => tr.offsetParent !== null && tr.style.display !== 'none');
     if (!visible.length) return;
     const checkedCount = visible.filter(tr => {
       const cb = tr.querySelector('input[type="checkbox"]');
@@ -1254,7 +1430,7 @@
   }
 
   function sortResults(by) {
-    currentSortBy = by;  // Set the global sort tracker
+    currentSortBy = by;
     if (!window.__ps5_lastRenderedItems) return;
     window.__ps5_lastRenderedItems.sort((a, b) => {
       let aVal, bVal;
@@ -1293,12 +1469,123 @@
     }
   }
 
+  function onProgressMessage(d) {
+    if (!d || !d.type) return;
+
+    if (d.type === 'scan') {
+      const label = $('currentScanLabel');
+      if (label) {
+        const pathText = d.folder || d.path || '';
+        label.textContent = Utils.normalizeDisplayPath(pathText) || 'Scanning...';
+      }
+      return;
+    }
+
+    if (d.type === 'go-start') {
+      setResultModalBusy(true);
+      TransferStats.reset();
+      maxSpeed = 0;
+      completedFiles = [];
+      const rb = $('resultModalBackdrop');
+      const rp = $('resultProgress');
+      const rl = $('resultList');
+      const rc = $('resultCount');
+      const rs = $('resultSubText');
+      const cf = $('currentFileInfo');
+      const comp = $('completedFiles');
+      if (rb && rp && rl && rc && rs && cf && comp) {
+        rp.style.display = 'block';
+        rl.style.display = 'none';
+        rc.textContent = '0';
+        rs.textContent = 'Transferring...';
+        cf.textContent = '';
+        comp.innerHTML = '';
+        rb.style.display = 'flex';
+        rb.setAttribute('aria-hidden', 'false');
+      }
+      cancelOperation = false;
+      const ts = $('transferStats');
+      if (ts) ts.textContent = 'Speed: --';
+      const etaEl = $('transferETA');
+      if (etaEl) etaEl.textContent = 'ETA: --';
+      transferStartTime = 0; // Reset timer
+      return;
+    }
+
+    if (d.type === 'go-file-progress' || d.type === 'go-file-complete') {
+      if (!transferStartTime) transferStartTime = Date.now(); // Start timer on first file progress
+      if (cancelOperation) return;
+      if (d.fileRel) lastFile = d.fileRel;
+      const stats = TransferStats.update(d.totalBytesCopied || 0, d.totalBytes || 0);
+      if (stats.speedBps > maxSpeed) maxSpeed = stats.speedBps;
+      const rs = $('resultSubText');
+      const cf = $('currentFileInfo');
+      if (rs && cf) {
+        const speedHuman = bytesToHuman(stats.speedBps || 0) + '/s';
+        const hasTotal = d.totalBytes && Number.isFinite(d.totalBytes) && d.totalBytes > 0;
+        if (hasTotal) {
+          const percent = Math.round((d.totalBytesCopied / d.totalBytes) * 100);
+          const baseText = `Progress: ${percent}% • ${speedHuman}${lastFile ? ' • ' + lastFile : ''}`;
+          rs.textContent = baseText;
+          cf.textContent = lastFile ? `Current: ${lastFile} (${percent}%)` : 'Preparing...';
+        } else {
+          const baseText = `Transferring... ${speedHuman}${lastFile ? ' • ' + lastFile : ''}`;
+          rs.textContent = baseText;
+          cf.textContent = lastFile ? `Current: ${lastFile}` : 'Preparing...';
+        }
+      }
+
+      const progressFill = $('resultProgress')?.querySelector('.progress-fill');
+      if (progressFill) {
+        const hasTotal = d.totalBytes && Number.isFinite(d.totalBytes) && d.totalBytes > 0;
+        progressFill.style.width = hasTotal ? `${Math.round((d.totalBytesCopied / d.totalBytes) * 100)}%` : '0%';
+      }
+
+      const ts = $('transferStats');
+      if (ts) ts.textContent = `Speed: ${bytesToHuman(stats.speedBps || 0)}/s`;
+      const etaEl = $('transferETA');
+      if (etaEl) etaEl.textContent = `ETA: ${secToHMS(stats.etaSec || 0)}`;
+      return;
+    }
+
+    if (d.type === 'go-complete') {
+      setResultModalBusy(false);
+      const rp = $('resultProgress');
+      const rl = $('resultList');
+      const rs = $('resultSubText');
+      const closeBtn = $('resultClose');
+      const label = $('currentScanLabel');
+      if (rp) rp.style.display = 'none';
+      if (rl) rl.style.display = 'block';
+      if (closeBtn) closeBtn.style.display = 'block';
+      if (rs) rs.textContent = 'Operation complete';
+      if (label) label.textContent = '';
+      showScanUI(false);
+      showNotification('Transfer Complete', 'PS5 Vault operation finished successfully.');
+      localStorage.removeItem(TRANSFER_STATE_KEY);
+      const transferDurationMs = transferStartTime ? (Date.now() - transferStartTime) : 0;
+      const durationText = transferDurationMs < 1000 ? `${transferDurationMs}ms` : secToHMS(transferDurationMs / 1000);
+      const totalTransferred = d.totalBytesCopied || 0;
+      const ts = $('transferStats');
+      if (ts) ts.textContent = `Completed in ${durationText} • Total transferred: ${bytesToHuman(totalTransferred)}`;
+      const actionsRow = $('resultActionsRow');
+      if (actionsRow) actionsRow.style.display = 'none';
+      return;
+    }
+
+    if (d.type === 'go-item') {
+      const label = $('currentScanLabel');
+      const raw = d.folder || d.path || '';
+      if (label) label.textContent = Utils.pathEndsWithSceSys(raw) ? '' : (Utils.normalizeDisplayPath(raw) || '');
+      return;
+    }
+  }
+
   document.addEventListener('DOMContentLoaded', () => {
     try {
       Preview.init();
       applySettings();
 
-      // Load last used paths into inputs
       const lastSrc = localStorage.getItem(LAST_SRC_KEY);
       if (lastSrc && $('sourcePath')) $('sourcePath').value = lastSrc;
 
@@ -1308,17 +1595,22 @@
       updateSourceHistoryDatalist();
       updateDestHistoryDatalist();
 
-      // Click logo to clear recent paths
       const brandLogo = $('brandLogo');
       if (brandLogo) {
         brandLogo.addEventListener('click', () => {
-          if (confirm('Clear all recent sources and destinations?')) {
+          if (confirm('Clear all recent sources, destinations, and FTP?')) {
             try {
-              localStorage.removeItem('ps5vault.recentSources');
-              localStorage.removeItem('ps5vault.recentDests');
+              localStorage.removeItem(RECENT_SOURCES_KEY);
+              localStorage.removeItem(RECENT_DESTS_KEY);
+              localStorage.removeItem('ps5vault.recentFtp');
+              localStorage.removeItem(LAST_SRC_KEY);
+              localStorage.removeItem(LAST_DST_KEY);
+              $('sourcePath').value = '';
+              $('destPath').value = '';
               updateSourceHistoryDatalist();
               updateDestHistoryDatalist();
-              toast('Recent paths cleared');
+              updateFtpHistoryDatalist();
+              toast('Recent paths and fields cleared');
             } catch (_) {}
           }
         });
@@ -1358,6 +1650,35 @@
         btnImport.addEventListener('click', importData);
       }
 
+      const btnHelp = $('btnHelp');
+      if (btnHelp) {
+        btnHelp.addEventListener('click', () => {
+          try {
+            if (window.HelpApi && window.HelpApi.openHelp) window.HelpApi.openHelp();
+          } catch (e) {
+            console.error('Help open error:', e);
+          }
+        });
+      }
+
+      document.addEventListener('click', (e) => {
+        const link = e.target.closest('a');
+        if (link && link.href && link.href !== '#') {
+          e.preventDefault();
+          if (window.ppsaApi && typeof window.ppsaApi.openExternal === 'function') {
+            window.ppsaApi.openExternal(link.href);
+          } else {
+            window.open(link.href, '_blank');
+          }
+        }
+      });
+
+      document.addEventListener('auxclick', (e) => {
+        if (e.target.closest('a')) {
+          e.preventDefault();
+        }
+      });
+
       document.addEventListener('keydown', e => {
         if (e.ctrlKey && e.key === 'a') {
           e.preventDefault();
@@ -1372,10 +1693,13 @@
           if (btnScan) btnScan.click();
         } else if (e.key === 'F1') {
           e.preventDefault();
-          const btnHelp = $('btnHelp');
-          if (btnHelp) btnHelp.click();
+          try {
+            if (window.HelpApi && window.HelpApi.openHelp) window.HelpApi.openHelp(e);
+          } catch (e) {
+            console.error('F1 help error:', e);
+          }
         } else if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
-          const rows = Array.from($('resultsBody').querySelectorAll('tr'));
+          const rows = Array.from($('resultsBody').querySelectorAll('tr')).filter(tr => tr.style.display !== 'none');
           const activeRow = document.activeElement.closest('tr');
           const idx = rows.indexOf(activeRow);
           const nextIdx = e.key === 'ArrowDown' ? Math.min(idx + 1, rows.length - 1) : Math.max(idx - 1, 0);
@@ -1386,65 +1710,89 @@
       const btnPickSource = $('btnPickSource');
       if (btnPickSource) {
         btnPickSource.addEventListener('click', async () => {
-          const result = await window.ppsaApi.pickDirectory();
-          if (!result.canceled && result.path) {
-            $('sourcePath').value = result.path;
-            addRecentSource(result.path);
-            try { localStorage.setItem(LAST_SRC_KEY, result.path); } catch (_) {}
+          try {
+            const result = await window.ppsaApi.openDirectory();
+            if (!result.canceled && result.filePaths && result.filePaths[0]) {
+              $('sourcePath').value = result.filePaths[0];
+              addRecentSource(result.filePaths[0]);
+              try { localStorage.setItem(LAST_SRC_KEY, result.filePaths[0]); } catch (_) {}
+            }
+          } catch (e) {
+            console.error(e);
+            alert('Error picking source: ' + e.message);
           }
         });
       }
       const btnPickDest = $('btnPickDest');
       if (btnPickDest) {
         btnPickDest.addEventListener('click', async () => {
-          const result = await window.ppsaApi.pickDirectory();
-          if (!result.canceled && result.path) {
-            $('destPath').value = result.path;
-            addRecentDest(result.path);
-            try { localStorage.setItem(LAST_DST_KEY, result.path); } catch (_) {}
+          try {
+            const result = await window.ppsaApi.openDirectory();
+            if (!result.canceled && result.filePaths && result.filePaths[0]) {
+              $('destPath').value = result.filePaths[0];
+              addRecentDest(result.filePaths[0]);
+              try { localStorage.setItem(LAST_DST_KEY, result.filePaths[0]); } catch (_) {}
+            }
+          } catch (e) {
+            console.error(e);
+            alert('Error picking dest: ' + e.message);
           }
         });
       }
       const btnScan = $('btnScan');
       if (btnScan) {
         btnScan.addEventListener('click', async () => {
-          const src = $('sourcePath') && $('sourcePath').value ? $('sourcePath').value.trim() : '';
-          if (!src) { toast('Select source first'); return; }
-          let actualSrc = src;
-          if (src === 'browse') {
-            const result = await window.ppsaApi.pickDirectory();
-            if (!result.canceled && result.path) {
-              actualSrc = result.path;
-              addRecentSource(result.path);
+          try {
+            const src = $('sourcePath') && $('sourcePath').value ? $('sourcePath').value.trim() : '';
+            if (!src) { toast('Select source first'); return; }
+            let actualSrc = src;
+            isFtpScan = false;
+            ftpConfig = null;
+            if (src === 'browse') {
+              const result = await window.ppsaApi.openDirectory();
+              if (!result.canceled && result.filePaths && result.filePaths[0]) {
+                actualSrc = result.filePaths[0];
+                addRecentSource(result.filePaths[0]);
+              } else {
+                return;
+              }
+            } else if (src === 'ftp') {
+              const ftpUrl = prompt('Enter FTP URL (e.g., ftp://192.168.1.100 or 192.168.1.100/mnt/ext1/etaHEN/games):');
+              if (ftpUrl) {
+                actualSrc = ftpUrl.startsWith('ftp://') ? ftpUrl : 'ftp://' + ftpUrl;
+                addRecentSource(ftpUrl);
+              } else {
+                return;
+              }
+            } else if (/^(\d+\.\d+\.\d+\.\d+(:\d+)?|ftp:\/\/)/.test(src)) {
+              // Open FTP modal for configuration
+              const config = await window.FtpApi.openFtpModal(src.startsWith('ftp://') ? src : 'ftp://' + src);
+              if (config) {
+                ftpConfig = config;
+                isFtpScan = true;
+                actualSrc = 'ftp://' + config.host + ':' + config.port + config.path;
+                addRecentFtp(actualSrc);
+              } else {
+                return;
+              }
             } else {
-              return;
+              addRecentSource(src);
             }
-          } else if (src === 'ftp') {
-            const ftpUrl = prompt('Enter FTP URL (e.g., ftp://192.168.1.100 or 192.168.1.100/mnt/ext1/etaHEN/games):');
-            if (ftpUrl) {
-              actualSrc = ftpUrl.startsWith('ftp://') ? ftpUrl : 'ftp://' + ftpUrl;
-              addRecentSource(ftpUrl);
-            } else {
-              return;
-            }
-          } else if (src.startsWith('ftp://') || /^\d+\.\d+\.\d+\.\d+/.test(src)) {
-            // Auto-detect FTP if entered as IP/path
-            actualSrc = src.startsWith('ftp://') ? src : 'ftp://' + src;
-            addRecentSource(src);
-          } else {
-            addRecentSource(src);
+            try { localStorage.setItem(LAST_SRC_KEY, actualSrc); } catch (_) {}
+            showScanUI(true);
+            $('btnGoBig').disabled = true;
+            $('currentScanLabel') && ($('currentScanLabel').textContent = 'Scanning...');
+            scanStartTime = Date.now();
+            const res = await window.ppsaApi.scanSource(actualSrc);
+            const arr = Array.isArray(res) ? res : (Array.isArray(res?.items) ? res.items : []);
+            const duration = Math.round((Date.now() - scanStartTime) / 1000);
+            renderResults(arr, duration);
+            $('btnGoBig').disabled = false;
+            currentSortBy = 'name';
+          } catch (e) {
+            console.error(e);
+            toast('Scan failed: Check connection or path. Try again.');
           }
-          try { localStorage.setItem(LAST_SRC_KEY, actualSrc); } catch (_) {}
-          showScanUI(true);
-          $('btnGoBig').disabled = true;
-          $('currentScanLabel') && ($('currentScanLabel').textContent = 'Scanning...');
-          scanStartTime = Date.now();
-          const res = await window.ppsaApi.scanSourceForPpsa(actualSrc);
-          const arr = Array.isArray(res) ? res : (Array.isArray(res?.items) ? res.items : []);
-          const duration = Math.round((Date.now() - scanStartTime) / 1000);
-          renderResults(arr, duration);
-          $('btnGoBig').disabled = false;
-          currentSortBy = 'name';  // Reset to default on new scan
         });
       }
 
@@ -1458,42 +1806,17 @@
             toast('Scan cancelled');
             showScanUI(false);
             $('btnGoBig').disabled = false;
-          } catch (_) {}
+          } catch (e) {
+            console.error(e);
+            alert('Error cancelling scan: ' + e.message);
+          }
         });
       }
-
-      // Help modal handlers
-      const helpBackdrop = $('helpModalBackdrop');
-      const helpOpenBtn = $('btnHelp');
-      const helpCloseBtn = $('helpClose');
-      let helpEscHandler = null;
-
-      async function openHelp(ev) {
-        if (ev) ev.preventDefault();
-        if (!helpBackdrop) return;
-        helpBackdrop.style.display = 'flex';
-        helpBackdrop.setAttribute('aria-hidden', 'false');
-        helpEscHandler = (e) => { if (e.key === 'Escape') closeHelp(); };
-        document.addEventListener('keydown', helpEscHandler);
-      }
-
-      function closeHelp() {
-        if (!helpBackdrop) return;
-        helpBackdrop.style.display = 'none';
-        helpBackdrop.setAttribute('aria-hidden', 'true');
-        if (helpEscHandler) {
-          document.removeEventListener('keydown', helpEscHandler);
-          helpEscHandler = null;
-        }
-      }
-
-      if (helpOpenBtn) helpOpenBtn.addEventListener('click', openHelp);
-      if (helpCloseBtn) helpCloseBtn.addEventListener('click', closeHelp);
 
       const btnSelectAll = $('btnSelectAll');
       if (btnSelectAll) {
         btnSelectAll.addEventListener('click', () => {
-          Array.from(document.querySelectorAll('#resultsBody input[type="checkbox"]')).forEach(cb => {
+          Array.from(document.querySelectorAll('#resultsBody input[type="checkbox"]')).filter(cb => cb.closest('tr').style.display !== 'none').forEach(cb => {
             cb.checked = true;
             cb.closest('tr')?.classList.add('row-selected');
           });
@@ -1503,7 +1826,7 @@
       const btnUnselectAll = $('btnUnselectAll');
       if (btnUnselectAll) {
         btnUnselectAll.addEventListener('click', () => {
-          Array.from(document.querySelectorAll('#resultsBody input[type="checkbox"]')).forEach(cb => {
+          Array.from(document.querySelectorAll('#resultsBody input[type="checkbox"]')).filter(cb => cb.closest('tr').style.display !== 'none').forEach(cb => {
             cb.checked = false;
             cb.closest('tr')?.classList.remove('row-selected');
           });
@@ -1552,15 +1875,21 @@
             btnDeleteSelected.disabled = true;
             btnDeleteSelected.textContent = 'Deleting...';
             for (const item of selected) {
-              await window.ppsaApi.deleteItem(item);
+              if (isFtpScan && ftpConfig) {
+                const pathToDelete = item.ppsaFolderPath || item.folderPath;
+                await window.ppsaApi.ftpDeleteItem(ftpConfig, pathToDelete);
+              } else {
+                await window.ppsaApi.deleteItem(item);
+              }
             }
             toast(`Deleted ${selected.length} item(s)`);
-            // Refresh the scan results
             const src = $('sourcePath').value.trim();
             if (src) {
-              const res = await window.ppsaApi.scanSourceForPpsa(src);
+              toast('Refreshing results...');
+              const res = await window.ppsaApi.scanSource(src);
               const arr = Array.isArray(res) ? res : (Array.isArray(res?.items) ? res.items : []);
               renderResults(arr);
+              toast('Results refreshed');
             }
           } catch (e) {
             toast('Delete failed: ' + (e.message || 'Unknown error'));
@@ -1571,23 +1900,47 @@
         });
       }
 
-      const discordLink = $('discordLink');
-      if (discordLink) {
-        const DISCORD_USERNAME = 'nookie_65120';
-        const DISCORD_PROFILE_URLS = [
-          `https://discord.com/users/${DISCORD_USERNAME}`,
-          `https://discordapp.com/users/${DISCORD_USERNAME}`,
-          'https://discord.com/app'
-        ];
-        discordLink.addEventListener('click', async (e) => {
-          e.preventDefault();
+      const btnRenameSelected = $('btnRenameSelected');
+      if (btnRenameSelected) {
+        btnRenameSelected.addEventListener('click', async () => {
+          const selected = getSelectedItems();
+          if (!selected.length) {
+            toast('No items selected');
+            return;
+          }
+          if (selected.length > 1) {
+            toast('Rename only supports single item');
+            return;
+          }
+          const item = selected[0];
+          const currentName = item.displayTitle || '';
+          const newName = await openRenameModal(currentName);
+          if (!newName || !newName.trim()) return;
+          const sanitizedName = sanitize(newName.trim());
+          const oldPath = item.ppsaFolderPath;
+          const newPath = oldPath.replace(/\/[^\/]*$/, '/' + sanitizedName);
           try {
-            await window.ppsaApi.copyToClipboard(DISCORD_USERNAME);
-            toast(`Discord username copied: ${DISCORD_USERNAME}`);
-          } catch (_) {}
-          try { await window.ppsaApi.openExternal('discord://discord'); } catch (_) {}
-          for (const url of DISCORD_PROFILE_URLS) {
-            try { await window.ppsaApi.openExternal(url); break; } catch (_) {}
+            btnRenameSelected.disabled = true;
+            btnRenameSelected.textContent = 'Renaming...';
+            if (isFtpScan && ftpConfig) {
+              await window.ppsaApi.ftpRenameItem(ftpConfig, oldPath, newPath);
+            } else {
+              await window.ppsaApi.renameItem(item, newName.trim());
+            }
+            toast('Renamed successfully');
+            const src = $('sourcePath').value.trim();
+            if (src) {
+              toast('Refreshing results...');
+              const res = await window.ppsaApi.scanSource(src);
+              const arr = Array.isArray(res) ? res : (Array.isArray(res?.items) ? res.items : []);
+              renderResults(arr);
+              toast('Results refreshed');
+            }
+          } catch (e) {
+            toast('Rename failed: ' + (e.message || 'Unknown error'));
+          } finally {
+            btnRenameSelected.disabled = false;
+            btnRenameSelected.textContent = 'Rename Selected';
           }
         });
       }
@@ -1595,13 +1948,15 @@
       const resultClose = $('resultClose');
       if (resultClose) {
         resultClose.addEventListener('click', () => {
-          refreshResultsAfterOperation(); // Refresh when user clicks close
+          if (shouldRefreshAfterClose) {
+            refreshResultsAfterOperation();
+          }
+          shouldRefreshAfterClose = false;
           const rb = $('resultModalBackdrop');
           if (rb) { rb.style.display = 'none'; rb.setAttribute('aria-hidden', 'true'); }
         });
       }
 
-      // Add sorting functionality
       const thName = document.querySelector('th.game');
       const thSize = document.querySelector('th.size');
       const thFolder = document.querySelector('th.folder');
@@ -1609,8 +1964,19 @@
       if (thSize) thSize.addEventListener('click', () => sortResults('size'));
       if (thFolder) thFolder.addEventListener('click', () => sortResults('folder'));
 
+      const searchInput = $('searchInput');
+      if (searchInput) {
+        searchInput.addEventListener('input', (e) => {
+          searchFilter = e.target.value;
+          applySearchFilter();
+        });
+      }
+
+      setupDragDrop();
+
     } catch (e) {
       console.error('[renderer] DOMContentLoaded error', e);
+      alert('DOMContentLoaded error: ' + e.message);
     }
     log('renderer initialized');
   });

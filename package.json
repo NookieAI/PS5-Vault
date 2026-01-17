@@ -1,6 +1,6 @@
 {
   "name": "ps5vault",
-  "version": "1.0.7",
+  "version": "1.0.9",
   "description": "PS5 Vault: organize PPSA folders safely with verified copy/move, original Electron transfer windows, clear progress/ETA, and conflict resolution.",
   "author": "Nookie",
   "private": true,
@@ -9,8 +9,9 @@
   "scripts": {
     "start": "electron .",
     "dev": "electron .",
-    "dist": "electron-builder -w portable --publish never",
-    "dist:x64": "electron-builder -w portable --x64 --publish never"
+    "dist": "electron-builder --publish never",
+    "dist:mac": "electron-builder --mac --publish never",
+    "dist:win": "electron-builder --win --publish never"
   },
   "devDependencies": {
     "electron": "22.3.27",
@@ -27,6 +28,9 @@
       "main.js",
       "preload.js",
       "renderer.js",
+      "scan.js",
+      "ftp.js",
+      "help.js",
       "utils.js",
       "index.html",
       "ui-overrides.css",
@@ -38,24 +42,26 @@
     "asar": true,
     "compression": "maximum",
     "extraMetadata": {
-      "version": "1.0.7"
+      "version": "1.0.9"
     },
-    "win": {
+    "mac": {
       "target": [
         {
-          "target": "portable",
+          "target": "dmg",
           "arch": [
-            "x64"
+            "x64",
+            "arm64"
           ]
         }
       ],
-      "icon": "assets/icon.ico",
-      "artifactName": "PS5Vault-${version}-portable-${arch}.exe"
+      "icon": "assets/icon.icns",
+      "artifactName": "PS5Vault-${version}-mac-${arch}.${ext}"
     }
   },
   "dependencies": {
     "basic-ftp": "^5.1.0",
     "clear-cache": "^1.1.0",
+    "electron-updater": "^6.7.3",
     "npx": "^10.2.2",
     "readdirp": "3.6.0"
   }
