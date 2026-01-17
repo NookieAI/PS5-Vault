@@ -4,54 +4,114 @@
 
 # PS5 Vault
 
-**PS5 Vault** is a powerful, user-friendly desktop application for organizing and managing PlayStation 5 (PS5) game backups (PPSA folders). It supports local and FTP-based scanning, bulk transfers (move/copy), renaming, and more—all designed for PS5 enthusiasts and homebrew users.
+PS5 Vault is a desktop application for organizing PS5 PPSA game folders safely. It enables scanning, transferring, managing, and customizing your PS5 game library locally or over FTP, with a focus on ease of use and data integrity.
 
 ## Features
 
-- **Local Scanning**: Scan local folders for validated PS5 game entries (requires param.json).
-- **FTP Support**: Directly scan and transfer games from your PS5 via FTP (using ftpsrv or etaHEN). Copy or move files from FTP source to local destination. Redesigned modal in v1.0.8 for better usability, with port-based path auto-detection (e.g., port 1337 defaults to `/mnt/ext1/etaHEN/games` for etaHEN; port 2121 to `/mnt/usb0/games` for ftpsrv).
-- **Multiple Layouts**: Choose from various destination folder structures (Game/PPSA, Game only, PPSA only, etaHEN default, etc.).
-- **Batch Operations**: Select, rename, delete, or move multiple games at once.
-- **Rename Modal**: Use genuine game names from `param.json` for default renaming, or enter custom names for single items.
-- **Conflict Resolution**: Automatically handle existing files with skip or rename options.
-- **Progress Tracking**: Real-time progress bars, ETA, and transfer statistics.
-- **Recent Lists & Autocomplete**: Synced dropdowns for sources (including full FTP URLs), destinations, and FTP configs. Easily re-use IPs, paths, and URLs.
-- **Help System**: Comprehensive in-app help with step-by-step instructions.
-- **Dark/Light Theme**: Toggle between themes for comfortable viewing.
-- **Keyboard Shortcuts**: Ctrl+A (select all), Ctrl+R (rescan), F1 (help), Arrow keys (navigate).
-- **Cross-Platform**: Built with Electron for Windows, macOS, and Linux.
+### **Source Scanning & Discovery**
+   - **Local Directory Scanning**: Browse and select local folders (e.g., on your PC) to scan for PS5 game folders (containing `param.json`).
+   - **FTP Scanning**: Connect directly to your PS5 via FTP to scan for games without downloading them first. Supports IP addresses or FTP URLs (e.g., `ftp://192.168.1.100:2121`).
+   - **Automatic Game Detection**: Scans for PPSA folders, extracts metadata like title, content ID, version, size, and cover art from `param.json`.
+   - **Deep Scanning**: Recursively scans subdirectories up to a configurable depth (default: 12 levels) for comprehensive library discovery.
+   - **Progress Feedback**: Real-time scan progress with item count, ETA, and current folder being scanned.
+   - **Deduplication**: Automatically removes duplicate entries based on PPSA key, content ID, and version.
+
+### **FTP Integration & Remote Operations**
+   - **FTP Connection**: Enter PS5 IP, port (2121 preferred, 1337 alt), path (e.g., `/mnt/ext1/etaHEN/games`), and credentials (anonymous login supported).
+   - **FTP Transfer**: Upload games directly to PS5 (e.g., from PC to PS5) or download from PS5 (from PS5 to PC).
+   - **FTP Management**: Delete, rename, and manage game folders on PS5 over FTP.
+   - **FTP Retry & Error Handling**: Automatic retries (up to 2 attempts) for network failures with user notifications.
+   - **FTP Path Support**: Handles encoded paths (e.g., spaces as `%20`) and POSIX-style paths for cross-platform compatibility.
+   - **Secure FTP Note**: Warns about unencrypted FTP; recommends secure networks.
+
+### **Transfer & Organization**
+   - **Action Types**: Choose between "Create folder" (dry-run), "Copy" (verified with hash checking), or "Move" (relocate files).
+   - **Destination Layouts**: Organize games in various structures:
+     - Game / PPSA (e.g., `GameName/PPSAName`)
+     - Game only (flattens PPSA into `GameName`)
+     - PPSA only (e.g., `PPSAName`)
+     - etaHEN default (e.g., `etaHEN/games/GameName`)
+     - itemZFlow default (e.g., `games/GameName`)
+     - Dump Runner default (e.g., `homebrew/GameName`)
+     - Custom (prompt for custom folder name, single game only)
+   - **Batch Transfers**: Select multiple games and transfer them all at once.
+   - **Conflict Resolution**: Automatically handle existing files by skipping or renaming (e.g., add `(1)` suffix).
+   - **Progress Tracking**: Live progress bar, file count, speed (MB/s), ETA, current file, and total transferred size.
+   - **Transfer Stats**: Post-transfer summary with moved/copied/uploaded counts, total size, and max speed.
+   - **Resume Transfers**: Save and resume interrupted transfers across sessions.
+   - **Verified Transfers**: Uses hash verification for copies to ensure data integrity.
+
+### **Game Management & Editing**
+   - **Select & Deselect**: Checkboxes for individual games; header checkbox for all visible; "Select All" and "Unselect All" buttons.
+   - **Delete Selected**: Permanently delete selected games (local or FTP) with confirmation prompt.
+   - **Rename Selected**: Rename individual games (local or FTP) with sanitization (removes invalid characters).
+   - **Batch Rename**: Rename multiple games at once using patterns (e.g., `{name} - Backup`).
+   - **Show in Folder**: Click folder paths to open the directory in your system's file explorer.
+   - **Refresh Results**: Automatically refresh scan results after operations (e.g., delete or transfer).
+
+### **Search, Sort, & Filtering**
+   - **Search Games**: Real-time filter by game name using the search bar (case-insensitive).
+   - **Sorting**: Click table headers to sort by Name (default), Size, or Folder path.
+   - **Persistent Results**: Saves last scan results locally and restores on app restart.
+
+### **User Interface & Customization**
+   - **Theme Toggle**: Switch between dark and light themes by clicking "Made by Nookie".
+   - **Image Previews**: Hover over game covers for enlarged previews (with mouse-following).
+   - **Modals**: Clean modal dialogs for confirmations, conflicts, FTP config, renaming, and help.
+   - **Toasts & Notifications**: Brief on-screen messages for actions, errors, and progress (5-second timeout).
+   - **Desktop Notifications**: System tray notifications for transfer completion.
+   - **Keyboard Shortcuts**:
+     - Ctrl+A: Select all visible games
+     - Ctrl+R: Rescan source
+     - F1: Open help
+     - Arrow keys: Navigate table rows
+     - Enter/Escape: Confirm/cancel in modals
+
+### **Data Management & Persistence**
+   - **Recent Paths**: Stores and autocompletes recent source/destination paths and FTP configs (up to 10 sources, 10 dests, 5 FTP).
+   - **Export/Import**: Export settings and scan results to JSON; import to restore.
+   - **Clear Data**: Logo click to clear all recent paths and fields (with confirmation).
+   - **Local Storage**: Saves last source/destination, scan results, settings, and transfer state.
+
+### **Help & Support**
+   - **Built-in Help**: Comprehensive help modal with setup guides, layout examples, FTP tips, and troubleshooting.
+   - **External Links**: Quick access to GitHub, Ko-fi (support), and Discord.
+   - **Version Display**: Shows current app version (e.g., v1.1.0) in the UI.
+
+### **Advanced & Technical Features**
+   - **File Size Calculation**: Estimates total size for transfers (skipped for FTP to improve speed).
+   - **Path Sanitization**: Automatically cleans folder names (removes special characters, limits length).
+   - **Cancel Operations**: Cancel scans or transfers at any time with progress saving.
+   - **Error Logging**: Console logs for debugging (e.g., FTP errors, transfer failures).
+   - **Cross-Platform**: Works on Windows (primary), with path handling for POSIX (FTP).
+   - **Performance Optimizations**: Concurrency limits (24 threads), caching for FTP sizes, lazy loading for images.
+
+### **Safety & Validation**
+   - **Path Validation**: Checks for absolute paths, prevents self-overlaps (e.g., moving to subfolder).
+   - **Confirmation Prompts**: Warnings for destructive actions (delete, clear data).
+   - **Hash Verification**: Ensures copied files match originals.
+   - **Network Safety**: Timeout handling for FTP (15s), retry logic.
+
+## Installation
+
+1. Download the latest release from [GitHub](https://github.com/nookie/ps5vault).
+2. Run the portable executable for Windows.
+3. Launch PS5 Vault.
 
 ## Usage
 
-1. **Set Source**: Enter a local path (C:\) or FTP IP/URL (e.g., `192.168.1.100` for PS5). Full FTP URLs are saved in recent sources for autocomplete.
-2. **Scan**: Click SCAN to locate games (works from root for local or FTP sources).
-3. **Select Items**: Use checkboxes to pick games. Sort by name, size, or folder by clicking headers.
-4. **Set Destination**: Choose a local folder where organized folders will be created.
-5. **Choose Action & Layout**: Select move/copy and folder structure. For custom layout, rename modal allows default (from param.json) or custom names.
-6. **Transfer**: Click GO, confirm, and monitor progress. Files are transferred from source (local or FTP) to local destination.
+1. **Scan Source**: Enter a local path or FTP URL in the Source field and click SCAN.
+2. **Select Games**: Use checkboxes to select games from the results table.
+3. **Configure Transfer**: Choose Action (Move/Copy), Layout, and Destination.
+4. **Transfer**: Click GO to start the operation.
+5. **Monitor Progress**: Watch real-time progress, ETA, and stats in the modal.
 
-For FTP: Ensure your PS5 has ftpsrv running (port 2121) or use etaHEN default (port 1337). You can copy or move games directly from your PS5 to your PC without intermediate steps. The FTP modal has been significantly improved in v1.0.8+ for easier setup, including fixed port assignment and path suggestions.
-
-## FTP Scanning Tips
-
-- IP Address: Find your PS5's IP in Settings > Network.
-- Ports & Paths: Port 1337 (etaHEN) auto-sets to `/mnt/ext1/etaHEN/games`; port 2121 (ftpsrv) to `/mnt/ps5/games`. Custom ports default to `/`.
-- Note: Sizes will not load over FTP for performance.
-- **Recent History**: Full FTP URLs (e.g., `ftp://192.168.1.100:1337/...`) are added to source autocomplete for quick re-use.
-- **v1.0.8+ Improvements**: Redesigned FTP configuration modal with better field alignment, consistent styling, and port-based path auto-detection.
-
-## Layout Options
-
-- **Game / PPSA**: `Destination/GameName/PPSAName`
-- **Game only**: `Destination/GameName`
-- **PPSA only**: `Destination/PPSAName`
-- **etaHEN default**: `Destination/etaHEN/games/GameName`
-- **itemZFlow default**: `Destination/games/GameName`
-- **Dump Runner default**: `Destination/homebrew/GameName`
-- **Custom**: Specify your own folder name (opens rename modal for single-item selection).
+For detailed guides, press F1 for built-in help.
 
 ## Support & Links
 
 - [GitHub Repository](https://github.com/NookieAI/PS5-Vault)
 - [Support on Ko-fi](https://ko-fi.com/nookie_65120)
 - [Join Discord](https://discord.gg/nj45kDSBEd)
+
+Made with ❤️ by Nookie. Version 1.1.0.
