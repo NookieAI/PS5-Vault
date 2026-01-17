@@ -13,7 +13,7 @@ const MAX_FILE_SIZE_BYTES = 200 * 1024 * 1024 * 1024; // 200GB limit for sanity
 const RETRY_ATTEMPTS = 3;
 const RETRY_DELAY_MS = 100;
 
-const VERSION = '1.0.7'; // Updated version
+const VERSION = '1.0.9'; // Updated version
 
 console.log('[main] Starting PS5 Vault v' + VERSION);
 
@@ -395,31 +395,75 @@ async function getFtpFolderSize(client, remotePath, maxDepth = 5) { // Back to 5
   return total;
 }
 
+// Function to list directory over FTP
+async function listDirectory(client, path) {
+  try {
+    await client.cd(path);
+  } catch (e) {
+    await client.cd('"' + path + '"');
+  }
+  return client.list();
+}
+
+// Function to check for param.json over FTP
+async function checkForParamJson(client, path, name) {
+  const fullPath = name ? pathJoin(path, name) : path;
+  try {
+    await client.cd(fullPath);
+  } catch (e) {
+    await client.cd('"' + fullPath + '"');
+  }
+  const list = await client.list();
+  return list.some(item => item.name === 'param.json');
+}
+
+// Function to download file over FTP
+async function downloadFile(client, remotePath, localPath) {
+  return client.downloadTo(localPath, remotePath);
+}
+
+// Function to upload file over FTP
+async function uploadFile(client, localPath, remotePath) {
+  return client.uploadFrom(localPath, remotePath);
+}
+
 async function scanFtpSource(ftpUrl) {
   let url;
   try {
     url = new URL(ftpUrl);
+    if (url.port && !/^\d+$/.test(url.port)) {
+      throw new Error('Invalid port');
+    }
   } catch (e) {
-    throw new Error('Invalid FTP URL: ' + ftpUrl);
+    // Attempt to fix by setting default port
+    const colonIndex = ftpUrl.lastIndexOf(':');
+    const slashIndex = ftpUrl.indexOf('/', 6);
+    if (colonIndex > 6 && (slashIndex === -1 || colonIndex < slashIndex)) {
+      const beforeColon = ftpUrl.substring(0, colonIndex);
+      const afterColon = ftpUrl.substring(colonIndex + 1);
+      const slashInAfter = afterColon.indexOf('/');
+      const portPart = slashInAfter >= 0 ? afterColon.substring(0, slashInAfter) : afterColon;
+      const pathPart = slashInAfter >= 0 ? afterColon.substring(slashInAfter) : '';
+      if (!/^\d+$/.test(portPart)) {
+        ftpUrl = beforeColon + ':2121' + pathPart;
+        url = new URL(ftpUrl);
+      } else {
+        throw new Error('Invalid FTP URL: ' + ftpUrl);
+      }
+    } else {
+      throw new Error('Invalid FTP URL: ' + ftpUrl);
+    }
   }
   const host = url.hostname;
-  const port = url.port || 1337;
+  const port = url.port || '2121';
   const user = url.username || 'anonymous';
   const pass = url.password || '';
   let remotePath = url.pathname || '/';
 
-  // Auto-detect USB games path if root is scanned
-  if (remotePath === '/' || remotePath === '') {
-    console.log('[FTP] Scanning root, looking for USB games path...');
-    const client = new ftp.Client();
-    try {
-      await client.access({ host, port: parseInt(port), user, password: pass, secure: false });
-      remotePath = await findUsbGamesPath(client);
-    } finally {
-      client.close();
-    }
-  }
+  // Ensure remotePath ends with / for consistency
+  if (!remotePath.endsWith('/')) remotePath += '/';
 
+  console.log('ftpUrl:', ftpUrl, 'url.port:', url.port, 'final port:', port);
   console.log('[FTP] Connecting to:', { host, port, user, pass: pass ? '***' : 'none' });
   const client = new ftp.Client();
   try {
@@ -427,7 +471,39 @@ async function scanFtpSource(ftpUrl) {
     console.log('[FTP] Connected successfully');
     const items = [];
     console.log('[FTP] Starting recursive scan from:', remotePath);
-    await scanFtpRecursive(client, remotePath, items, 0);
+
+    if (remotePath === '/' || remotePath === '' || remotePath.startsWith('/mnt')) {
+      // Scan all mounted drives
+      const candidates = [
+        '/mnt/usb0/etaHEN/games',
+        '/mnt/usb1/etaHEN/games',
+        '/mnt/usb2/etaHEN/games',
+        '/mnt/usb3/etaHEN/games',
+        '/mnt/usb4/etaHEN/games',
+        '/mnt/usb5/etaHEN/games',
+        '/mnt/usb6/etaHEN/games',
+        '/mnt/ext0/etaHEN/games',
+        '/mnt/ext1/etaHEN/games',
+        '/mnt/ps5/etaHEN/games'
+      ];
+      console.log('[FTP] Scanning all mounted drives for etaHEN/games');
+      for (const cand of candidates) {
+        try {
+          console.log('[FTP] Checking:', cand);
+          await scanFtpRecursive(client, cand, items, 0);
+        } catch (e) {
+          console.log('[FTP] Skipping:', cand, e.message);
+        }
+      }
+    } else {
+      try {
+        await client.cd(remotePath);
+      } catch (e) {
+        await client.cd('"' + remotePath + '"');
+      }
+      await scanFtpRecursive(client, remotePath, items, 0);
+    }
+
     console.log('[FTP] Scan complete, found items:', items.length);
     return items;
   } catch (e) {
@@ -443,10 +519,15 @@ async function scanFtpSource(ftpUrl) {
 
 async function findUsbGamesPath(client) {
   // Check common USB paths
-  const candidates = ['/mnt/usb0/etaHEN/games', '/mnt/usb1/etaHEN/games', '/mnt/ps5/etaHEN/games'];
+  const candidates = ['/mnt/usb0/etaHEN/games', '/mnt/usb1/etaHEN/games', '/mnt/ps5/etaHEN/games', '/mnt/ext1/etaHEN/games'];
   for (const cand of candidates) {
     try {
-      const list = await client.list(cand);
+      try {
+        await client.cd(cand);
+      } catch (e) {
+        await client.cd('"' + cand + '"');
+      }
+      const list = await client.list();
       if (list.some(item => item.isDirectory)) {
         console.log('[FTP] Found games path:', cand);
         return cand;
@@ -461,62 +542,92 @@ async function scanFtpRecursive(client, remotePath, items, depth) {
   if (remotePath.includes('/sce_sys/')) return;
   try {
     console.log('[FTP] Listing directory:', remotePath);
-    const list = await withFtpLock(() => client.list(remotePath));
+    try {
+      await client.cd(remotePath);
+    } catch (e) {
+      await client.cd('"' + remotePath + '"');
+    }
+    const list = await client.list();
     console.log('[FTP] Found', list.length, 'items in', remotePath);
 
-    // Check for param.json
-    if (!remotePath.includes('/sce_sys/')) {
-      const paramPath = path.posix.join(remotePath, 'sce_sys', 'param.json');
-      const tempFile = path.join(require('os').tmpdir(), 'param_' + Date.now() + '_' + Math.random() + '.json');
-      let cover = '';
-      try {
-        console.log('[FTP] Checking for param.json in:', remotePath);
-        await withFtpLock(() => client.downloadTo(tempFile, paramPath));
-        const paramStr = await fs.promises.readFile(tempFile, 'utf8');
-        const data = JSON.parse(paramStr);
-        console.log('[FTP] Parsed param.json data:', data);
-        const ppsaKey = extractPpsaKey(data.titleId || data.contentId || '');
-        const sku = normalizeSku(data.localizedParameters?.en?.['@SKU'] || '');
-        const title = getTitleFromParam(data, null);
-        const folder = path.posix.basename(remotePath);
-        // Calculate size via FTP
-        console.log('[FTP] Calculating size for:', remotePath);
-        const size = await getFtpFolderSize(client, remotePath);
-        console.log('[FTP] Size calculated:', size);
-        // Fetch cover
-        const coverPath = path.posix.join(remotePath, 'sce_sys', 'icon0.png');
-        const coverTempFile = path.join(require('os').tmpdir(), 'cover_' + Date.now() + '_' + Math.random() + '.png');
+    if (depth === 0) {
+      // At games level, check each directory for param.json directly
+      for (const item of list) {
+        if (!item.isDirectory) continue;
+        const gamePath = path.posix.join(remotePath, item.name);
+        let paramPath = path.posix.join(gamePath, 'sce_sys', 'param.json');
+        let tempFile = path.join(require('os').tmpdir(), 'param_' + Date.now() + '_' + Math.random() + '.json');
+        let data = null;
         try {
-          await withFtpLock(() => client.downloadTo(coverTempFile, coverPath));
-          const coverBuffer = await fs.promises.readFile(coverTempFile);
-          cover = 'data:image/png;base64,' + coverBuffer.toString('base64');
-          console.log('[FTP] Fetched cover for:', title);
+          console.log('[FTP] Checking for param.json in:', gamePath, 'via sce_sys');
+          await withFtpLock(() => client.downloadTo(tempFile, paramPath));
+          const paramStr = await fs.promises.readFile(tempFile, 'utf8');
+          data = JSON.parse(paramStr);
         } catch (e) {
-          console.log('[FTP] No cover for:', title, e.message);
+          // Try direct param.json
+          paramPath = path.posix.join(gamePath, 'param.json');
+          try {
+            console.log('[FTP] Checking for param.json in:', gamePath, 'directly');
+            await withFtpLock(() => client.downloadTo(tempFile, paramPath));
+            const paramStr = await fs.promises.readFile(tempFile, 'utf8');
+            data = JSON.parse(paramStr);
+          } catch (e2) {
+            // Skip
+          }
         } finally {
-          try { fs.unlinkSync(coverTempFile); } catch (_) {}
+          try { fs.unlinkSync(tempFile); } catch (_) {}
         }
-        items.push({
-          ppsa: ppsaKey,
-          ppsaFolderPath: remotePath,
-          contentFolderPath: path.posix.join(remotePath, 'sce_sys'),
-          folderPath: remotePath,
-          folderName: folder,
-          contentId: data.contentId,
-          skuFromParam: sku,
-          displayTitle: title,
-          region: data.defaultLanguage || (data.localizedParameters?.defaultLanguage) || '',
-          contentVersion: data.contentVersion || data.masterVersion || data.version,  // Prioritize contentVersion
-          sdkVersion: data.sdkVersion,
-          totalSize: size,
-          iconPath: cover // Base64
-        });
-        console.log('[FTP] Found game:', title, 'in', folder);
-      } catch (e) {
-        console.log('[FTP] No param.json in', remotePath, e.message);
-      } finally {
-        try { fs.unlinkSync(tempFile); } catch (_) {}
+
+        if (data) {
+          console.log('[FTP] Parsed param.json data:', data);
+          const ppsaKey = extractPpsaKey(data.titleId || data.contentId || '');
+          const sku = normalizeSku(data.localizedParameters?.en?.['@SKU'] || '');
+          const title = getTitleFromParam(data, null);
+          const folder = item.name;
+          // Skip size calculation for speed
+          // const size = await getFtpFolderSize(client, gamePath);
+          const size = 0; // Set to 0 for FTP to skip calculation
+          console.log('[FTP] Found game:', title, 'in', folder);
+
+          // Try to fetch cover
+          let cover = '';
+          const coverCandidates = ['sce_sys/icon0.png', 'sce_sys/icon0.jpg', 'sce_sys/icon0.jpeg', 'sce_sys/icon.png', 'sce_sys/cover.png', 'sce_sys/cover.jpg', 'sce_sys/tile0.png', 'icon0.png', 'icon0.jpg', 'icon0.jpeg', 'icon.png', 'cover.png', 'cover.jpg', 'tile0.png'];
+          for (const cand of coverCandidates) {
+            const coverPath = path.posix.join(gamePath, cand);
+            const coverTempFile = path.join(require('os').tmpdir(), 'cover_' + Date.now() + '_' + Math.random() + '.png');
+            try {
+              await withFtpLock(() => client.downloadTo(coverTempFile, coverPath));
+              const coverBuffer = await fs.promises.readFile(coverTempFile);
+              cover = 'data:image/png;base64,' + coverBuffer.toString('base64');
+              console.log('[FTP] Fetched cover for:', title, 'using', cand);
+              break; // Found one
+            } catch (e) {
+              // Try next
+            } finally {
+              try { fs.unlinkSync(coverTempFile); } catch (_) {}
+            }
+          }
+          if (!cover) console.log('[FTP] No cover for:', title);
+
+          items.push({
+            ppsa: ppsaKey,
+            ppsaFolderPath: gamePath,
+            contentFolderPath: path.posix.join(gamePath, 'sce_sys'), // Assume sce_sys
+            folderPath: gamePath,
+            folderName: folder,
+            contentId: data.contentId,
+            skuFromParam: sku,
+            displayTitle: title,
+            region: data.defaultLanguage || (data.localizedParameters?.defaultLanguage) || '',
+            contentVersion: data.contentVersion || data.masterVersion || data.version,
+            sdkVersion: data.sdkVersion,
+            totalSize: size,
+            iconPath: cover,
+            paramParsed: data  // Add parsed param data for FTP items
+          });
+        }
       }
+      return; // Don't recurse deeper at depth 0
     }
 
     // Check if this is a game dir (has sce_sys), if so, don't recurse
@@ -527,9 +638,12 @@ async function scanFtpRecursive(client, remotePath, items, depth) {
     }
 
     // Recurse into subdirs only if not a game dir
+    const ftpSkippable = ['sandbox', '$recycle.bin', 'recycle.bin', 'recycle', 'trash', 'tmp', 'temp', 'windows', 'program files', 'program files (x86)', 'programdata'];
     for (const item of list) {
       if (item.isDirectory) {
         const subPath = path.posix.join(remotePath, item.name);
+        // Skip skippable dirs at depth 0
+        if (depth === 0 && ftpSkippable.includes(item.name.toLowerCase())) continue;
         try {
           await scanFtpRecursive(client, subPath, items, depth + 1);
         } catch (e) {
@@ -587,7 +701,6 @@ async function copyFileStream(src, dst, progressCallback, cancelCheck) {
     rs.on('error', (err) => { ws.destroy(); reject(err); });
     ws.on('error', (err) => { rs.destroy(); reject(err); });
     ws.on('finish', resolve);
-    rs.pipe(ws);
   });
 }
 
@@ -620,9 +733,9 @@ async function removePathRecursive(p) {
       try {
         const entries = await fs.promises.readdir(r, { withFileTypes: true });
         await Promise.all(entries.map(async (ent) => {
-          const full = path.join(r, ent.name);
-          if (ent.isDirectory()) await rimraf(full);
-          else await fs.promises.unlink(full).catch(_ => {});
+          const srcPath = path.join(r, ent.name);
+          if (ent.isDirectory()) await rimraf(srcPath);
+          else await fs.promises.unlink(srcPath).catch(_ => {});
         }));
         await fs.promises.rmdir(r);
       } catch (_) {}
@@ -681,7 +794,7 @@ async function copyFolderContentsSafely(srcDir, finalTarget, options = {}) {
       const dstPath = path.join(dst, ent.name);
       if (ent.isFile()) {
         const size = (await fs.promises.stat(srcPath).catch(() => ({ size: 0 }))).size || 0;
-        progressCb?.({ type: 'go-file-progress', fileRel: ent.name, totalBytesCopied: 0, totalBytes: size });
+        progressCb?.({ type: 'go-file-complete', fileRel: ent.name, totalBytesCopied: 0, totalBytes: size });
         await copyAndVerifyFile(srcPath, dstPath, (bytes) => progressCb?.(bytes), cancelCheck);
         progressCb?.({ type: 'go-file-complete', fileRel: ent.name, totalBytesCopied: size, totalBytes: size });
       } else if (ent.isDirectory()) {
@@ -755,14 +868,94 @@ async function moveFolderContentsSafely(srcDir, finalTarget, options = {}) {
   await removePathRecursive(srcDir);
 }
 
+// Add FTP download function
+async function downloadFtpFolder(ftpConfig, remotePath, localPath, progressCallback, cancelCheck) {
+  const client = new ftp.Client();
+  try {
+    await client.access({ host: ftpConfig.host, port: parseInt(ftpConfig.port), user: ftpConfig.user, password: ftpConfig.pass, secure: false });
+    let totalSize = 0;
+    try {
+      totalSize = await getFtpFolderSize(client, remotePath);
+    } catch (e) {
+      console.error('[FTP] Size calc failed:', e);
+    }
+    await downloadFtpRecursive(client, remotePath, localPath, progressCallback, cancelCheck, totalSize);
+  } finally {
+    client.close();
+  }
+}
+
+async function downloadFtpRecursive(client, remotePath, localPath, progressCallback, cancelCheck, totalSize = 0) {
+  if (cancelCheck()) throw new Error('Cancelled');
+  await fs.promises.mkdir(localPath, { recursive: true });
+  try {
+    await client.cd(remotePath);
+  } catch (e) {
+    await client.cd('"' + remotePath + '"');
+  }
+  const list = await client.list();
+  for (const item of list) {
+    if (cancelCheck()) throw new Error('Cancelled');
+    const remoteItem = path.posix.join(remotePath, item.name);
+    const localItem = path.join(localPath, item.name);
+    if (item.isFile) {
+      await withFtpLock(() => downloadFile(client, remoteItem, localItem));
+      progressCallback?.({ type: 'go-file-complete', fileRel: item.name, totalBytesCopied: item.size || 0, totalBytes: totalSize });
+    } else if (item.isDirectory) {
+      await downloadFtpRecursive(client, remoteItem, localItem, progressCallback, cancelCheck, totalSize);
+    }
+  }
+}
+
+// Add FTP upload function
+async function uploadFtpFolder(ftpConfig, localPath, remotePath, progressCallback, cancelCheck) {
+  const client = new ftp.Client();
+  try {
+    await client.access({ host: ftpConfig.host, port: parseInt(ftpConfig.port), user: ftpConfig.user, password: ftpConfig.pass, secure: false });
+    let totalSize = 0;
+    try {
+      const files = await listAllFilesWithStats(localPath);
+      totalSize = files.reduce((sum, f) => sum + f.size, 0);
+    } catch (e) {
+      console.error('[FTP] Size calc failed:', e);
+    }
+    await uploadFtpRecursive(client, localPath, remotePath, progressCallback, cancelCheck, totalSize);
+  } finally {
+    client.close();
+  }
+}
+
+async function uploadFtpRecursive(client, localPath, remotePath, progressCallback, cancelCheck, totalSize = 0) {
+  if (cancelCheck()) throw new Error('Cancelled');
+  try {
+    await client.ensureDir(remotePath);
+  } catch (e) {
+    console.error('[FTP Upload] ensureDir failed:', remotePath, e);
+    throw new Error(`FTP upload failed: Cannot access or create directory ${remotePath}. Check PS5 USB mount and path.`);
+  }
+  const entries = await fs.promises.readdir(localPath, { withFileTypes: true });
+  for (const ent of entries) {
+    if (cancelCheck()) throw new Error('Cancelled');
+    const localItem = path.join(localPath, ent.name);
+    const remoteItem = path.posix.join(remotePath, ent.name);
+    if (ent.isFile()) {
+      await withFtpLock(() => uploadFile(client, localItem, remoteItem));
+      const size = (await fs.promises.stat(localItem).catch(() => ({ size: 0 }))).size || 0;
+      progressCallback?.({ type: 'go-file-complete', fileRel: ent.name, totalBytesCopied: size, totalBytes: totalSize });
+    } else if (ent.isDirectory()) {
+      await uploadFtpRecursive(client, localItem, remoteItem, progressCallback, cancelCheck, totalSize);
+    }
+  }
+}
+
 // IPC (same as before, with minor improvements)
 ipcMain.handle('open-directory', async () => {
   try {
     const res = await dialog.showOpenDialog({ properties: ['openDirectory'] });
-    if (res.canceled) return { canceled: true, path: null };
-    return { canceled: false, path: res.filePaths[0] || null };
+    if (res.canceled) return { canceled: true, filePaths: [] };
+    return { canceled: false, filePaths: res.filePaths };
   } catch (e) {
-    return { canceled: true, path: null, error: e.message };
+    return { canceled: true, filePaths: [], error: e.message };
   }
 });
 
@@ -779,7 +972,7 @@ ipcMain.handle('scan-source', async (event, sourceDir) => {
     if (sourceDir.startsWith('ftp://')) {
       const items = await scanFtpSource(sourceDir);
       return items || [];
-    } else if (/^\d+\.\d+\.\d+\.\d+/.test(sourceDir)) {
+    } else if (/^\d+\.\d+\.\d+\.\d+(:\d+)?$/.test(sourceDir)) {
       const items = await scanFtpSource('ftp://' + sourceDir);
       return items || [];
     } else {
@@ -799,7 +992,9 @@ ipcMain.handle('ensure-and-populate', async (event, opts) => {
   if (!opts || typeof opts !== 'object') throw new Error('Invalid options');
   const items = Array.isArray(opts.items) ? opts.items : [];
   const dest = typeof opts.dest === 'string' ? opts.dest.trim() : null;
-  if (!dest || !path.isAbsolute(dest)) throw new Error('Invalid destination');
+  const ftpConfig = opts.ftpConfig || null; // New: FTP config for downloads
+  const ftpDestConfig = opts.ftpDestConfig || null; // New: FTP config for uploads
+  if (!dest || (!path.isAbsolute(dest) && !dest.startsWith('ftp://'))) throw new Error('Invalid destination');
 
   const action = opts.action || 'folder-only';
   const layout = opts.layout || 'etahen';
@@ -808,6 +1003,10 @@ ipcMain.handle('ensure-and-populate', async (event, opts) => {
 
   const controller = new AbortController();
   activeCancelFlags.set(event.sender.id, () => controller.abort());
+
+  let transferStartTime = Date.now(); // Set here
+
+  let totalTransferred = 0; // Global total across all items
 
   const results = [];
   try {
@@ -818,11 +1017,12 @@ ipcMain.handle('ensure-and-populate', async (event, opts) => {
       try {
         const it = items[idx];
         let parsed = null;
-        if (it.paramPath) parsed = await readJsonSafe(it.paramPath);
-        if (!parsed && it.ppsaFolderPath) {
+        if (it.paramParsed) parsed = it.paramParsed;  // Use pre-parsed for FTP
+        else if (it.paramPath) parsed = await readJsonSafe(it.paramPath);
+        if (!parsed && it.ppsaFolderPath && !it.ppsaFolderPath.startsWith('/')) {  // Only try local paths
           parsed = await readJsonSafe(path.join(it.ppsaFolderPath, 'sce_sys', 'param.json'));
         }
-        if (!parsed && it.contentFolderPath) {
+        if (!parsed && it.contentFolderPath && !it.contentFolderPath.startsWith('/')) {
           let cand = path.join(it.contentFolderPath, 'sce_sys', 'param.json');
           parsed = await readJsonSafe(cand);
           if (!parsed) {
@@ -862,13 +1062,13 @@ ipcMain.handle('ensure-and-populate', async (event, opts) => {
           finalPpsaName = srcBase.replace(/[-_]*app\d*.*$/i, '').replace(/[-_]+$/,'') || srcBase;
         }
 
-        if (layout === 'ppsa-only') finalTarget = path.join(dest, finalPpsaName);
-        else if (layout === 'game-only') finalTarget = path.join(dest, safeGame);
-        else if (layout === 'etahen') finalTarget = path.join(dest, 'etaHEN', 'games', safeGame);
-        else if (layout === 'itemzflow') finalTarget = path.join(dest, 'games', safeGame);
-        else if (layout === 'dump_runner') finalTarget = path.join(dest, 'homebrew', safeGame);
-        else if (layout === 'custom') finalTarget = path.join(dest, safeGame);  // Just the custom folder name
-        else finalTarget = path.join(dest, safeGame, finalPpsaName);  // game-ppsa creates GameName/PPSAName
+        if (layout === 'ppsa-only') finalTarget = pathJoin(dest, finalPpsaName);
+        else if (layout === 'game-only') finalTarget = pathJoin(dest, safeGame);
+        else if (layout === 'etahen') finalTarget = pathJoin(dest, 'etaHEN', 'games', safeGame);
+        else if (layout === 'itemzflow') finalTarget = pathJoin(dest, 'games', safeGame);
+        else if (layout === 'dump_runner') finalTarget = pathJoin(dest, 'homebrew', safeGame);
+        else if (layout === 'custom') finalTarget = pathJoin(dest, safeGame);  // Just the custom folder name
+        else finalTarget = pathJoin(dest, safeGame, finalPpsaName);  // game-ppsa creates GameName/PPSAName
 
         const normalizedSrc = path.resolve(srcFolder);
         const normalizedTarget = path.resolve(finalTarget);
@@ -879,14 +1079,24 @@ ipcMain.handle('ensure-and-populate', async (event, opts) => {
         }
 
         // Calculate total bytes for the source folder
-        const srcFiles = await listAllFilesWithStats(srcFolder);
-        const itemTotalBytes = srcFiles.reduce((sum, f) => sum + f.size, 0);
+        let itemTotalBytes = 0;
+        if (!ftpConfig && !srcFolder.startsWith('/')) {  // Skip for FTP or remote paths
+          try {
+            const srcFiles = await listAllFilesWithStats(srcFolder);
+            itemTotalBytes = srcFiles.reduce((sum, f) => sum + f.size, 0);
+          } catch (e) {
+            console.error('Error calculating size:', e);
+            itemTotalBytes = 0;
+          }
+        }
+        // For FTP or remote paths, itemTotalBytes remains 0
 
         let totalBytesCopiedSoFar = 0;
         const progressFn = (info) => {
           if (event.sender && !event.sender.isDestroyed()) {
             if (info.type === 'go-file-complete') {
               totalBytesCopiedSoFar += info.totalBytesCopied || 0;
+              totalTransferred += info.totalBytesCopied || 0; // Accumulate global total
             }
             // For progress, send current cumulative + file progress
             let cumulativeCopied = totalBytesCopiedSoFar;
@@ -895,10 +1105,11 @@ ipcMain.handle('ensure-and-populate', async (event, opts) => {
             }
             event.sender?.send('scan-progress', { 
               ...info, 
-              totalBytes: itemTotalBytes, 
-              totalBytesCopied: cumulativeCopied,  // Now truly cumulative
+              totalBytes: itemTotalBytes || info.totalBytes || 0, 
+              totalBytesCopied: cumulativeCopied,  
               itemIndex: idx + 1, 
-              totalItems: items.length 
+              totalItems: items.length,
+              totalElapsed: Math.round((Date.now() - transferStartTime) / 1000) // Fix here
             });
           }
         };
@@ -919,14 +1130,43 @@ ipcMain.handle('ensure-and-populate', async (event, opts) => {
           await fs.promises.mkdir(finalTarget, { recursive: true });
           event.sender?.send('scan-progress', { type: 'go-file-complete', fileRel: 'Folder created', totalBytesCopied: 0, totalBytes: 0 });
           results.push({ item: safeGameName, target: finalTarget, created: true, source: srcFolder, safeGameName });
-        } else if (action === 'copy') {
-          progressFn({ type: 'go-file-progress', totalBytesCopied: 0, totalBytes: itemTotalBytes });
-          await copyFolderContentsSafely(srcFolder, finalTarget, { merge: true, progress: progressFn, cancelCheck });
-          results.push({ item: safeGameName, target: finalTarget, copied: true, source: srcFolder, safeGameName });
-        } else if (action === 'move') {
-          progressFn({ type: 'go-file-progress', totalBytesCopied: 0, totalBytes: itemTotalBytes });
-          await moveFolderContentsSafely(srcFolder, finalTarget, { merge: true, progress: progressFn, cancelCheck, overwriteMode });
-          results.push({ item: safeGameName, target: finalTarget, moved: true, source: srcFolder, safeGameName });
+        } else if (action === 'copy' || action === 'move') {
+          if (ftpDestConfig) {
+            // FTP upload - use path only for remotePath
+            let remotePath = finalTarget;
+            if (dest.startsWith('ftp://')) {
+              // Extract path from full URL
+              const url = new URL(dest);
+              remotePath = finalTarget.replace(dest, ftpDestConfig.path);
+            }
+            progressFn({ type: 'go-file-progress', totalBytesCopied: 0, totalBytes: itemTotalBytes });
+            await uploadFtpFolder(ftpDestConfig, srcFolder, remotePath, (info) => {
+              if (info.totalBytes && !itemTotalBytes) itemTotalBytes = info.totalBytes; // Update if calculated
+              progressFn(info);
+            }, cancelCheck);
+            results.push({ item: safeGameName, target: finalTarget, uploaded: true, source: srcFolder, safeGameName });
+            if (action === 'move') {
+              await removePathRecursive(srcFolder);
+            }
+          } else if (ftpConfig || srcFolder.startsWith('/')) {
+            // FTP download
+            if (!ftpConfig) throw new Error('FTP config required for remote transfer');
+            progressFn({ type: 'go-file-progress', totalBytesCopied: 0, totalBytes: itemTotalBytes });
+            await downloadFtpFolder(ftpConfig, srcFolder, finalTarget, (info) => {
+              if (info.totalBytes && !itemTotalBytes) itemTotalBytes = info.totalBytes; // Update if calculated
+              progressFn(info);
+            }, cancelCheck);
+            results.push({ item: safeGameName, target: finalTarget, copied: true, source: srcFolder, safeGameName });
+          } else {
+            progressFn({ type: 'go-file-progress', totalBytesCopied: 0, totalBytes: itemTotalBytes });
+            if (action === 'copy') {
+              await copyFolderContentsSafely(srcFolder, finalTarget, { merge: true, progress: progressFn, cancelCheck });
+              results.push({ item: safeGameName, target: finalTarget, copied: true, source: srcFolder, safeGameName });
+            } else {
+              await moveFolderContentsSafely(srcFolder, finalTarget, { merge: true, progress: progressFn, cancelCheck, overwriteMode });
+              results.push({ item: safeGameName, target: finalTarget, moved: true, source: srcFolder, safeGameName });
+            }
+          }
         } else {
           results.push({ item: safeGameName, error: `unknown action ${action}`, source: srcFolder, target: finalTarget, safeGameName });
         }
@@ -942,7 +1182,7 @@ ipcMain.handle('ensure-and-populate', async (event, opts) => {
       }
     }
 
-    event.sender?.send('scan-progress', { type: 'go-complete' });
+    event.sender?.send('scan-progress', { type: 'go-complete', totalBytesCopied: totalTransferred });
     event.sender?.send('operation-complete', { success: true, resultsCount: results.length });
   } catch (e) {
     event.sender?.send('operation-complete', { success: false, error: String(e?.message || e) });
@@ -963,13 +1203,13 @@ ipcMain.handle('check-conflicts', async (event, items, dest, layout, customName)
       finalPpsaName = base.replace(/[-_]*app\d*.*$/i, '').replace(/[-_]+$/,'') || base;
     }
     let finalTarget;
-    if (layout === 'ppsa-only') finalTarget = path.join(dest, finalPpsaName);
-    else if (layout === 'game-only') finalTarget = path.join(dest, safeGame);
-    else if (layout === 'etahen') finalTarget = path.join(dest, 'etaHEN', 'games', safeGame);
-    else if (layout === 'itemzflow') finalTarget = path.join(dest, 'games', safeGame);
-    else if (layout === 'dump_runner') finalTarget = path.join(dest, 'homebrew', safeGame);
-    else if (layout === 'custom') finalTarget = path.join(dest, safeGame);  // Just the custom folder name
-    else finalTarget = path.join(dest, safeGame, finalPpsaName);  // game-ppsa creates GameName/PPSAName
+    if (layout === 'ppsa-only') finalTarget = pathJoin(dest, finalPpsaName);
+    else if (layout === 'game-only') finalTarget = pathJoin(dest, safeGame);
+    else if (layout === 'etahen') finalTarget = pathJoin(dest, 'etaHEN', 'games', safeGame);
+    else if (layout === 'itemzflow') finalTarget = pathJoin(dest, 'games', safeGame);
+    else if (layout === 'dump_runner') finalTarget = pathJoin(dest, 'homebrew', safeGame);
+    else if (layout === 'custom') finalTarget = pathJoin(dest, safeGame);  // Just the custom folder name
+    else finalTarget = pathJoin(dest, safeGame, finalPpsaName);  // game-ppsa creates GameName/PPSAName
     const exists = await fs.promises.stat(finalTarget).catch(() => false);
     if (exists) conflicts.push({ item: it.displayTitle || it.folderName || '', target: finalTarget });
   }
@@ -1008,6 +1248,9 @@ ipcMain.handle('clipboard-write', async (_event, text) => {
 // New IPC for batch operations
 ipcMain.handle('delete-item', async (event, item) => {
   const pathToDelete = item.ppsaFolderPath || item.folderPath;
+  if (!pathToDelete || !path.isAbsolute(pathToDelete)) {
+    throw new Error('Invalid path for local delete');
+  }
   await removePathRecursive(pathToDelete);
   return { success: true };
 });
@@ -1017,6 +1260,33 @@ ipcMain.handle('rename-item', async (event, item, newName) => {
   const newPath = path.join(path.dirname(oldPath), sanitize(newName));
   await fs.promises.rename(oldPath, newPath);
   return { success: true };
+});
+
+// FTP operations
+ipcMain.handle('ftp-delete-item', async (event, config, path) => {
+  const client = new ftp.Client();
+  try {
+    await client.access({ host: config.host, port: parseInt(config.port), user: config.user, password: config.pass, secure: false });
+    await client.removeDir(path);
+    return { success: true };
+  } catch (e) {
+    return { error: String(e.message) };
+  } finally {
+    client.close();
+  }
+});
+
+ipcMain.handle('ftp-rename-item', async (event, config, oldPath, newPath) => {
+  const client = new ftp.Client();
+  try {
+    await client.access({ host: config.host, port: parseInt(config.port), user: config.user, password: config.pass, secure: false });
+    await client.rename(oldPath, newPath);
+    return { success: true };
+  } catch (e) {
+    return { error: String(e.message) };
+  } finally {
+    client.close();
+  }
 });
 
 ipcMain.handle('move-to-layout', async (event, item, dest, layout) => {
@@ -1093,4 +1363,9 @@ function deriveSafeGameName(item, parsed) {
   if (seg) return seg;
   if (item?.ppsa) return item.ppsa;
   return 'Unknown Game';
+}
+
+// Path join helper (for FTP)
+function pathJoin(...parts) {
+  return parts.filter(Boolean).join('/');
 }
