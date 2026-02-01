@@ -967,7 +967,7 @@ async function uploadFtpRecursive(client, localPath, remotePath, progressCallbac
     if (ent.isFile()) {
       await withFtpLock(() => uploadFile(client, localItem, remoteItem));
       const size = (await fs.promises.stat(localItem).catch(() => ({ size: 0 }))).size || 0;
-      progressCallback?.({ type: 'go-file-complete', fileRel: ent.name, totalBytesCopied: size, totalBytes: totalSize });
+      progressCallback?.({ type: 'go-file-complete', fileRel: ent.name, totalBytesCopied: size });  // Removed totalBytes
     } else if (ent.isDirectory()) {
       await uploadFtpRecursive(client, localItem, remoteItem, progressCallback, cancelCheck, totalSize);
     }
@@ -1146,11 +1146,34 @@ ipcMain.handle('ensure-and-populate', async (event, opts) => {
         }
 
         let totalBytesCopiedSoFar = 0;
-        const progressFn = (info) => {
+        const progressFnWithTotal = (info) => {
           if (event.sender && !event.sender.isDestroyed()) {
             if (info.type === 'go-file-complete') {
               totalBytesCopiedSoFar += info.totalBytesCopied || 0;
               totalTransferred += info.totalBytesCopied || 0;
+            } else if (info.type === 'go-file-progress') {
+              // For progress, info.totalBytesCopied is the current for file
+            }
+            let cumulativeCopied = totalBytesCopiedSoFar;
+            if (info.type === 'go-file-progress') {
+              cumulativeCopied += info.totalBytesCopied || 0;
+            }
+            event.sender?.send('scan-progress', { 
+              ...info, 
+              totalBytes: itemTotalBytes || info.totalBytes || 0, 
+              totalBytesCopied: cumulativeCopied,  
+              itemIndex: idx + 1, 
+              totalItems: items.length,
+              totalElapsed: Math.round((Date.now() - transferStartTime) / 1000)
+            });
+          }
+        };
+
+        const progressFnWithoutTotal = (info) => {
+          if (event.sender && !event.sender.isDestroyed()) {
+            if (info.type === 'go-file-complete') {
+              totalBytesCopiedSoFar += info.totalBytesCopied || 0;
+              // Do NOT add to totalTransferred for temp downloads
             } else if (info.type === 'go-file-progress') {
               // For progress, info.totalBytesCopied is the current for file
             }
@@ -1179,110 +1202,87 @@ ipcMain.handle('ensure-and-populate', async (event, opts) => {
           }
         }
 
-        if (action === 'folder-only') {
-          event.sender?.send('scan-progress', { type: 'go-item', path: finalTarget, itemIndex: idx + 1, totalItems: items.length });
-          await fs.promises.mkdir(finalTarget, { recursive: true });
-          event.sender?.send('scan-progress', { type: 'go-file-complete', fileRel: 'Folder created', totalBytesCopied: 0, totalBytes: 0 });
-          results.push({ item: safeGameName, target: finalTarget, created: true, source: srcFolder, safeGameName });
-        } else if (action === 'copy' || action === 'move') {
-          const originalSrcFolder = srcFolder; // Store original for FTP delete
-          let tempDir = null;
+        const originalSrcFolder = srcFolder; // Store original for FTP delete
 
-          if (ftpDestConfig) {
-            // FTP upload
-            let remotePath = finalTarget;
-            if (dest.startsWith('ftp://')) {
-              // Extract path from full URL
-              const url = new URL(dest);
-              remotePath = finalTarget.replace(dest, ftpDestConfig.path);
-            }
+        let tempDir = null; // Declare here to fix "tempDir is not defined" error
 
-            // If source is FTP and same server, and move, use fast rename
-            if (ftpConfig && action === 'move' && ftpConfig.host === ftpDestConfig.host && ftpConfig.port === ftpDestConfig.port) {
-              // Same server, rename directly
-              const client = new ftp.Client();
-              try {
-                await client.access({ host: ftpConfig.host, port: parseInt(ftpConfig.port), user: ftpConfig.user, password: ftpConfig.pass, secure: false });
-                const remoteSrc = srcFolder; // srcFolder is the remote path
-                const remoteDst = path.posix.join(ftpDestConfig.path, remotePath.replace(ftpDestConfig.path, '').replace(/^\/+/, '')); // Adjust remoteDst
-                await withFtpLock(() => client.rename(remoteSrc, remoteDst));
-                results.push({ item: safeGameName, target: finalTarget, moved: true, source: srcFolder, safeGameName });
-              } catch (e) {
-                console.error('FTP rename failed, falling back to copy/delete:', e);
-                // Fall back to download/upload/delete
-                if (ftpConfig) {
-                  tempDir = path.join(require('os').tmpdir(), 'ps5vault_temp_' + Date.now() + '_' + idx);
-                  await fs.promises.mkdir(tempDir, { recursive: true });
-                  await downloadFtpFolder(ftpConfig, srcFolder, tempDir, (info) => {
-                    if (info.totalBytes && !itemTotalBytes) itemTotalBytes = info.totalBytes;
-                    progressFn(info);
-                  }, cancelCheck);
-                  srcFolder = tempDir; // Now local
-                }
-                progressFn({ type: 'go-file-progress', totalBytesCopied: 0, totalBytes: itemTotalBytes });
-                await uploadFtpFolder(ftpDestConfig, srcFolder, remotePath, (info) => {
-                  if (info.totalBytes && !itemTotalBytes) itemTotalBytes = info.totalBytes;
-                  progressFn(info);
-                }, cancelCheck);
-                results.push({ item: safeGameName, target: finalTarget, moved: action === 'move', uploaded: action !== 'move', source: originalSrcFolder, safeGameName });
-                if (action === 'move' && ftpConfig) {
-                  await ftpDeleteRecursive(ftpConfig, originalSrcFolder);
-                }
-              } finally {
-                client.close();
-              }
-            } else {
-              // Existing logic for upload
-              if (ftpConfig || srcFolder.startsWith('/')) {
-                if (!ftpConfig) throw new Error('FTP config required for source');
+        if (ftpDestConfig) {
+          // FTP upload
+          let remotePath = finalTarget;
+          if (dest.startsWith('ftp://')) {
+            // Extract path from full URL
+            const url = new URL(dest);
+            remotePath = finalTarget.replace(dest, ftpDestConfig.path);
+          }
+
+          // If source is FTP and same server, and move, use fast rename
+          if (ftpConfig && action === 'move' && ftpConfig.host === ftpDestConfig.host && ftpConfig.port === ftpDestConfig.port) {
+            // Same server, rename directly
+            const client = new ftp.Client();
+            try {
+              await client.access({ host: ftpConfig.host, port: parseInt(ftpConfig.port), user: ftpConfig.user, password: ftpConfig.pass, secure: false });
+              const remoteSrc = srcFolder; // srcFolder is the remote path
+              const remoteDst = path.posix.join(ftpDestConfig.path, remotePath.replace(ftpDestConfig.path, '').replace(/^\/+/, '')); // Adjust remoteDst
+              await withFtpLock(() => client.rename(remoteSrc, remoteDst));
+              results.push({ item: safeGameName, target: finalTarget, moved: true, source: originalSrcFolder, safeGameName });
+            } catch (e) {
+              console.error('FTP rename failed, falling back to copy/delete:', e);
+              // Fall back to download/upload/delete
+              if (ftpConfig) {
                 tempDir = path.join(require('os').tmpdir(), 'ps5vault_temp_' + Date.now() + '_' + idx);
                 await fs.promises.mkdir(tempDir, { recursive: true });
-                await downloadFtpFolder(ftpConfig, srcFolder, tempDir, (info) => {
-                  if (info.totalBytes && !itemTotalBytes) itemTotalBytes = info.totalBytes;
-                  progressFn(info);
-                }, cancelCheck);
+                await downloadFtpFolder(ftpConfig, srcFolder, tempDir, progressFnWithoutTotal, cancelCheck);
                 srcFolder = tempDir; // Now local
               }
-              progressFn({ type: 'go-file-progress', totalBytesCopied: 0, totalBytes: itemTotalBytes });
-              await uploadFtpFolder(ftpDestConfig, srcFolder, remotePath, (info) => {
-                if (info.totalBytes && !itemTotalBytes) itemTotalBytes = info.totalBytes;
-                progressFn(info);
-              }, cancelCheck);
+              progressFnWithTotal({ type: 'go-file-progress', totalBytesCopied: 0, totalBytes: itemTotalBytes });
+              await uploadFtpFolder(ftpDestConfig, srcFolder, remotePath, progressFnWithTotal, cancelCheck);
               results.push({ item: safeGameName, target: finalTarget, moved: action === 'move', uploaded: action !== 'move', source: originalSrcFolder, safeGameName });
-              if (action === 'move') {
-                await removePathRecursive(srcFolder);
+              if (action === 'move' && ftpConfig) {
+                await ftpDeleteRecursive(ftpConfig, originalSrcFolder);
               }
+            } finally {
+              client.close();
             }
-            // Clean up temp dir
-            if (tempDir) {
-              try {
-                await removePathRecursive(tempDir);
-              } catch (e) {
-                console.warn('Failed to clean up temp dir:', e);
-              }
-            }
-          } else if (ftpConfig || srcFolder.startsWith('/')) {
-            // FTP download
-            if (!ftpConfig) throw new Error('FTP config required for remote transfer');
-            progressFn({ type: 'go-file-progress', totalBytesCopied: 0, totalBytes: itemTotalBytes });
-            await downloadFtpFolder(ftpConfig, srcFolder, finalTarget, (info) => {
-              if (info.totalBytes && !itemTotalBytes) itemTotalBytes = info.totalBytes;
-              progressFn(info);
-            }, cancelCheck);
-            results.push({ item: safeGameName, target: finalTarget, copied: true, source: srcFolder, safeGameName });
           } else {
-            // Local copy/move
-            progressFn({ type: 'go-file-progress', totalBytesCopied: 0, totalBytes: itemTotalBytes });
-            if (action === 'copy') {
-              await copyFolderContentsSafely(srcFolder, finalTarget, { merge: true, progress: progressFn, cancelCheck });
-              results.push({ item: safeGameName, target: finalTarget, copied: true, source: srcFolder, safeGameName });
-            } else {
-              await moveFolderContentsSafely(srcFolder, finalTarget, { merge: true, progress: progressFn, cancelCheck, overwriteMode });
-              results.push({ item: safeGameName, target: finalTarget, moved: true, source: srcFolder, safeGameName });
+            // Existing logic for upload
+            if (ftpConfig || srcFolder.startsWith('/')) {
+              if (!ftpConfig) throw new Error('FTP config required for source');
+              tempDir = path.join(require('os').tmpdir(), 'ps5vault_temp_' + Date.now() + '_' + idx);
+              await fs.promises.mkdir(tempDir, { recursive: true });
+              await downloadFtpFolder(ftpConfig, srcFolder, tempDir, progressFnWithoutTotal, cancelCheck);
+              srcFolder = tempDir; // Now local
+            }
+            progressFnWithTotal({ type: 'go-file-progress', totalBytesCopied: 0, totalBytes: itemTotalBytes });
+            await uploadFtpFolder(ftpDestConfig, srcFolder, remotePath, progressFnWithTotal, cancelCheck);
+            results.push({ item: safeGameName, target: finalTarget, moved: action === 'move', uploaded: action !== 'move', source: originalSrcFolder, safeGameName });
+            if (action === 'move') {
+              await removePathRecursive(srcFolder);
             }
           }
+          // Clean up temp dir
+          if (tempDir) {
+            try {
+              await removePathRecursive(tempDir);
+            } catch (e) {
+              console.warn('Failed to clean up temp dir:', e);
+            }
+          }
+        } else if (ftpConfig || srcFolder.startsWith('/')) {
+          // FTP download
+          if (!ftpConfig) throw new Error('FTP config required for remote transfer');
+          progressFnWithTotal({ type: 'go-file-progress', totalBytesCopied: 0, totalBytes: itemTotalBytes });
+          await downloadFtpFolder(ftpConfig, srcFolder, finalTarget, progressFnWithTotal, cancelCheck);
+          results.push({ item: safeGameName, target: finalTarget, copied: true, source: srcFolder, safeGameName });
         } else {
-          results.push({ item: safeGameName, error: `unknown action ${action}`, source: srcFolder, target: finalTarget, safeGameName });
+          // Local copy/move
+          progressFnWithTotal({ type: 'go-file-progress', totalBytesCopied: 0, totalBytes: itemTotalBytes });
+          if (action === 'copy') {
+            await copyFolderContentsSafely(srcFolder, finalTarget, { merge: true, progress: progressFnWithTotal, cancelCheck });
+            results.push({ item: safeGameName, target: finalTarget, copied: true, source: srcFolder, safeGameName });
+          } else {
+            await moveFolderContentsSafely(srcFolder, finalTarget, { merge: true, progress: progressFnWithTotal, cancelCheck, overwriteMode });
+            results.push({ item: safeGameName, target: finalTarget, moved: true, source: srcFolder, safeGameName });
+          }
         }
       } catch (e) {
         const msg = String(e?.message || e);
