@@ -1,4 +1,3 @@
-// PS5 Vault Renderer
 (function () {
   'use strict';
 
@@ -27,6 +26,21 @@
     pathEndsWithSceSys(path) {
       if (!path) return false;
       return String(path).toLowerCase().endsWith('/sce_sys');
+    },
+    cleanPath(p) {
+      if (!p) return '';
+      if (p.startsWith('ftp://')) {
+        const parts = p.split('://');
+        if (parts.length === 2) {
+          const proto = parts[0] + '://';
+          let rest = parts[1].replace(/\/+/g, '/');
+          rest = decodeURIComponent(rest);
+          return Utils.escapeHtml(proto + rest);
+        }
+      }
+      let cleanedP = p.replace(/\/+/g, '/');
+      cleanedP = decodeURIComponent(cleanedP);
+      return Utils.escapeHtml(cleanedP);
     }
   };
 
@@ -37,6 +51,9 @@
   const TRANSFER_STATE_KEY = 'ps5vault.transferState';
   const RECENT_SOURCES_KEY = 'ps5vault.recentSources';
   const RECENT_DESTS_KEY = 'ps5vault.recentDests';
+  const LAST_LAYOUT_KEY = 'ps5vault.lastLayout';
+  const LAST_ACTION_KEY = 'ps5vault.lastAction';
+  const LAST_CALC_SIZE_KEY = 'ps5vault.lastCalcSize';
 
   const $ = id => document.getElementById(id);
   const log = (...a) => console.log('[renderer]', ...a);
@@ -382,7 +399,7 @@
     const onMove = (ev) => {
       Preview.move(ev.clientX, ev.clientY);
     };
-    const onLeave = (ev) => {
+    const onLeave = () => {
       Preview.hide();
     };
     imgEl.addEventListener('mouseenter', onEnter);
@@ -480,10 +497,10 @@
       row2.style.marginTop = '6px';
       const from = document.createElement('div');
       from.className = 'path-inline';
-      from.innerHTML = '<span class="label-bold">From:</span> ' + Utils.escapeHtml(Utils.normalizeDisplayPath(p.source || ''));
+      from.innerHTML = '<span class="label-bold">From:</span> ' + Utils.cleanPath(p.source || '');
       const to = document.createElement('div');
       to.className = 'path-inline';
-      to.innerHTML = '<span class="label-bold">To:</span> ' + Utils.escapeHtml(p.target || '');
+      to.innerHTML = '<span class="label-bold">To:</span> ' + Utils.cleanPath(p.target || '');
       row2.appendChild(from);
       row2.appendChild(to);
       row.appendChild(row2);
@@ -673,13 +690,13 @@
         try {
           const url = new URL(initialUrl.startsWith('ftp://') ? initialUrl : 'ftp://' + initialUrl);
           hostInput.value = url.hostname;
-          portInput.value = (url.port && /^\d+$/.test(url.port)) ? url.port : '1337';
+          portInput.value = (url.port && /^\d+$/.test(url.port)) ? url.port : '2121';
           pathInput.value = url.pathname || '/';
           userInput.value = url.username || 'anonymous';
           passInput.value = url.password || '';
         } catch (e) {
           hostInput.value = initialUrl.replace('ftp://', '').split(':')[0] || '';
-          portInput.value = '1337';
+          portInput.value = '2121';
           pathInput.value = '/';
           userInput.value = 'anonymous';
           passInput.value = '';
@@ -688,13 +705,13 @@
         const lastConfig = getRecentFtp().length > 0 ? getRecentFtp()[0] : null;
         if (lastConfig) {
           hostInput.value = lastConfig.host || '';
-          portInput.value = lastConfig.port || '1337';
+          portInput.value = lastConfig.port || '2121';
           pathInput.value = lastConfig.path || '/mnt/ext1/etaHEN/games';
           userInput.value = lastConfig.user || 'anonymous';
           passInput.value = lastConfig.pass || '';
         } else {
           hostInput.value = '';
-          portInput.value = '1337';
+          portInput.value = '2121';
           pathInput.value = '/mnt/ext1/etaHEN/games';
           userInput.value = 'anonymous';
           passInput.value = '';
@@ -710,8 +727,6 @@
       backdrop.style.display = 'flex';
       backdrop.setAttribute('aria-hidden', 'false');
       hostInput.focus();
-
-      portInput.addEventListener('change', setDefaultPath);
 
       const cleanup = () => {
         backdrop.style.display = 'none';
@@ -883,11 +898,71 @@
     updateHeaderCheckboxState();
   }
 
+  function showPersistentToast(msg) {
+    const pt = $('persistentToast');
+    if (pt) {
+      pt.textContent = msg;
+      pt.style.display = 'block';
+    }
+  }
+
+  function hidePersistentToast() {
+    const pt = $('persistentToast');
+    if (pt) {
+      pt.style.display = 'none';
+    }
+  }
+
+  function updateButtonStates() {
+    const selected = getSelectedItems();
+    const hasSelected = selected.length > 0;
+    const hasExactlyOne = selected.length === 1;
+
+    const btnGoBig = $('btnGoBig');
+    if (btnGoBig) {
+      btnGoBig.disabled = !hasSelected;
+      btnGoBig.style.opacity = hasSelected ? '1' : '0.5';
+    }
+
+    const btnDeleteSelected = $('btnDeleteSelected');
+    if (btnDeleteSelected) {
+      btnDeleteSelected.disabled = !hasSelected;
+      btnDeleteSelected.style.opacity = hasSelected ? '1' : '0.6';
+    }
+
+    const btnRenameSelected = $('btnRenameSelected');
+    if (btnRenameSelected) {
+      btnRenameSelected.disabled = !hasExactlyOne;
+      btnRenameSelected.style.opacity = hasExactlyOne ? '1' : '0.6';
+    }
+  }
+
+  async function refreshResultsAfterOperation() {
+    const src = $('sourcePath') && $('sourcePath').value ? $('sourcePath').value.trim() : '';
+    if (!src) return;
+    try {
+      showPersistentToast('Refreshing results...');
+      const res = await window.ppsaApi.scanSource(src);
+      const arr = Array.isArray(res) ? res : (Array.isArray(res?.items) ? res.items : []);
+      renderResults(arr);
+      hidePersistentToast();
+      toast('Results refreshed');
+    } catch (scanErr) {
+      err('Refresh error:', scanErr);
+      hidePersistentToast();
+      toast('Refresh failed: ' + (scanErr.message || 'Unknown error'));
+    }
+  }
+
   async function goClickHandler() {
+    const selected = getSelectedItems();
+    if (!selected.length) {
+      toast('No items selected');
+      return;
+    }
     try {
       const tbody = $('resultsBody');
       const trs = Array.from(tbody.querySelectorAll('tr'));
-      const selected = [];
       const selectedIndices = [];
       trs.forEach((tr, idx) => {
         if (tr.style.display === 'none') return;
@@ -921,7 +996,6 @@
               item.source = 'ftp://' + ftpConfig.host + ':' + ftpConfig.port + ftpConfig.path + '/' + encodedFolderPath;
             }
           }
-          selected.push(item);
         }
       });
       if (!selected.length) {
@@ -930,7 +1004,7 @@
       }
 
       for (const item of selected) {
-        if (item.contentVersion) {
+        if (item.contentVersion && !item.displayTitle.includes(`(${item.contentVersion})`)) {
           item.displayTitle += ` (${item.contentVersion})`;
         }
       }
@@ -944,7 +1018,7 @@
       // Check if destination is FTP
       let ftpDestConfig = null;
       if (/^(\d+\.\d+\.\d+\.\d+(:\d+)?|ftp:\/\/)/.test(dest)) {
-        ftpDestConfig = await window.FtpApi.openFtpModal(dest.startsWith('ftp://') ? dest : 'ftp://' + dest);
+        ftpDestConfig = await openFtpModal(dest.startsWith('ftp://') ? dest : 'ftp://' + dest);
         if (!ftpDestConfig) {
           toast('FTP destination config required');
           return;
@@ -953,13 +1027,16 @@
         // For FTP dest, set actual dest to FTP URL
         dest = 'ftp://' + ftpDestConfig.host + ':' + ftpDestConfig.port + ftpDestConfig.path;
       } else {
-        addRecentDest(dest);
+        // No longer call addRecentDest here
       }
+
+      // Always add to recent dests (now includes FTP URLs)
+      addRecentDest(dest);
 
       const src = $('sourcePath').value.trim();
       if (dest === src) shouldRefreshAfterClose = true;
 
-      const action = $('action') ? $('action').value : 'move';
+      const action = $('action') ? $('action').value : 'copy';
       const layout = $('layout') ? $('layout').value : 'etahen';
 
       let customName = null;
@@ -1083,19 +1160,7 @@
 
           updateListSummary(res);
 
-          const rp3 = $('resultProgress');
-          const rl3 = $('resultList');
-          const close3 = $('resultClose');
-          const rs3 = $('resultSubText');
-          const label3 = $('currentScanLabel');
-          if (rp3) rp3.style.display = 'none';
-          if (rl3) rl3.style.display = 'block';
-          if (close3) closeBtn.style.display = 'block';
-          if (rs3) rs3.textContent = 'Operation complete';
-          if (label3) label.textContent = '';
-          showScanUI(false);
-
-          refreshResultsAfterOperation();
+          shouldRefreshAfterClose = true;
 
         };
 
@@ -1180,12 +1245,27 @@
       const row = document.createElement('div');
       row.className = 'path-row';
       row.style.marginTop = '6px';
+      const cleanPath = (p) => {
+        if (!p) return '';
+        if (p.startsWith('ftp://')) {
+          const parts = p.split('://');
+          if (parts.length === 2) {
+            const proto = parts[0] + '://';
+            let rest = parts[1].replace(/\/+/g, '/');
+            rest = decodeURIComponent(rest);
+            return Utils.escapeHtml(proto + rest);
+          }
+        }
+        let cleanedP = p.replace(/\/+/g, '/');
+        cleanedP = decodeURIComponent(cleanedP);
+        return Utils.escapeHtml(cleanedP);
+      };
       const from = document.createElement('div');
       from.className = 'path-inline';
-      from.innerHTML = '<span class="label-bold">From:</span> ' + Utils.escapeHtml(Utils.normalizeDisplayPath(r.source || ''));
+      from.innerHTML = '<span class="label-bold">From:</span> ' + cleanPath(r.source || '');
       const to = document.createElement('div');
       to.className = 'path-inline';
-      to.innerHTML = '<span class="label-bold">To:</span> ' + Utils.escapeHtml(r.target || '');
+      to.innerHTML = '<span class="label-bold">To:</span> ' + cleanPath(r.target || '');
       row.appendChild(from);
       row.appendChild(to);
       left.appendChild(row);
@@ -1222,22 +1302,6 @@
     totalTransferred = totalBytes;
   }
 
-  async function refreshResultsAfterOperation() {
-    const src = $('sourcePath') && $('sourcePath').value ? $('sourcePath').value.trim() : '';
-    if (!src) return;
-    try {
-      toast('Refreshing results...');
-      if (window.ppsaApi && typeof window.ppsaApi.scanSource !== 'function') return;
-      const res = await window.ppsaApi.scanSource(src);
-      const arr = Array.isArray(res) ? res : (Array.isArray(res?.items) ? res.items : []);
-      renderResults(arr);
-      toast('Results refreshed');
-    } catch (scanErr) {
-      err('Refresh error:', scanErr);
-      toast('Refresh failed: ' + (scanErr.message || 'Unknown error'));
-    }
-  }
-
   function renderResults(arr, scanDuration) {
     const tbody = $('resultsBody');
     if (!tbody) return;
@@ -1252,6 +1316,12 @@
         const sb = String((b && (b.displayTitle || b.dbTitle || b.folderName)) || '').toLowerCase();
         return sa.localeCompare(sb);
       });
+    }
+
+    // If calculate size is unchecked, blank out sizes
+    const calcSizeChecked = $('calcSize') && $('calcSize').checked;
+    if (!calcSizeChecked) {
+      list.forEach(r => r.totalSize = null);
     }
 
     if (!list.length) {
@@ -1325,10 +1395,17 @@
       const tdSize = document.createElement('td');
       tdSize.className = 'size';
       tdSize.style.verticalAlign = 'top';
-      if (r.totalSize === 0) {
-        tdSize.textContent = '';
+      const sizeVal = r.totalSize;
+      if (sizeVal === null) {
+        tdSize.textContent = ''; // Leave blank for FTP or when unchecked
+      } else if (sizeVal === 0) {
+        tdSize.textContent = '--';
+      } else if (sizeVal < 0) {
+        // Partial estimate for large local games
+        const partialBytes = -sizeVal;
+        tdSize.textContent = `> ${bytesToHuman(partialBytes)}`;
       } else {
-        tdSize.textContent = bytesToHuman(r.totalSize || 0);
+        tdSize.textContent = bytesToHuman(sizeVal);
       }
       tr.appendChild(tdSize);
 
@@ -1386,6 +1463,9 @@
     applySearchFilter();
   }
 
+  // Expose renderResults for modular use
+  window.RendererApi = { renderResults };
+
   function updateHeaderCheckboxState() {
     const header = $('chkHeader');
     if (!header) return;
@@ -1393,6 +1473,7 @@
     if (!visible.length) {
       header.checked = false;
       header.indeterminate = false;
+      updateButtonStates();
       return;
     }
     const checked = visible.filter(tr => {
@@ -1409,6 +1490,7 @@
       header.checked = false;
       header.indeterminate = true;
     }
+    updateButtonStates();
   }
 
   function toggleHeaderSelect() {
@@ -1486,6 +1568,7 @@
       TransferStats.reset();
       maxSpeed = 0;
       completedFiles = [];
+      transferStartTime = Date.now(); // Always set at start for accurate duration
       const rb = $('resultModalBackdrop');
       const rp = $('resultProgress');
       const rl = $('resultList');
@@ -1508,12 +1591,11 @@
       if (ts) ts.textContent = 'Speed: --';
       const etaEl = $('transferETA');
       if (etaEl) etaEl.textContent = 'ETA: --';
-      transferStartTime = 0; // Reset timer
       return;
     }
 
     if (d.type === 'go-file-progress' || d.type === 'go-file-complete') {
-      if (!transferStartTime) transferStartTime = Date.now(); // Start timer on first file progress
+      if (!transferStartTime) transferStartTime = Date.now(); // Fallback: set timer on first progress if not set in go-start
       if (cancelOperation) return;
       if (d.fileRel) lastFile = d.fileRel;
       const stats = TransferStats.update(d.totalBytesCopied || 0, d.totalBytes || 0);
@@ -1524,12 +1606,12 @@
         const speedHuman = bytesToHuman(stats.speedBps || 0) + '/s';
         const hasTotal = d.totalBytes && Number.isFinite(d.totalBytes) && d.totalBytes > 0;
         if (hasTotal) {
-          const percent = Math.round((d.totalBytesCopied / d.totalBytes) * 100);
-          const baseText = `Progress: ${percent}% • ${speedHuman}${lastFile ? ' • ' + lastFile : ''}`;
+          const percent = Math.min(100, Math.round((d.totalBytesCopied / d.totalBytes) * 100));
+          const baseText = `Progress: ${percent}% • ${speedHuman}`; // Removed lastFile here
           rs.textContent = baseText;
           cf.textContent = lastFile ? `Current: ${lastFile} (${percent}%)` : 'Preparing...';
         } else {
-          const baseText = `Transferring... ${speedHuman}${lastFile ? ' • ' + lastFile : ''}`;
+          const baseText = `Transferring... ${speedHuman}`; // Removed lastFile here
           rs.textContent = baseText;
           cf.textContent = lastFile ? `Current: ${lastFile}` : 'Preparing...';
         }
@@ -1538,7 +1620,7 @@
       const progressFill = $('resultProgress')?.querySelector('.progress-fill');
       if (progressFill) {
         const hasTotal = d.totalBytes && Number.isFinite(d.totalBytes) && d.totalBytes > 0;
-        progressFill.style.width = hasTotal ? `${Math.round((d.totalBytesCopied / d.totalBytes) * 100)}%` : '0%';
+        progressFill.style.width = hasTotal ? `${Math.min(100, Math.round((d.totalBytesCopied / d.totalBytes) * 100))}%` : '0%';
       }
 
       const ts = $('transferStats');
@@ -1564,10 +1646,18 @@
       showNotification('Transfer Complete', 'PS5 Vault operation finished successfully.');
       localStorage.removeItem(TRANSFER_STATE_KEY);
       const transferDurationMs = transferStartTime ? (Date.now() - transferStartTime) : 0;
-      const durationText = transferDurationMs < 1000 ? `${transferDurationMs}ms` : secToHMS(transferDurationMs / 1000);
+      let durationText;
+      if (transferDurationMs < 100) {
+        durationText = '--'; // Avoid showing inaccurate small times
+      } else if (transferDurationMs < 1000) {
+        durationText = `${transferDurationMs}ms`;
+      } else {
+        durationText = secToHMS(transferDurationMs / 1000);
+      }
       const totalTransferred = d.totalBytesCopied || 0;
       const ts = $('transferStats');
       if (ts) ts.textContent = `Completed in ${durationText} • Total transferred: ${bytesToHuman(totalTransferred)}`;
+      transferStartTime = 0; // Reset timer for next transfer
       const actionsRow = $('resultActionsRow');
       if (actionsRow) actionsRow.style.display = 'none';
       return;
@@ -1583,6 +1673,51 @@
 
   document.addEventListener('DOMContentLoaded', () => {
     try {
+      // Ensure inputs are always editable
+      const ensureInputsEditable = () => {
+        const sourceInput = $('sourcePath');
+        const destInput = $('destPath');
+        if (sourceInput) {
+          sourceInput.disabled = false;
+          sourceInput.readOnly = false;
+          sourceInput.style.pointerEvents = 'auto';
+          sourceInput.setAttribute('autocomplete', 'off');
+        }
+        if (destInput) {
+          destInput.disabled = false;
+          destInput.readOnly = false;
+          destInput.style.pointerEvents = 'auto';
+          destInput.setAttribute('autocomplete', 'off');
+        }
+      };
+
+      // Force input acceptance on keydown
+      const forceInputAcceptance = (e) => {
+        // Allow all keystrokes and prevent any interference
+        e.stopPropagation();
+      };
+
+      ensureInputsEditable(); // Initial setup
+      setInterval(ensureInputsEditable, 500); // More frequent check (every 0.5s) for robustness
+
+      // Attach to source and dest inputs
+      const sourceInput = $('sourcePath');
+      const destInput = $('destPath');
+      if (sourceInput) {
+        sourceInput.addEventListener('keydown', forceInputAcceptance);
+        sourceInput.addEventListener('input', () => {
+          // Ensure value is accepted
+          sourceInput.value = sourceInput.value;
+        });
+      }
+      if (destInput) {
+        destInput.addEventListener('keydown', forceInputAcceptance);
+        destInput.addEventListener('input', () => {
+          // Ensure value is accepted
+          destInput.value = destInput.value;
+        });
+      }
+
       Preview.init();
       applySettings();
 
@@ -1591,6 +1726,13 @@
 
       const lastDst = localStorage.getItem(LAST_DST_KEY);
       if (lastDst && $('destPath')) $('destPath').value = lastDst;
+
+      const lastLayout = localStorage.getItem(LAST_LAYOUT_KEY) || 'etahen';
+      const lastAction = localStorage.getItem(LAST_ACTION_KEY) || 'copy';
+      const lastCalcSize = localStorage.getItem(LAST_CALC_SIZE_KEY) === 'true';
+      if ($('layout')) $('layout').value = lastLayout;
+      if ($('action')) $('action').value = lastAction;
+      if ($('calcSize')) $('calcSize').checked = lastCalcSize;
 
       updateSourceHistoryDatalist();
       updateDestHistoryDatalist();
@@ -1654,7 +1796,7 @@
       if (btnHelp) {
         btnHelp.addEventListener('click', () => {
           try {
-            if (window.HelpApi && window.HelpApi.openHelp) window.HelpApi.openHelp();
+            if (window.HelpApi && window.HelpApi.openHelp) window.HelpApi.openHelp(e);
           } catch (e) {
             console.error('Help open error:', e);
           }
@@ -1781,7 +1923,7 @@
             try { localStorage.setItem(LAST_SRC_KEY, actualSrc); } catch (_) {}
             showScanUI(true);
             $('btnGoBig').disabled = true;
-            $('currentScanLabel') && ($('currentScanLabel').textContent = 'Scanning...');
+            $('currentScanLabel').textContent = 'Scanning...';
             scanStartTime = Date.now();
             const res = await window.ppsaApi.scanSource(actualSrc);
             const arr = Array.isArray(res) ? res : (Array.isArray(res?.items) ? res.items : []);
@@ -1792,6 +1934,34 @@
           } catch (e) {
             console.error(e);
             toast('Scan failed: Check connection or path. Try again.');
+          }
+        });
+      }
+
+      const btnScanAllDrives = $('btnScanAllDrives');
+      if (btnScanAllDrives) {
+        btnScanAllDrives.addEventListener('click', async () => {
+          try {
+            const src = 'all-drives';
+            if (!src) { toast('Select source first'); return; }
+            let actualSrc = src;
+            isFtpScan = false;
+            ftpConfig = null;
+            addRecentSource(src);
+            try { localStorage.setItem(LAST_SRC_KEY, actualSrc); } catch (_) {}
+            showScanUI(true);
+            $('btnGoBig').disabled = true;
+            $('currentScanLabel').textContent = 'Scanning all drives...';
+            scanStartTime = Date.now();
+            const res = await window.ppsaApi.scanSource(actualSrc);
+            const arr = Array.isArray(res) ? res : (Array.isArray(res?.items) ? res.items : []);
+            const duration = Math.round((Date.now() - scanStartTime) / 1000);
+            renderResults(arr, duration);
+            $('btnGoBig').disabled = false;
+            currentSortBy = 'name';
+          } catch (e) {
+            console.error(e);
+            toast('Scan failed: ' + e.message);
           }
         });
       }
@@ -1843,7 +2013,7 @@
           });
           const tb = $('resultsBody');
           if (tb) tb.innerHTML = `<tr><td colspan="5" style="color:var(--muted);padding:12px">No scan performed yet.</td></tr>`;
-          $('scanCount') && ($('scanCount').textContent='');
+          $('scanCount').textContent = '';
           updateHeaderCheckboxState();
           try { localStorage.removeItem(LAST_RESULTS_KEY); } catch (_) {}
         });
@@ -1874,6 +2044,7 @@
           try {
             btnDeleteSelected.disabled = true;
             btnDeleteSelected.textContent = 'Deleting...';
+            showPersistentToast('Deleting selected items...');
             for (const item of selected) {
               if (isFtpScan && ftpConfig) {
                 const pathToDelete = item.ppsaFolderPath || item.folderPath;
@@ -1882,16 +2053,19 @@
                 await window.ppsaApi.deleteItem(item);
               }
             }
+            hidePersistentToast();
             toast(`Deleted ${selected.length} item(s)`);
             const src = $('sourcePath').value.trim();
             if (src) {
-              toast('Refreshing results...');
+              showPersistentToast('Refreshing results...');
               const res = await window.ppsaApi.scanSource(src);
               const arr = Array.isArray(res) ? res : (Array.isArray(res?.items) ? res.items : []);
               renderResults(arr);
+              hidePersistentToast();
               toast('Results refreshed');
             }
           } catch (e) {
+            hidePersistentToast();
             toast('Delete failed: ' + (e.message || 'Unknown error'));
           } finally {
             btnDeleteSelected.disabled = false;
@@ -1908,10 +2082,7 @@
             toast('No items selected');
             return;
           }
-          if (selected.length > 1) {
-            toast('Rename only supports single item');
-            return;
-          }
+          // Since button is disabled for >1, no need to check length
           const item = selected[0];
           const currentName = item.displayTitle || '';
           const newName = await openRenameModal(currentName);
@@ -1922,21 +2093,25 @@
           try {
             btnRenameSelected.disabled = true;
             btnRenameSelected.textContent = 'Renaming...';
+            showPersistentToast('Renaming selected item...');
             if (isFtpScan && ftpConfig) {
               await window.ppsaApi.ftpRenameItem(ftpConfig, oldPath, newPath);
             } else {
               await window.ppsaApi.renameItem(item, newName.trim());
             }
+            hidePersistentToast();
             toast('Renamed successfully');
             const src = $('sourcePath').value.trim();
             if (src) {
-              toast('Refreshing results...');
+              showPersistentToast('Refreshing results...');
               const res = await window.ppsaApi.scanSource(src);
               const arr = Array.isArray(res) ? res : (Array.isArray(res?.items) ? res.items : []);
               renderResults(arr);
+              hidePersistentToast();
               toast('Results refreshed');
             }
           } catch (e) {
+            hidePersistentToast();
             toast('Rename failed: ' + (e.message || 'Unknown error'));
           } finally {
             btnRenameSelected.disabled = false;
@@ -1948,10 +2123,8 @@
       const resultClose = $('resultClose');
       if (resultClose) {
         resultClose.addEventListener('click', () => {
-          if (shouldRefreshAfterClose) {
-            refreshResultsAfterOperation();
-          }
-          shouldRefreshAfterClose = false;
+          const src = $('sourcePath').value.trim();
+          if (src) refreshResultsAfterOperation();
           const rb = $('resultModalBackdrop');
           if (rb) { rb.style.display = 'none'; rb.setAttribute('aria-hidden', 'true'); }
         });
@@ -1973,6 +2146,53 @@
       }
 
       setupDragDrop();
+
+      const topMenu = $('topMenu');
+      if (topMenu) {
+        topMenu.addEventListener('change', (e) => {
+          const value = e.target.value;
+          if (value === 'export') {
+            exportData();
+          } else if (value === 'import') {
+            importData();
+          } else if (value === 'help') {
+            try {
+              if (window.HelpApi && window.HelpApi.openHelp) window.HelpApi.openHelp(e);
+            } catch (e) {
+              console.error('Help open error:', e);
+            }
+          } else if (value === 'selectAll') {
+            Array.from(document.querySelectorAll('#resultsBody input[type="checkbox"]')).filter(cb => cb.closest('tr').style.display !== 'none').forEach(cb => {
+              cb.checked = true;
+              cb.closest('tr')?.classList.add('row-selected');
+            });
+            updateHeaderCheckboxState();
+          } else if (value === 'unselectAll') {
+            Array.from(document.querySelectorAll('#resultsBody input[type="checkbox"]')).filter(cb => cb.closest('tr').style.display !== 'none').forEach(cb => {
+              cb.checked = false;
+              cb.closest('tr')?.classList.remove('row-selected');
+            });
+            updateHeaderCheckboxState();
+          } else if (value === 'clear') {
+            if (!confirm('Clear all scan results? This cannot be undone.')) return;
+            Array.from(document.querySelectorAll('#resultsBody input[type="checkbox"]')).forEach(cb => {
+              cb.checked = false;
+              cb.closest('tr')?.classList.remove('row-selected');
+            });
+            const tb = $('resultsBody');
+            if (tb) tb.innerHTML = `<tr><td colspan="5" style="color:var(--muted);padding:12px">No scan performed yet.</td></tr>`;
+            $('scanCount').textContent = '';
+            updateHeaderCheckboxState();
+            try { localStorage.removeItem(LAST_RESULTS_KEY); } catch (_) {}
+          }
+          e.target.value = ''; // Reset to default
+        });
+      }
+
+      // Save settings on change
+      if ($('layout')) $('layout').addEventListener('change', () => localStorage.setItem(LAST_LAYOUT_KEY, $('layout').value));
+      if ($('action')) $('action').addEventListener('change', () => localStorage.setItem(LAST_ACTION_KEY, $('action').value));
+      if ($('calcSize')) $('calcSize').addEventListener('change', () => localStorage.setItem(LAST_CALC_SIZE_KEY, $('calcSize').checked));
 
     } catch (e) {
       console.error('[renderer] DOMContentLoaded error', e);

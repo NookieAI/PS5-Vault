@@ -7,6 +7,17 @@
   align-items: flex-end;
   justify-content: flex-end;
 }
+.action-layout-row .calc-size-row {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}
+.action-layout-row .calc-size-row label {
+  font-size: 11px;
+  color: var(--muted);
+  font-weight: 600;
+}
 @media (max-width: 980px) {
   .controls-right { align-items: stretch; }
   .action-layout-row {
