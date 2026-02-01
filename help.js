@@ -1,101 +1,131 @@
 (function () {
   'use strict';
 
-  // Global API for Help Modal
-  window.HelpApi = {
-    openHelp: openHelp,
-    closeHelp: closeHelp
-  };
+  // Help modal content for PS5 Vault
+  const helpContent = `
+<h2>PS5 Vault Help</h2>
 
-  let helpEscHandler = null;
+<h3>Getting Started</h3>
+<p>PS5 Vault helps you organize and transfer PS5 game backups. Scan directories or FTP servers, select games, and move/copy them with customizable layouts for homebrew plugins like etaHEN or itemZFlow.</p>
 
-  function openHelp(ev) {
-    if (ev) ev.preventDefault();
-    const helpBackdrop = document.getElementById('helpModalBackdrop');
-    const helpModalBody = document.getElementById('helpModalBody');
-    if (!helpBackdrop || !helpModalBody) return;
-    helpBackdrop.style.display = 'flex';
-    helpBackdrop.setAttribute('aria-hidden', 'false');
-    helpEscHandler = (e) => { if (e.key === 'Escape') closeHelp(); };
-    document.addEventListener('keydown', helpEscHandler);
-    if (helpModalBody) {
-      helpModalBody.innerHTML = `
-        <div style="font-size: 14px; line-height: 1.6; color: var(--title);">
-          <ol style="margin-left: 20px; margin-bottom: 20px;">
-            <li style="margin-bottom: 10px;"><strong>Set Source:</strong> Click "Browse" next to Source to select a local folder/drive, or enter an FTP URL/IP (e.g., 192.168.1.100 or ftp://192.168.1.100:2121) to scan games directly from your PS5.</li>
-            <li style="margin-bottom: 10px;"><strong>Scan:</strong> Click SCAN. The app will locate validated game folders (with param.json) and list them with thumbnails.</li>
-            <li style="margin-bottom: 10px;"><strong>Select Items:</strong> Use checkboxes to pick games (Ctrl+A to select all, or use Select All/Unselect All buttons).</li>
-            <li style="margin-bottom: 10px;"><strong>Set Destination:</strong> Click "Browse" to choose where organized folders go.</li>
-            <li style="margin-bottom: 10px;"><strong>Choose Action & Layout:</strong> Action = folder creation, copy, or move. Layout = destination folder structure (see below).</li>
-            <li style="margin-bottom: 10px;"><strong>Transfer:</strong> Click GO. Confirm dialog shows paths; handle conflicts (skip/rename).</li>
-            <li style="margin-bottom: 10px;"><strong>Monitor Progress:</strong> Progress bar, ETA, file details. Cancel anytime. Results show after completion.</li>
-          </ol>
+<h3>New Features</h3>
+<ul>
+  <li><strong>Scan All Drives</strong>: Click the "Scan All Drives" button to automatically scan all local and network drives for games in one operation. Ideal for systems with multiple storage devices.</li>
+  <li><strong>FTP to FTP Transfers</strong>: Transfer games directly between two FTP servers without local downloads. Set FTP URLs for both source and destination.</li>
+  <li><strong>FTP Move Operations</strong>: Use "Move" action with FTP sources to transfer and auto-delete source files after success, freeing up remote server space.</li>
+  <li><strong>Calculate Size Checkbox</strong>: Toggle "Calculate game sizes" to skip size computation for faster scans on large libraries (sizes will show as blank or partial estimates).</li>
+  <li><strong>Auto-Refresh</strong>: Scan results refresh automatically after transfers or closing modals, keeping your list up-to-date.</li>
+</ul>
 
-          <h2 style="margin-top: 30px; margin-bottom: 15px; font-size: 16px;">FTP Scanning and Transferring (Direct from/to PS5)</h2>
-          <p style="margin-bottom: 15px;">Use FTP to scan and transfer games without copying them to your PC first. This is ideal for large libraries or slow networks. Supports both downloading from PS5 and uploading to PS5.</p>
-          <ul style="margin-left: 20px; margin-bottom: 20px;">
-            <li style="margin-bottom: 10px;"><strong>Setup on PS5:</strong> Install ftpsrv and use port 2121 (default) or 1337. Note IP (e.g., 192.168.1.100). Ports: 2121 (recommended), 1337 (alt). Anonymous login OK.</li>
-            <li style="margin-bottom: 10px;"><strong>Enter Source:</strong> Type FTP URL or IP:port in Source: 192.168.1.100 or 192.168.1.100:2121 (app auto-detects and defaults to port 2121). Click SCAN to download and scan games from PS5.</li>
-            <li style="margin-bottom: 10px;"><strong>Enter Destination:</strong> For FTP destination, enter IP or URL in Destination. Config modal opens to set host, port, path, user, pass. Transfers upload games directly to PS5.</li>
-            <li style="margin-bottom: 10px;"><strong>Tips:</strong> Same network/firewall check. Slower than local; use for scanning/transferring without local storage. Covers/size skipped for speed; param.json for info. Supports copy/move actions.</li>
-            <li style="margin-bottom: 10px;"><strong>Supported Paths:</strong> Scans/transfers USB/game dirs automatically (e.g., /mnt/usb0/etaHEN/games). If custom, specify full path.</li>
-          </ul>
+<h3>Scanning Games</h3>
+<p>
+  <strong>Source Input</strong>: Enter a local path, FTP URL (e.g., <code>ftp://192.168.1.100:2121/mnt/ext1/etaHEN/games</code>), or use "Browse" for local directories.<br>
+  <strong>FTP Scanning</strong>: For IP/FTP inputs, a modal will prompt for credentials (host, port, path, user, pass). Recent FTP configs are saved.<br>
+  <strong>Scan All Drives</strong>: Scans all connected drives—useful for multi-drive setups.<br>
+  <strong>Progress</strong>: Watch the progress bar and current path during scans.
+</p>
 
-          <h2 style="margin-top: 30px; margin-bottom: 15px; font-size: 16px;">Layout Directory Structures</h2>
-          <ul style="margin-left: 20px; margin-bottom: 20px;">
-            <li style="margin-bottom: 8px;"><strong>Game / PPSA</strong> — Destination/GameName/PPSAName (keeps PPSA separate)</li>
-            <li style="margin-bottom: 8px;"><strong>Game only</strong> — Destination/GameName (flattens PPSA in)</li>
-            <li style="margin-bottom: 8px;"><strong>PPSA only</strong> — Destination/PPSAName (PPSA only)</li>
-            <li style="margin-bottom: 8px;"><strong>etaHEN default</strong> — Destination/etaHEN/games/GameName</li>
-            <li style="margin-bottom: 8px;"><strong>itemZFlow default</strong> — Destination/games/GameName</li>
-            <li style="margin-bottom: 8px;"><strong>Dump Runner default</strong> — Destination/homebrew/GameName</li>
-            <li style="margin-bottom: 8px;"><strong>Custom</strong> — Destination/CustomName (prompt for name, single game)</li>
-          </ul>
+<h3>Transfer Settings</h3>
+<p>
+  <strong>Destination</strong>: Supports local paths or FTP (with modal for config). Recent destinations include FTP URLs.<br>
+  <strong>Layout Options</strong>:
+  <ul>
+    <li><strong>etaHEN default</strong>: <code>{dest}/etaHEN/games/{game}/</code></li>
+    <li><strong>itemZFlow default</strong>: <code>{dest}/games/{game}/</code></li>
+    <li><strong>Dump Runner default</strong>: <code>{dest}/homebrew/{game}/</code></li>
+    <li><strong>Game / PPSA</strong>: <code>{dest}/{game}/{PPSA}/</code></li>
+    <li><strong>Game only</strong>: <code>{dest}/{game}/</code></li>
+    <li><strong>PPSA only</strong>: <code>{dest}/{PPSA}/</code></li>
+    <li><strong>Custom</strong>: Rename via modal, path is <code>{dest}/{customName}/</code></li>
+  </ul>
+  <strong>Action</strong>: Copy (keeps source) or Move (deletes source).<br>
+  <strong>Calculate Size</strong>: Enable for accurate sizes; disable for speed.
+</p>
 
-          <h2 style="margin-top: 30px; margin-bottom: 15px; font-size: 16px;">Batch Operations & Features</h2>
-          <ul style="margin-left: 20px; margin-bottom: 20px;">
-            <li style="margin-bottom: 8px;"><strong>Rename Selected:</strong> Select 1 game, click to open rename modal. Enter new name, confirm. Works local/FTP. Refreshes list.</li>
-            <li style="margin-bottom: 8px;"><strong>Delete Selected:</strong> Select games, click to delete (with confirmation). Works local/FTP. Refreshes list.</li>
-            <li style="margin-bottom: 8px;"><strong>Select All/Unselect All:</strong> Bulk select/deselect visible items.</li>
-            <li style="margin-bottom: 8px;"><strong>Clear:</strong> Clear scan results (confirmation required).</li>
-            <li style="margin-bottom: 8px;"><strong>Theme Toggle:</strong> Click "Made by Nookie" to switch dark/light theme.</li>
-            <li style="margin-bottom: 8px;"><strong>Clear Recents:</strong> Click PS5 logo to clear all recent sources/dests/FTP (confirmation).</li>
-            <li style="margin-bottom: 8px;"><strong>Conflict Resolution:</strong> Existing targets prompt skip/rename (default rename).</li>
-            <li style="margin-bottom: 8px;"><strong>Sorting:</strong> Click table headers to sort by name/size/folder.</li>
-            <li style="margin-bottom: 8px;"><strong>Keyboard Shortcuts:</strong> Ctrl+A (select all), Ctrl+R (rescan), F1 (help), Arrow keys (navigate).</li>
-          </ul>
+<h3>FTP Transfers</h3>
+<p>
+  <strong>Setup</strong>: Enter host (IP), port (default 2121), path, username, and password. Use passive mode for firewalls.<br>
+  <strong>FTP to FTP</strong>: Source and destination can both be FTP for server-to-server transfers.<br>
+  <strong>Security</strong>: Passwords stored locally in plaintext—clear via logo click.<br>
+  <strong>Troubleshooting</strong>: Check port/firewall; use "Test" if available.
+</p>
 
-          <h2 style="margin-top: 30px; margin-bottom: 15px; font-size: 16px;">Support & Links</h2>
-          <ul style="margin-left: 20px; margin-bottom: 20px;">
-            <li style="margin-bottom: 8px;"><a href="https://github.com/NookieAI/PS5-Vault" target="_blank" rel="noopener" style="color: #60baff;">GitHub Repository</a></li>
-            <li style="margin-bottom: 8px;"><a href="https://ko-fi.com/nookie_65120" target="_blank" rel="noopener" style="color: #60baff;">Support on Ko-fi</a></li>
-            <li style="margin-bottom: 8px;"><a href="https://discord.gg/nj45kDSBEd" target="_blank" rel="noopener" style="color: #60baff;">Join Discord</a></li>
-          </ul>
+<h3>Game Selection and Operations</h3>
+<p>
+  <strong>Selecting</strong>: Checkboxes for individual games; header checkbox for all visible. Use search to filter.<br>
+  <strong>Transfer</strong>: Click "GO" after selecting. Confirm modal shows preview.<br>
+  <strong>Conflicts</strong>: Choose to skip, overwrite, or rename duplicates.<br>
+  <strong>Results</strong>: Modal shows transfer status; auto-refreshes scans on close.<br>
+  <strong>Delete/Rename</strong>: Right-click or use buttons for bulk operations (refreshes automatically).
+</p>
 
-          <h2 style="margin-top: 30px; margin-bottom: 15px; font-size: 16px;">Notes</h2>
-          <ul style="margin-left: 20px;">
-            <li style="margin-bottom: 8px;">Conflicts handled via skip/rename. Fastest: Move on same drive; Copy verifies across drives.</li>
-            <li style="margin-bottom: 8px;">PPSA removed; sce_sys preserved.</li>
-            <li style="margin-bottom: 8px;">FTP: Covers/size skipped for speed; param.json for info. Supports full transfer operations.</li>
-            <li>Test with 1 game first. Back up originals.</li>
-          </ul>
+<h3>Settings and Persistence</h3>
+<p>Layout, action, and calculate size settings save automatically. Theme toggles via logo click. Export/import data via menu.</p>
+
+<h3>Keyboard Shortcuts</h3>
+<ul>
+  <li><strong>Ctrl+A</strong>: Select all visible games</li>
+  <li><strong>Ctrl+R</strong>: Refresh current scan</li>
+  <li><strong>F1</strong>: Open this help</li>
+  <li><strong>Arrow Keys</strong>: Navigate game list</li>
+</ul>
+
+<h3>Troubleshooting</h3>
+<ul>
+  <li><strong>Scan Fails</strong>: Check paths/permissions; FTP needs valid creds and connection.</li>
+  <li><strong>FTP Errors</strong>: ECONNREFUSED means wrong port/host; use passive mode.</li>
+  <li><strong>Slow Scans</strong>: Disable "Calculate Size" for large libraries.</li>
+  <li><strong>Version Duplicates</strong>: Fixed—won't append extra versions.</li>
+  <li><strong>No Games Found</strong>: Ensure valid PPSA folders with param.sfo.</li>
+</ul>
+
+<h3>About</h3>
+<p>PS5 Vault by NookieAI. For support, join <a href="https://discord.gg/nj45kDSBEd" target="_blank">Discord</a> or check the repo.</p>
+`;
+
+  // Function to open help modal
+  function openHelp() {
+    const existingModal = document.getElementById('helpModalBackdrop');
+    if (existingModal) {
+      existingModal.style.display = 'flex';
+      existingModal.setAttribute('aria-hidden', 'false');
+      return;
+    }
+
+    const backdrop = document.createElement('div');
+    backdrop.id = 'helpModalBackdrop';
+    backdrop.className = 'modal-backdrop';
+    backdrop.setAttribute('aria-hidden', 'false');
+    backdrop.innerHTML = `
+      <div class="modal" role="dialog" aria-modal="true" aria-labelledby="helpTitle" style="max-width: 800px; max-height: 80vh; overflow-y: auto;">
+        <div class="modal-header">
+          <h4 id="helpTitle">PS5 Vault Help</h4>
+          <button id="helpClose" class="close-btn" title="Close">✕</button>
         </div>
-      `;
-      const helpCloseBtn = document.getElementById('helpClose');
-      if (helpCloseBtn) {
-        helpCloseBtn.addEventListener('click', closeHelp);
-      }
-    }
+        <div class="modal-body" id="helpModalBody">${helpContent}</div>
+        <div class="modal-actions">
+          <button id="helpCloseBtn" class="btn">Close</button>
+        </div>
+      </div>
+    `;
+
+    document.body.appendChild(backdrop);
+
+    // Event listeners
+    const closeBtn = document.getElementById('helpClose');
+    const closeBtn2 = document.getElementById('helpCloseBtn');
+    const closeHandler = () => {
+      backdrop.style.display = 'none';
+      backdrop.setAttribute('aria-hidden', 'true');
+    };
+    closeBtn.addEventListener('click', closeHandler);
+    closeBtn2.addEventListener('click', closeHandler);
+    backdrop.addEventListener('click', (e) => {
+      if (e.target === backdrop) closeHandler();
+    });
   }
 
-  function closeHelp() {
-    const helpBackdrop = document.getElementById('helpModalBackdrop');
-    if (!helpBackdrop) return;
-    helpBackdrop.style.display = 'none';
-    helpBackdrop.setAttribute('aria-hidden', 'true');
-    if (helpEscHandler) {
-      document.removeEventListener('keydown', helpEscHandler);
-      helpEscHandler = null;
-    }
-  }
+  // Expose to global
+  window.HelpApi = { openHelp };
+
 })();

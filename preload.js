@@ -17,6 +17,7 @@ contextBridge.exposeInMainWorld('ppsaApi', {
   ftpDeleteItem: (config, path) => ipcRenderer.invoke('ftp-delete-item', config, path),
   moveToLayout: (item, dest, layout) => ipcRenderer.invoke('move-to-layout', item, dest, layout),
   resumeTransfer: (state) => ipcRenderer.invoke('resume-transfer', state),
+  getAllDrives: () => ipcRenderer.invoke('get-all-drives'),
 
   // Listener for progress updates
   onScanProgress: (callback) => {

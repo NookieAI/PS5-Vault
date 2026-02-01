@@ -311,6 +311,16 @@
       font-size: 13px;
     }
 
+    input[type="number"] {
+      padding: 6px 8px;
+      border-radius: 8px;
+      border: 1px solid var(--card-border);
+      background: var(--select-bg);
+      color: var(--title);
+      font-size: 13px;
+      width: 100%;
+    }
+
     select {
       height: 34px;
       min-width: var(--select-width);
@@ -633,6 +643,22 @@
       z-index: 2000;
     }
 
+    #persistentToast {
+      position: fixed;
+      left: 50%;
+      transform: translateX(-50%);
+      bottom: 60px;
+      background: rgba(2,6,12,0.9); /* Match .toast background */
+      color: var(--muted); /* Match .toast color */
+      padding: 8px 12px;
+      border-radius: 8px;
+      border: 1px solid rgba(255,255,255,0.1);
+      font-size: 14px;
+      font-weight: bold;
+      display: none;
+      z-index: 2001;
+    }
+
     .completed-file {
       padding: 4px 0;
       border-bottom: 1px solid rgba(255,255,255,0.04);
@@ -642,6 +668,11 @@
 
     .search-input {
       width: 200px;
+    }
+
+    /* Zebra effect for game results */
+    tbody tr:nth-child(even) {
+      background: rgba(255,255,255,0.02);
     }
 
     @media (max-width: 980px) {
@@ -679,21 +710,22 @@
         </div>
         <div class="meta">
           <div class="app-title">PS5 Vault</div>
-          <div class="app-sub">Organize PPSA folders v1.0.9</div>
+          <div class="app-sub">Organize PPSA folders v1.1.2</div>
         </div>
       </div>
 
       <div class="topbar-right">
         <div id="madeBy" class="made-by" title="Click to toggle theme">Made by Nookie</div>
-        <div style="display:flex;gap:6px;align-items:center;">
-          <button id="btnExport" class="btn" title="Export settings and results">Export</button>
-          <button id="btnImport" class="btn" title="Import settings and results">Import</button>
-          <button id="btnHelp" class="btn" title="Open help">Help</button>
-          <button id="btnSelectAll" class="btn" title="Select all visible">Select All</button>
-          <button id="btnUnselectAll" class="btn" title="Unselect all">Unselect All</button>
-          <button id="btnClear" class="btn" title="Clear results">Clear</button>
-          <a id="discordLink" class="discord-link" href="https://discord.gg/nj45kDSBEd" target="_blank" rel="noopener" title="Join Discord">💬 Discord</a>
-        </div>
+        <select id="topMenu" class="btn" style="margin-right:8px;">
+          <option value="">Menu</option>
+          <option value="export">Export</option>
+          <option value="import">Import</option>
+          <option value="help">Help</option>
+          <option value="selectAll">Select All</option>
+          <option value="unselectAll">Unselect All</option>
+          <option value="clear">Clear</option>
+        </select>
+        <a id="discordLink" class="discord-link" href="https://discord.gg/nj45kDSBEd" target="_blank" rel="noopener" title="Join Discord">💬 Discord</a>
       </div>
     </div>
 
@@ -701,9 +733,10 @@
       <div class="controls-left">
         <div class="primary">
           <label style="color:var(--muted);margin-right:6px">Source</label>
-          <input id="sourcePath" type="text" placeholder="Choose root folder or drop here" style="width: 260px;" autocomplete="off" list="sourceHistory" />
+          <input id="sourcePath" type="text" placeholder="Choose root folder" style="width: 260px;" list="sourceHistory" />
           <button id="btnPickSource" class="btn" title="Browse for source">Browse</button>
           <button id="btnScan" class="btn-scan" title="Start scan">SCAN</button>
+          <button id="btnScanAllDrives" class="btn" title="Scan all local and network drives">Scan All Drives</button>
           <button id="btnCancelScan" class="btn-cancel">Cancel</button>
         </div>
         <div class="scan-display" id="scanDisplay" style="display:none;">
@@ -718,7 +751,7 @@
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
           <button id="btnGoBig" class="btn-go" title="Start transfer">GO</button>
           <label style="color:var(--muted);margin-left:6px">Destination</label>
-          <input id="destPath" type="text" placeholder="Destination or drop here" style="width: 260px;" autocomplete="off" list="destHistory" />
+          <input id="destPath" type="text" placeholder="Destination" style="width: 260px;" list="destHistory" />
           <button id="btnPickDest" class="btn" title="Browse for destination">Browse</button>
         </div>
 
@@ -742,6 +775,11 @@
               <option value="dump_runner">Dump Runner default</option>
               <option value="custom">Custom</option>
             </select>
+          </div>
+          <div class="calc-size-block">
+            <label style="color:var(--muted);font-size:11px;margin-top: 8px;">
+              <input type="checkbox" id="calcSize" style="vertical-align: middle;" /> Calculate Size
+            </label>
           </div>
         </div>
       </div>
@@ -799,7 +837,7 @@
       <div id="transferStats" style="margin-bottom:8px; font-size:12px; color:var(--muted)">Speed: -- ETA: --</div>
       <div id="transferETA" style="margin-bottom:8px; font-size:14px; color:var(--muted); font-weight:600;">ETA: --</div>
       <div id="completedFiles" style="margin-bottom:8px; max-height:150px; overflow-y:auto;" role="list" aria-label="Completed files"></div>
-      <div class="result-actions-row" style="display:none;" id="resultActionsRow" aria-hidden="true"></div>
+      <div id="resultActionsRow" style="display:none;" id="resultActionsRow" aria-hidden="true"></div>
       <div class="modal-body"><div id="resultList"></div></div>
     </div>
   </div>
@@ -841,12 +879,12 @@
   <!-- Help modal -->
   <div id="helpModalBackdrop" class="modal-backdrop" aria-hidden="true">
     <div class="modal" role="dialog" aria-modal="true" aria-labelledby="helpTitle">
-      <div class="modal-header"><h4 id="helpTitle">How to use PS5 Vault</h4></div>
-      <div class="modal-body" id="helpModalBody">
-        <!-- content is set by JS -->
-      </div>
-      <div class="modal-actions"><button id="helpClose" class="btn">Close</button></div>
+    <div class="modal-header"><h4 id="helpTitle">How to use PS5 Vault</h4></div>
+    <div class="modal-body" id="helpModalBody">
+      <!-- content is set by JS -->
     </div>
+    <div class="modal-actions"><button id="helpClose" class="btn">Close</button></div>
+  </div>
   </div>
 
   <!-- Custom name modal -->
@@ -910,26 +948,43 @@
         <div style="display:flex;gap:6px;margin-bottom:6px;">
           <div style="flex:1;">
             <label style="color:var(--muted);font-size:11px;font-weight:600;margin-bottom:2px;display:block;">Host</label>
-            <input id="ftpHost" type="text" placeholder="192.168.137.100" autocomplete="off" />
+            <input id="ftpHost" type="text" placeholder="192.168.137.100" autocomplete="off" list="hostHistory" />
           </div>
           <div style="flex:0 0 80px;">
             <label style="color:var(--muted);font-size:11px;font-weight:600;margin-bottom:2px;display:block;">Port</label>
-            <input id="ftpPort" type="text" placeholder="1337" autocomplete="off" />
+            <input id="ftpPort" type="text" placeholder="2121" autocomplete="off" list="portHistory" />
           </div>
         </div>
         <div style="margin-bottom:6px;">
           <label style="color:var(--muted);font-size:11px;font-weight:600;margin-bottom:2px;display:block;">Path</label>
           <input id="ftpPath" type="text" placeholder="/mnt/ext1/etaHEN/games" autocomplete="off" list="pathHistory" />
         </div>
-        <div style="display:flex;gap:6px;margin-bottom:0;">
+        <div style="display:flex;gap:6px;margin-bottom:6px;">
           <div style="flex:1;">
             <label style="color:var(--muted);font-size:11px;font-weight:600;margin-bottom:2px;display:block;">User</label>
-            <input id="ftpUser" type="text" placeholder="anonymous" autocomplete="off" />
+            <input id="ftpUser" type="text" placeholder="anonymous" autocomplete="off" list="userHistory" />
           </div>
           <div style="flex:0 0 80px;">
             <label style="color:var(--muted);font-size:11px;font-weight:600;margin-bottom:2px;display:block;">Pass</label>
             <input id="ftpPass" type="password" placeholder="(leave empty)" autocomplete="off" />
           </div>
+        </div>
+        <!-- New optimization fields -->
+        <div style="display:flex;gap:6px;margin-bottom:6px;">
+          <div style="flex:1;">
+            <label style="color:var(--muted);font-size:11px;font-weight:600;margin-bottom:2px;display:block;">Buffer Size (KB)</label>
+            <input id="ftpBufferSize" type="number" placeholder="64" min="1" max="1024" autocomplete="off" />
+          </div>
+          <div style="flex:0 0 80px;">
+            <label style="color:var(--muted);font-size:11px;font-weight:600;margin-bottom:2px;display:block;">Parallel</label>
+            <input id="ftpParallel" type="number" placeholder="1" min="1" max="10" autocomplete="off" />
+          </div>
+        </div>
+        <div style="margin-bottom:6px;">
+          <label style="display:flex;align-items:center;gap:6px;color:var(--muted);font-size:11px;font-weight:600;">
+            <input id="ftpPassive" type="checkbox" checked />
+            Passive Mode (recommended for firewalls)
+          </label>
         </div>
         <div style="margin-top:8px;font-size:11px;color:var(--muted);">
           <strong>Security Note:</strong> Passwords are stored locally in plaintext. Avoid storing sensitive info or clear via logo click.
@@ -943,7 +998,7 @@
   </div>
 
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
-  <div id="imgPreview" class="img-preview" aria-hidden="true"><img id="imgPreviewImg" src="" alt="preview"></div>
+  <div id="persistentToast" role="status" aria-live="polite"></div>
 
   <datalist id="hostHistory"></datalist>
   <datalist id="portHistory"></datalist>
@@ -951,6 +1006,7 @@
     <option value="/mnt/usb0"></option>
     <option value="/mnt/usb1"></option>
     <option value="/mnt/ext1"></option>
+    <option value="/data"></option>
   </datalist>
   <datalist id="userHistory"></datalist>
   <datalist id="sourceHistory"></datalist>

@@ -1,7 +1,7 @@
 {
   "name": "ps5vault",
-  "version": "1.0.9",
-  "description": "PS5 Vault: organize PPSA folders safely with verified copy/move, original Electron transfer windows, clear progress/ETA, and conflict resolution.",
+  "version": "1.1.2",
+  "description": "PS5 Vault: organize PPSA folders safely with verified copy/move, original Electron transfer windows, clear progress/ETA, and conflict resolution. Supports FTP scanning and transfer for direct PS5 interaction.",
   "author": "Nookie",
   "private": true,
   "main": "main.js",
@@ -9,9 +9,11 @@
   "scripts": {
     "start": "electron .",
     "dev": "electron .",
-    "dist": "electron-builder --publish never",
-    "dist:mac": "electron-builder --mac --publish never",
-    "dist:win": "electron-builder --win --publish never"
+    "dist": "electron-builder -w portable --publish never",
+    "dist:x64": "electron-builder -w portable --x64 --publish never",
+    "dist:linux": "electron-builder -l tar.gz --publish never",
+    "lint": "eslint *.js --fix",
+    "test": "jest"
   },
   "devDependencies": {
     "electron": "22.3.27",
@@ -32,6 +34,7 @@
       "ftp.js",
       "help.js",
       "utils.js",
+      "ftp-backend.js",
       "index.html",
       "ui-overrides.css",
       "assets/**/*",
@@ -42,20 +45,25 @@
     "asar": true,
     "compression": "maximum",
     "extraMetadata": {
-      "version": "1.0.9"
+      "version": "1.1.2"
     },
-    "mac": {
+    "win": {
       "target": [
         {
-          "target": "dmg",
+          "target": "portable",
           "arch": [
-            "x64",
-            "arm64"
+            "x64"
           ]
         }
       ],
-      "icon": "assets/icon.icns",
-      "artifactName": "PS5Vault-${version}-mac-${arch}.${ext}"
+      "icon": "assets/icon.ico",
+      "artifactName": "PS5Vault-${version}-portable-${arch}.exe"
+    },
+    "linux": {
+      "target": "tar.gz",
+      "category": "Utility",
+      "icon": "assets/logo.png",
+      "artifactName": "PS5Vault-${version}-linux-${arch}.tar.gz"
     }
   },
   "dependencies": {

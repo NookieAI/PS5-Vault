@@ -62,7 +62,7 @@
       document.getElementById('btnGoBig').disabled = true;
       document.getElementById('currentScanLabel').textContent = 'Scanning...';
       const startTime = Date.now();
-      const res = await window.ppsaApi.scanSourceForPpsa(actualSrc);
+      const res = await window.ppsaApi.scanSource(actualSrc);  // Fixed: use scanSource
       const arr = Array.isArray(res) ? res : (Array.isArray(res?.items) ? res.items : []);
       const duration = Math.round((Date.now() - startTime) / 1000);
       window.RendererApi.renderResults(arr, duration);
