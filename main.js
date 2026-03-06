@@ -23,7 +23,7 @@ const MAX_FILE_SIZE_BYTES = 200 * 1024 * 1024 * 1024; // 200GB limit for sanity
 const RETRY_ATTEMPTS = 3;
 const RETRY_DELAY_MS = 100;
 
-const VERSION = '2.1.0';
+const VERSION = require('./package.json').version;
 
 // ── Core helpers ─────────────────────────────────────────────────────────────
 function sanitize(name) {
