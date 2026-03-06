@@ -935,13 +935,13 @@
             selected = batchRenamed;
             customName = null;
           } else {
-            alert('Custom layout is only allowed for single game selection. Please select only one game.');
+            toast('Custom layout requires exactly one game to be selected.');
             return;
           }
         } else {
           customName = await openRenameModal();
           if (!customName || !customName.trim()) {
-            alert('Custom name cannot be empty. Using default.');
+            toast('Custom name cannot be empty — using default layout name.');
             customName = null;
           } else {
             customName = customName.trim();
@@ -2179,7 +2179,7 @@
             }
           } catch (e) {
             console.error(e);
-            alert('Error picking source: ' + e.message);
+            toast('Error picking source folder: ' + e.message);
           }
         });
       }
@@ -2195,7 +2195,7 @@
             }
           } catch (e) {
             console.error(e);
-            alert('Error picking dest: ' + e.message);
+            toast('Error picking destination folder: ' + e.message);
           }
         });
       }
@@ -2307,7 +2307,7 @@
             $('btnGoBig').disabled = false;
           } catch (e) {
             console.error(e);
-            alert('Error cancelling scan: ' + e.message);
+            toast('Error cancelling scan: ' + e.message);
           }
         });
       }
@@ -2520,7 +2520,7 @@
 
     } catch (e) {
       console.error('[renderer] DOMContentLoaded error', e);
-      alert('DOMContentLoaded error: ' + e.message);
+      console.error('[renderer] init error:', e);
     }
     log('renderer initialized');
   });

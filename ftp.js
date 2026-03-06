@@ -1,6 +1,8 @@
 (function () {
   'use strict';
 
+  const toast = (msg) => { if (typeof window.toast === 'function') window.toast(msg); else console.warn('[FTP]', msg); };
+
   // Global API for FTP
   window.FtpApi = {
     openFtpModal: openFtpModal,
@@ -77,10 +79,11 @@
     const userInput = document.getElementById('ftpUser');
     const passInput = document.getElementById('ftpPass');
     const passiveCheckbox = document.getElementById('ftpPassive'); // Passive mode checkbox
-    const bufferInput = document.getElementById('ftpBufferSize'); // Buffer size input
-    const parallelInput = document.getElementById('ftpParallel'); // Parallel transfers input
+    const bufferInput     = document.getElementById('ftpBufferSize');
+    const parallelInput   = document.getElementById('ftpParallel');
+    const speedLimitInput = document.getElementById('ftpSpeedLimit');
     const proceedBtn = document.getElementById('ftpProceed');
-    const cancelBtn = document.getElementById('ftpCancel');
+    const cancelBtn  = document.getElementById('ftpCancel');
 
     if (!backdrop || !hostInput || !portInput || !pathInput || !userInput || !passInput || !passiveCheckbox || !bufferInput || !parallelInput || !proceedBtn || !cancelBtn) {
       return Promise.resolve(null);
@@ -112,8 +115,9 @@
         userInput.value = lastConfig.user || 'anonymous';
         passInput.value = lastConfig.pass || '';
         passiveCheckbox.checked = lastConfig.passive !== false; // Default to true
-        bufferInput.value = lastConfig.bufferSize || '65536'; // Default 64KB
-        parallelInput.value = lastConfig.parallel || '1'; // Default 1
+        bufferInput.value = lastConfig.bufferSize ? Math.round(lastConfig.bufferSize / 1024) : 64;
+        parallelInput.value = lastConfig.parallel || '1';
+        if (speedLimitInput) speedLimitInput.value = lastConfig.speedLimitKbps || '0';
       } else {
         hostInput.value = '';
         portInput.value = '1337';
@@ -121,8 +125,9 @@
         userInput.value = 'anonymous';
         passInput.value = '';
         passiveCheckbox.checked = true; // Default passive mode
-        bufferInput.value = '65536'; // 64KB buffer
-        parallelInput.value = '1'; // 1 parallel connection
+        bufferInput.value = '64';
+        parallelInput.value = '1';
+        if (speedLimitInput) speedLimitInput.value = '0';
       }
     }
 
@@ -136,6 +141,8 @@
         backdrop.setAttribute('aria-hidden', 'true');
         proceedBtn.removeEventListener('click', onProceed);
         cancelBtn.removeEventListener('click', onCancel);
+        backdrop.removeEventListener('click', onBackdropClick);
+        document.removeEventListener('keydown', onKeydown);
       };
 
       const onProceed = () => {
@@ -146,27 +153,30 @@
           user: userInput.value.trim(),
           pass: passInput.value.trim(),
           passive: passiveCheckbox.checked, // Passive mode
-          bufferSize: parseInt(bufferInput.value.trim()) || 65536, // Buffer size in bytes
-          parallel: parseInt(parallelInput.value.trim()) || 1 // Parallel transfers
+          bufferSize: (parseInt(bufferInput.value.trim()) || 64) * 1024,  // field is KB → store bytes
+          parallel: parseInt(parallelInput.value.trim()) || 1,
+          speedLimitKbps: parseInt(speedLimitInput?.value?.trim()) || 0
         };
 
+        // Validate host
+        if (!config.host) { toast('Please enter a host address.'); return; }
         // Validate port
         const portNum = parseInt(config.port);
         if (isNaN(portNum) || portNum < 1 || portNum > 65535) {
-          alert('Invalid port number. Must be between 1 and 65535.');
+          toast('Invalid port — must be between 1 and 65535.');
           return;
         }
         config.port = String(portNum);
 
         // Validate buffer size
-        if (config.bufferSize < 1024 || config.bufferSize > 1048576) { // 1KB to 1MB
-          alert('Buffer size must be between 1024 and 1048576 bytes.');
+        if (config.bufferSize < 1024 || config.bufferSize > 1048576) {
+          toast('Buffer size must be between 1 and 1024 KB.');
           return;
         }
 
         // Validate parallel
         if (config.parallel < 1 || config.parallel > 10) { // 1 to 10
-          alert('Parallel transfers must be between 1 and 10.');
+          toast('Parallel transfers must be between 1 and 10.');
           return;
         }
 
@@ -179,8 +189,12 @@
         resolve(null);
       };
 
+      const onBackdropClick = (e) => { if (e.target === backdrop) onCancel(); };
+      const onKeydown = (e) => { if (e.key === 'Escape') onCancel(); };
       proceedBtn.addEventListener('click', onProceed);
       cancelBtn.addEventListener('click', onCancel);
+      backdrop.addEventListener('click', onBackdropClick);
+      document.addEventListener('keydown', onKeydown);
     });
   }
 
