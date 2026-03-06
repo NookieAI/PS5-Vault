@@ -6,10 +6,10 @@
   "author": "PS5 Vault",
   "license": "MIT",
   "scripts": {
-    "start":           "electron .",
-    "build":           "electron-builder --win portable",
-    "build:all":       "electron-builder --win --mac --linux",
-    "build:portable":  "electron-builder --win portable",
+    "start":         "electron .",
+    "build":         "electron-builder --win portable",
+    "build:all":     "electron-builder --win --mac --linux",
+    "build:portable": "electron-builder --win portable",
     "build:installer": "electron-builder --win nsis"
   },
   "dependencies": {
@@ -25,6 +25,7 @@
     "productName": "PS5 Vault",
     "copyright":   "Copyright © 2025 PS5 Vault",
     "asar":        true,
+
     "files": [
       "main.js",
       "preload.js",
@@ -41,6 +42,7 @@
       "!**/*.pre_perf",
       "!**/node_modules/.cache/**"
     ],
+
     "win": {
       "target": [
         { "target": "portable", "arch": ["x64"] }
@@ -48,27 +50,32 @@
       "icon": "assets/icon.ico",
       "artifactName": "${productName}-${version}-portable.exe"
     },
+
     "portable": {
       "requestExecutionLevel": "user",
       "unpackDirName": "ps5vault"
     },
+
     "nsis": {
-      "oneClick": false,
+      "oneClick":             false,
       "allowToChangeInstallationDirectory": true,
-      "installerIcon":  "assets/icon.ico",
-      "uninstallerIcon":"assets/icon.ico",
-      "artifactName":   "${productName}-${version}-setup.exe"
+      "installerIcon":        "assets/icon.ico",
+      "uninstallerIcon":      "assets/icon.ico",
+      "artifactName":         "${productName}-${version}-setup.exe"
     },
+
     "mac": {
       "target": "dmg",
       "icon":   "assets/icon.icns",
       "category": "public.app-category.utilities"
     },
+
     "linux": {
       "target": "AppImage",
       "icon":   "assets/icon.png",
       "category": "Utility"
     },
+
     "directories": {
       "output": "dist",
       "buildResources": "assets"
