@@ -70,7 +70,8 @@
       "target": "dmg",
       "icon": "assets/icon.icns",
       "category": "public.app-category.utilities",
-      "artifactName": "${productName}-${version}-mac.${ext}"
+      "identity": null,
+      "hardenedRuntime": false
     },
     "linux": {
       "target": "AppImage",
