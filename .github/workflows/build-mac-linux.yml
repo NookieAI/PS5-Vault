@@ -1,15 +1,12 @@
 name: Build macOS & Linux
 
 on:
-  # Allow manual trigger to build for the current v2.1.0 release right now
   workflow_dispatch:
     inputs:
       tag:
         description: 'Release tag to upload artifacts to (e.g. v2.1.0)'
         required: true
         default: 'v2.1.0'
-
-  # Also run automatically on future version tags
   push:
     tags:
       - 'v*'
@@ -30,10 +27,9 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          cache: 'npm'
 
       - name: Install dependencies
-        run: npm ci
+        run: npm install
 
       - name: Build macOS (x64 + arm64 DMG)
         run: npx electron-builder --mac --x64 --arm64
@@ -45,12 +41,11 @@ jobs:
         with:
           tag_name: ${{ github.event.inputs.tag || github.ref_name }}
           files: dist/*.dmg
-          # Do not overwrite existing assets (the Windows exe stays untouched)
           fail_on_unmatched_files: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  # ── Linux ──────────────────────────────────────────────────────────────────
+  # ── Linux ───────��──────────────────────────────────────────────────────────
   build-linux:
     name: Build Linux AppImage
     runs-on: ubuntu-latest
@@ -65,7 +60,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          cache: 'npm'
 
       - name: Install Linux build dependencies
         run: |
@@ -89,7 +83,7 @@ jobs:
             fuse
 
       - name: Install dependencies
-        run: npm ci
+        run: npm install
 
       - name: Build Linux AppImage
         run: npx electron-builder --linux AppImage --x64
