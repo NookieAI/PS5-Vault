@@ -2795,32 +2795,39 @@ app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) creat
 
 function createWindow() {
   try {
+    // Use the right icon format per platform
+    const iconExt  = process.platform === 'darwin' ? 'icon.icns'
+                   : process.platform === 'linux'   ? 'icon.png'
+                   :                                  'icon.ico';
+
     mainWindow = new BrowserWindow({
       width: 1280,
       height: 820,
       resizable: true,
       autoHideMenuBar: true,
-      icon: path.join(__dirname, 'assets', 'icon.ico'),
+      show: false,  // hidden until ready-to-show prevents white-flash on maximize
+      icon: path.join(__dirname, 'assets', iconExt),
       webPreferences: {
         preload: path.join(__dirname, 'preload.js'),
         nodeIntegration: false,
         contextIsolation: true
       }
     });
+
+    // Maximize before show so the window is already full-size when it appears
     mainWindow.maximize();
+    mainWindow.once('ready-to-show', () => mainWindow.show());
+
     mainWindow.webContents.on('did-finish-load', () => {
       console.log('[main] UI loaded');
-      // Inject current version so the HTML subtitle stays in sync without hardcoding
       mainWindow.webContents.send('app-version', VERSION);
     });
-    mainWindow.webContents.on('did-fail-load', (_e, code, desc, url) => console.error('[main] did-fail-load', code, desc, url));
-    const indexPath = path.join(__dirname, 'index.html');
-    fs.promises.access(indexPath, fs.constants.F_OK).catch(() => {
-      console.error('[main] index.html not found:', indexPath);
-    }).finally(() => {
-      mainWindow.loadFile('index.html').catch((e) => {
-        console.error('[main] loadFile error:', e);
-      });
+    mainWindow.webContents.on('did-fail-load', (_e, code, desc, url) => {
+      console.error('[main] did-fail-load', code, desc, url);
+    });
+
+    mainWindow.loadFile('index.html').catch((e) => {
+      console.error('[main] loadFile error:', e);
     });
   } catch (e) {
     console.error('[main] createWindow error', e);
@@ -2865,14 +2872,21 @@ async function checkForUpdates(win) {
       return;
     }
 
-    // Find the portable exe asset
-    const assets  = data.assets || [];
-    const exeAsset = assets.find(a =>
-      /portable.*\.exe$/i.test(a.name) || /\.exe$/i.test(a.name)
-    );
+    // Find the correct asset for the current platform
+    const assets = data.assets || [];
+    let platformAsset;
+    if (process.platform === 'darwin') {
+      platformAsset = assets.find(a => /\.dmg$/i.test(a.name));
+    } else if (process.platform === 'linux') {
+      platformAsset = assets.find(a => /\.AppImage$/i.test(a.name));
+    } else {
+      // Windows — prefer portable build, fall back to any exe
+      platformAsset = assets.find(a => /portable.*\.exe$/i.test(a.name))
+                   || assets.find(a => /\.exe$/i.test(a.name));
+    }
 
-    if (!exeAsset) {
-      console.warn('[updater] No .exe asset found in latest release');
+    if (!platformAsset) {
+      console.warn(`[updater] No asset found for platform "${process.platform}" in release v${latest}`);
       return;
     }
 
@@ -2880,7 +2894,7 @@ async function checkForUpdates(win) {
     win.webContents.send('update-available', {
       currentVersion: current,
       latestVersion:  latest,
-      downloadUrl:    exeAsset.browser_download_url,
+      downloadUrl:    platformAsset.browser_download_url,
       releaseNotes:   data.body || '',
       releaseName:    data.name  || `v${latest}`
     });
@@ -2954,55 +2968,61 @@ ipcMain.handle('download-and-install-update', async (event, downloadUrl) => {
   const fsMod = require('fs');
   const { spawn } = require('child_process');
 
-  const tmpExe = path.join(os.tmpdir(), 'ps5vault-update.exe');
-  const tmpBat = path.join(os.tmpdir(), 'ps5vault-updater.bat');
+  const isWin   = process.platform === 'win32';
+  const isMac   = process.platform === 'darwin';
+  const fileExt = isWin ? '.exe' : isMac ? '.dmg' : '.AppImage';
+  const tmpFile = path.join(os.tmpdir(), `ps5vault-update${fileExt}`);
 
-  // For electron-builder portable builds, process.execPath is the UNPACKED copy
-  // in %LOCALAPPDATA%. PORTABLE_EXECUTABLE_FILE is the original .exe the user ran.
-  // Fall back to process.execPath when running in dev (npm start).
+  // Windows portable: PORTABLE_EXECUTABLE_FILE is the original .exe the user ran.
+  // process.execPath points to the unpacked copy inside %LOCALAPPDATA%.
   const currentExe = process.env.PORTABLE_EXECUTABLE_FILE || process.execPath;
 
   try {
-    // Download with progress
-    await httpsDownloadFile(downloadUrl, tmpExe, (received, total) => {
+    // Download the release asset with progress reporting
+    await httpsDownloadFile(downloadUrl, tmpFile, (received, total) => {
       const pct = Math.round((received / total) * 100);
       event.sender.send('update-download-progress', { pct, received, total });
     });
 
-    // Write the updater batch script:
-    // Waits for the app to exit, overwrites the exe, then relaunches.
-    const bat = [
-      '@echo off',
-      'timeout /t 2 /nobreak >nul',
-      `:retry`,
-      `copy /y "${tmpExe}" "${currentExe}" >nul 2>&1`,
-      `if errorlevel 1 (`,
-      `  timeout /t 1 /nobreak >nul`,
-      `  goto retry`,
-      `)`,
-      `start "" "${currentExe}"`,
-      `del "${tmpExe}"`,
-      `del "%~f0"`,
-    ].join('\r\n');
+    if (isWin) {
+      // Batch script: waits for the app to exit, overwrites the exe, relaunches
+      const tmpBat = path.join(os.tmpdir(), 'ps5vault-updater.bat');
+      const bat = [
+        '@echo off',
+        'timeout /t 2 /nobreak >nul',
+        ':retry',
+        `copy /y "${tmpFile}" "${currentExe}" >nul 2>&1`,
+        'if errorlevel 1 (',
+        '  timeout /t 1 /nobreak >nul',
+        '  goto retry',
+        ')',
+        `start "" "${currentExe}"`,
+        `del "${tmpFile}"`,
+        'del "%~f0"',
+      ].join('\r\n');
+      fsMod.writeFileSync(tmpBat, bat, 'utf8');
+      const child = spawn('cmd.exe', ['/c', tmpBat], {
+        detached: true, stdio: 'ignore', windowsHide: true
+      });
+      child.unref();
 
-    fsMod.writeFileSync(tmpBat, bat, 'utf8');
+    } else if (isMac) {
+      // Open the .dmg so the user can drag-install (can't replace a running app)
+      spawn('open', [tmpFile], { detached: true, stdio: 'ignore' }).unref();
 
-    // Launch the batch script detached so it survives app.quit()
-    const child = spawn('cmd.exe', ['/c', tmpBat], {
-      detached: true,
-      stdio:    'ignore',
-      windowsHide: true
-    });
-    child.unref();
+    } else {
+      // Linux: make AppImage executable and open its folder for the user
+      fsMod.chmodSync(tmpFile, 0o755);
+      spawn('xdg-open', [path.dirname(tmpFile)], { detached: true, stdio: 'ignore' }).unref();
+    }
 
-    // Quit — the batch script takes over
-    setTimeout(() => app.quit(), 500);
+    // Brief delay so the IPC reply can reach the renderer before we quit
+    setTimeout(() => app.quit(), 600);
     return { ok: true };
 
   } catch (e) {
     console.error('[updater] Download/install failed:', e.message);
-    // Clean up temp file if download failed
-    try { require('fs').unlinkSync(tmpExe); } catch (_) {}
+    try { fsMod.unlinkSync(tmpFile); } catch (_) {}
     throw new Error('Update failed: ' + e.message);
   }
 });
@@ -3015,13 +3035,21 @@ ipcMain.handle('check-for-updates-manual', async (event) => {
     if (!data || !data.tag_name) return null;
     const latest = data.tag_name.replace(/^v/i, '');
     if (!isNewerVersion(latest, VERSION)) return { upToDate: true, version: VERSION };
-    const assets  = data.assets || [];
-    const exeAsset = assets.find(a => /portable.*\.exe$/i.test(a.name) || /\.exe$/i.test(a.name));
+    const assets = data.assets || [];
+    let platformAsset;
+    if (process.platform === 'darwin') {
+      platformAsset = assets.find(a => /\.dmg$/i.test(a.name));
+    } else if (process.platform === 'linux') {
+      platformAsset = assets.find(a => /\.AppImage$/i.test(a.name));
+    } else {
+      platformAsset = assets.find(a => /portable.*\.exe$/i.test(a.name))
+                   || assets.find(a => /\.exe$/i.test(a.name));
+    }
     return {
       upToDate:       false,
       currentVersion: VERSION,
       latestVersion:  latest,
-      downloadUrl:    exeAsset?.browser_download_url || null,
+      downloadUrl:    platformAsset?.browser_download_url || null,
       releaseName:    data.name || `v${latest}`,
       releaseNotes:   data.body || ''
     };

@@ -1,31 +1,30 @@
 {
   "name": "ps5-vault",
   "version": "2.1.0",
-  "description": "PS5 game library manager — scan, organise and transfer games via USB or FTP",
+  "description": "PS5 game library manager \u2014 scan, organise and transfer games via USB or FTP",
   "main": "main.js",
   "author": "PS5 Vault",
   "license": "MIT",
   "scripts": {
-    "start":         "electron .",
-    "build":         "electron-builder --win portable",
-    "build:all":     "electron-builder --win --mac --linux",
+    "start": "electron .",
+    "build": "electron-builder --win portable",
+    "build:all": "electron-builder --win --mac --linux",
     "build:portable": "electron-builder --win portable",
     "build:installer": "electron-builder --win nsis"
   },
   "dependencies": {
     "basic-ftp": "^5.0.5",
-    "readdirp":  "^3.6.0"
+    "readdirp": "^3.6.0"
   },
   "devDependencies": {
-    "electron":         "^29.0.0",
+    "electron": "^29.0.0",
     "electron-builder": "^24.13.3"
   },
   "build": {
-    "appId":       "com.ps5vault.app",
+    "appId": "com.ps5vault.app",
     "productName": "PS5 Vault",
-    "copyright":   "Copyright © 2025 PS5 Vault",
-    "asar":        true,
-
+    "copyright": "Copyright \u00a9 2025 PS5 Vault",
+    "asar": true,
     "files": [
       "main.js",
       "preload.js",
@@ -40,42 +39,45 @@
       "!**/*.bak",
       "!**/*.bak2",
       "!**/*.pre_perf",
-      "!**/node_modules/.cache/**"
+      "!**/node_modules/.cache/**",
+      "!scan.js",
+      "!ui-renderers.js"
     ],
-
     "win": {
       "target": [
-        { "target": "portable", "arch": ["x64"] }
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
       ],
       "icon": "assets/icon.ico",
       "artifactName": "${productName}-${version}-portable.exe"
     },
-
     "portable": {
       "requestExecutionLevel": "user",
       "unpackDirName": "ps5vault"
     },
-
     "nsis": {
-      "oneClick":             false,
+      "oneClick": false,
       "allowToChangeInstallationDirectory": true,
-      "installerIcon":        "assets/icon.ico",
-      "uninstallerIcon":      "assets/icon.ico",
-      "artifactName":         "${productName}-${version}-setup.exe"
+      "installerIcon": "assets/icon.ico",
+      "uninstallerIcon": "assets/icon.ico",
+      "artifactName": "${productName}-${version}-setup.exe"
     },
-
     "mac": {
       "target": "dmg",
-      "icon":   "assets/icon.icns",
-      "category": "public.app-category.utilities"
+      "icon": "assets/icon.icns",
+      "category": "public.app-category.utilities",
+      "artifactName": "${productName}-${version}-mac.${ext}"
     },
-
     "linux": {
       "target": "AppImage",
-      "icon":   "assets/icon.png",
-      "category": "Utility"
+      "icon": "assets/icon.png",
+      "category": "Utility",
+      "artifactName": "${productName}-${version}-linux.${ext}"
     },
-
     "directories": {
       "output": "dist",
       "buildResources": "assets"
