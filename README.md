@@ -4,114 +4,135 @@
 
 # PS5 Vault
 
-PS5 Vault is a desktop application for organizing PS5 PPSA game folders safely. It enables scanning, transferring, managing, and customizing your PS5 game library locally or over FTP, with a focus on ease of use and data integrity.
+Organize, transfer, and manage your PS5 game backups — on your PC or straight over FTP to your PS5.
+
+[Download latest release](https://github.com/NookieAI/PS5-Vault/releases) · [Discord](https://discord.gg/nj45kDSBEd) · [Support on Ko-fi](https://ko-fi.com/nookie_65120)
+
+---
+
+## What it does
+
+PS5 Vault scans folders for PS5 game backups (PPSA folders), shows you your full library with cover art, sizes, and metadata, then lets you copy or move games wherever you need them — to a USB drive, a different folder layout, or directly to your PS5 over FTP.
+
+---
+
+## Getting started
+
+1. Download the portable `.exe` from [Releases](https://github.com/NookieAI/PS5-Vault/releases) and run it — no installation needed
+2. Point the **Source** field at the folder containing your games (or enter your PS5's FTP address)
+3. Click **SCAN**
+4. Tick the games you want, choose a destination and layout, click **GO**
+
+Press **F1** at any time to open the built-in help.
+
+---
 
 ## Features
 
-### **Source Scanning & Discovery**
-   - **Local Directory Scanning**: Browse and select local folders (e.g., on your PC) to scan for PS5 game folders (containing `param.json`).
-   - **FTP Scanning**: Connect directly to your PS5 via FTP to scan for games without downloading them first. Supports IP addresses or FTP URLs (e.g., `ftp://192.168.1.100:2121`).
-   - **Automatic Game Detection**: Scans for PPSA folders, extracts metadata like title, content ID, version, size, and cover art from `param.json`.
-   - **Deep Scanning**: Recursively scans subdirectories up to a configurable depth (default: 12 levels) for comprehensive library discovery.
-   - **Progress Feedback**: Real-time scan progress with item count, ETA, and current folder being scanned.
-   - **Deduplication**: Automatically removes duplicate entries based on PPSA key, content ID, and version.
+### Scanning
+- Scan any local folder, USB drive, or network path
+- Connect directly to your PS5 over FTP — no need to copy files to your PC first
+- **Scan All Drives** finds games across every connected drive in one click
+- Results appear in real time as games are found; you don't wait for the whole scan to finish
+- Game sizes, cover art, version, region, and firmware requirement are pulled automatically
+- Filter your results by name or by size (under 1 GB, 1–10 GB, 10–30 GB, over 30 GB)
 
-### **FTP Integration & Remote Operations**
-   - **FTP Connection**: Enter PS5 IP, port (2121 preferred, 1337 alt), path (e.g., `/mnt/ext1/etaHEN/games`), and credentials (anonymous login supported).
-   - **FTP Transfer**: Upload games directly to PS5 (e.g., from PC to PS5) or download from PS5 (from PS5 to PC).
-   - **FTP Management**: Delete, rename, and manage game folders on PS5 over FTP.
-   - **FTP Retry & Error Handling**: Automatic retries (up to 2 attempts) for network failures with user notifications.
-   - **FTP Path Support**: Handles encoded paths (e.g., spaces as `%20`) and POSIX-style paths for cross-platform compatibility.
-   - **Secure FTP Note**: Warns about unencrypted FTP; recommends secure networks.
+### Transfers
+- **Copy** (with hash verification), **Move**, or **Create folder only** (dry run)
+- Choose from seven destination layouts:
 
-### **Transfer & Organization**
-   - **Action Types**: Choose between "Create folder" (dry-run), "Copy" (verified with hash checking), or "Move" (relocate files).
-   - **Destination Layouts**: Organize games in various structures:
-     - Game / PPSA (e.g., `GameName/PPSAName`)
-     - Game only (flattens PPSA into `GameName`)
-     - PPSA only (e.g., `PPSAName`)
-     - etaHEN default (e.g., `etaHEN/games/GameName`)
-     - itemZFlow default (e.g., `games/GameName`)
-     - Dump Runner default (e.g., `homebrew/GameName`)
-     - Custom (prompt for custom folder name, single game only)
-   - **Batch Transfers**: Select multiple games and transfer them all at once.
-   - **Conflict Resolution**: Automatically handle existing files by skipping or renaming (e.g., add `(1)` suffix).
-   - **Progress Tracking**: Live progress bar, file count, speed (MB/s), ETA, current file, and total transferred size.
-   - **Transfer Stats**: Post-transfer summary with moved/copied/uploaded counts, total size, and max speed.
-   - **Resume Transfers**: Save and resume interrupted transfers across sessions.
-   - **Verified Transfers**: Uses hash verification for copies to ensure data integrity.
+  | Layout | Example result |
+  |--------|---------------|
+  | etaHEN default | `dest/etaHEN/games/GameName/` |
+  | itemZFlow default | `dest/games/GameName/` |
+  | Dump Runner default | `dest/homebrew/GameName/` |
+  | Game / PPSA | `dest/GameName/PPSA12345/` |
+  | Game only | `dest/GameName/` |
+  | PPSA only | `dest/PPSA12345/` |
+  | Custom | `dest/YourName/` |
 
-### **Game Management & Editing**
-   - **Select & Deselect**: Checkboxes for individual games; header checkbox for all visible; "Select All" and "Unselect All" buttons.
-   - **Delete Selected**: Permanently delete selected games (local or FTP) with confirmation prompt.
-   - **Rename Selected**: Rename individual games (local or FTP) with sanitization (removes invalid characters).
-   - **Batch Rename**: Rename multiple games at once using patterns (e.g., `{name} - Backup`).
-   - **Show in Folder**: Click folder paths to open the directory in your system's file explorer.
-   - **Refresh Results**: Automatically refresh scan results after operations (e.g., delete or transfer).
+- Transfer directly from PC to PS5 over FTP, or from PS5 back to PC
+- Live progress bar, speed, ETA, and per-file status during transfers
+- **Conflict resolution** — choose to skip, rename, or overwrite when a game already exists at the destination
+- Resume interrupted transfers where they left off
 
-### **Search, Sort, & Filtering**
-   - **Search Games**: Real-time filter by game name using the search bar (case-insensitive).
-   - **Sorting**: Click table headers to sort by Name (default), Size, or Folder path.
-   - **Persistent Results**: Saves last scan results locally and restores on app restart.
+### Game management
+- Delete or rename games (local or on your PS5 over FTP)
+- Batch rename using a pattern like `{name} - Backup`
+- Click any game to see full metadata: content ID, version, SDK version, region, required firmware, folder path
+- Click a folder path to open it in Windows Explorer
 
-### **User Interface & Customization**
-   - **Theme Toggle**: Switch between dark and light themes by clicking "Made by Nookie".
-   - **Image Previews**: Hover over game covers for enlarged previews (with mouse-following).
-   - **Modals**: Clean modal dialogs for confirmations, conflicts, FTP config, renaming, and help.
-   - **Toasts & Notifications**: Brief on-screen messages for actions, errors, and progress (5-second timeout).
-   - **Desktop Notifications**: System tray notifications for transfer completion.
-   - **Keyboard Shortcuts**:
-     - Ctrl+A: Select all visible games
-     - Ctrl+R: Rescan source
-     - F1: Open help
-     - Arrow keys: Navigate table rows
-     - Enter/Escape: Confirm/cancel in modals
+### History and export
+- **Transfer History** (Menu) — persistent log of every copy and move with dates, sizes, and results
+- **Export History CSV** (Menu) — save your history as a spreadsheet
+- **Export / Import JSON** — back up or restore your full scan results and settings
 
-### **Data Management & Persistence**
-   - **Recent Paths**: Stores and autocompletes recent source/destination paths and FTP configs (up to 10 sources, 10 dests, 5 FTP).
-   - **Export/Import**: Export settings and scan results to JSON; import to restore.
-   - **Clear Data**: Logo click to clear all recent paths and fields (with confirmation).
-   - **Local Storage**: Saves last source/destination, scan results, settings, and transfer state.
+### FTP extras
+- **Test Connection** button in the FTP config — confirms your PS5 is reachable and shows latency before you start
+- Speed limit option — cap upload speed so your PS5 stays usable while a transfer runs
+- Passive mode toggle for networks with strict firewalls
+- Recent FTP connections saved and autocompleted
 
-### **Help & Support**
-   - **Built-in Help**: Comprehensive help modal with setup guides, layout examples, FTP tips, and troubleshooting.
-   - **External Links**: Quick access to GitHub, Ko-fi (support), and Discord.
-   - **Version Display**: Shows current app version (e.g., v1.1.0) in the UI.
+### Developer API
+PS5 Vault runs a local REST API so other apps on your PC can read your library or trigger scans and transfers programmatically.
 
-### **Advanced & Technical Features**
-   - **File Size Calculation**: Estimates total size for transfers (skipped for FTP to improve speed).
-   - **Path Sanitization**: Automatically cleans folder names (removes special characters, limits length).
-   - **Cancel Operations**: Cancel scans or transfers at any time with progress saving.
-   - **Error Logging**: Console logs for debugging (e.g., FTP errors, transfer failures).
-   - **Cross-Platform**: Works on Windows (primary), with path handling for POSIX (FTP).
-   - **Performance Optimizations**: Concurrency limits (24 threads), caching for FTP sizes, lazy loading for images.
+Find your API key and the full endpoint reference under **Menu → ⚙ Developer API**.
 
-### **Safety & Validation**
-   - **Path Validation**: Checks for absolute paths, prevents self-overlaps (e.g., moving to subfolder).
-   - **Confirmation Prompts**: Warnings for destructive actions (delete, clear data).
-   - **Hash Verification**: Ensures copied files match originals.
-   - **Network Safety**: Timeout handling for FTP (15s), retry logic.
+```
+Base URL:  http://127.0.0.1:3731/api/v1
+Auth:      X-API-Key: <your key>
 
-## Installation
+GET  /library              — your full game list
+GET  /library/:ppsa        — single game by ID
+GET  /library/:ppsa/icon   — cover art (PNG)
+POST /scan                 — trigger a scan
+GET  /scan/status          — scan progress
+POST /transfer             — trigger a transfer
+GET  /transfer/status      — transfer progress
+GET  /events               — live SSE stream
+GET  /status               — app status
+```
 
-1. Download the latest release from [GitHub](https://github.com/nookie/ps5vault).
-2. Run the portable executable for Windows.
-3. Launch PS5 Vault.
+The server only listens on `127.0.0.1` — it is not reachable from other devices on your network.
 
-## Usage
+### Other
+- Dark and light theme (click **Made by Nookie** to toggle)
+- Hover over any cover art for a large preview
+- Keyboard shortcuts: **Ctrl+A** select all · **Ctrl+R** rescan · **F1** help · **Esc** close modal
+- Auto-update check on launch with one-click install
 
-1. **Scan Source**: Enter a local path or FTP URL in the Source field and click SCAN.
-2. **Select Games**: Use checkboxes to select games from the results table.
-3. **Configure Transfer**: Choose Action (Move/Copy), Layout, and Destination.
-4. **Transfer**: Click GO to start the operation.
-5. **Monitor Progress**: Watch real-time progress, ETA, and stats in the modal.
+---
 
-For detailed guides, press F1 for built-in help.
+## Building from source
 
-## Support & Links
+Requires Node.js 18+ and npm.
 
-- [GitHub Repository](https://github.com/NookieAI/PS5-Vault)
-- [Support on Ko-fi](https://ko-fi.com/nookie_65120)
-- [Join Discord](https://discord.gg/nj45kDSBEd)
+```bash
+git clone https://github.com/NookieAI/PS5-Vault.git
+cd PS5-Vault
+npm install
 
-Made with ❤️ by Nookie. Version 1.1.0.
+# Run in development
+npm start
+
+# Build portable .exe
+npm run build
+
+# Build installer
+npm run build:installer
+
+# Build all platforms
+npm run build:all
+```
+
+---
+
+## Support
+
+- **Discord** — [discord.gg/nj45kDSBEd](https://discord.gg/nj45kDSBEd) — fastest way to get help
+- **Issues** — [GitHub Issues](https://github.com/NookieAI/PS5-Vault/issues)
+- **Ko-fi** — [ko-fi.com/nookie_65120](https://ko-fi.com/nookie_65120)
+
+---
+
+Made with ❤️ by Nookie · v2.2.0

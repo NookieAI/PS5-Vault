@@ -82,6 +82,8 @@
     const bufferInput     = document.getElementById('ftpBufferSize');
     const parallelInput   = document.getElementById('ftpParallel');
     const speedLimitInput = document.getElementById('ftpSpeedLimit');
+    const testBtn         = document.getElementById('ftpTestBtn');
+    const testResult      = document.getElementById('ftpTestResult');
     const proceedBtn = document.getElementById('ftpProceed');
     const cancelBtn  = document.getElementById('ftpCancel');
 
@@ -143,6 +145,34 @@
         cancelBtn.removeEventListener('click', onCancel);
         backdrop.removeEventListener('click', onBackdropClick);
         document.removeEventListener('keydown', onKeydown);
+        if (testBtn) testBtn.removeEventListener('click', onTest);
+      };
+
+      // ── Test connection ──────────────────────────────────────────────────
+      const onTest = async () => {
+        const host = hostInput.value.trim();
+        const port = portInput.value.trim() || '1337';
+        const user = userInput.value.trim() || 'anonymous';
+        const pass = passInput.value.trim() || '';
+        if (!host) { toast('Enter a host address first'); return; }
+        if (testBtn)   { testBtn.disabled = true; testBtn.textContent = 'Testing…'; }
+        if (testResult) { testResult.style.display = 'block'; testResult.textContent = 'Connecting…'; testResult.className = 'ftp-test-result'; }
+        try {
+          const res = await window.ppsaApi.ftpTestConnection({ host, port, user, pass });
+          if (testResult) {
+            if (res.ok) {
+              testResult.textContent = `✓ Connected in ${res.latencyMs}ms — ${res.listing} items at root`;
+              testResult.classList.add('ftp-test-ok');
+            } else {
+              testResult.textContent = `✗ Failed: ${res.error || 'Unknown error'}`;
+              testResult.classList.add('ftp-test-err');
+            }
+          }
+        } catch (e) {
+          if (testResult) { testResult.textContent = `✗ ${e.message}`; testResult.classList.add('ftp-test-err'); }
+        } finally {
+          if (testBtn) { testBtn.disabled = false; testBtn.textContent = 'Test'; }
+        }
       };
 
       const onProceed = () => {
@@ -195,6 +225,7 @@
       cancelBtn.addEventListener('click', onCancel);
       backdrop.addEventListener('click', onBackdropClick);
       document.addEventListener('keydown', onKeydown);
+      if (testBtn) testBtn.addEventListener('click', onTest);
     });
   }
 

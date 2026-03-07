@@ -159,15 +159,18 @@
   }
 
   function setResultModalBusy(busy) {
-    const modal = document.querySelector('.result-modal-wide');
-    const closeBtn = $('resultClose');
+    const modal      = document.querySelector('.result-modal-wide');
+    const closeX     = $('resultClose');
+    const closeRow   = $('resultModalActions');
     if (!modal) return;
     if (busy) {
       modal.classList.add('busy');
-      if (closeBtn) closeBtn.style.display = 'none';
+      if (closeX)   closeX.style.display   = 'none';
+      if (closeRow) closeRow.style.display = 'none';
     } else {
       modal.classList.remove('busy');
-      if (closeBtn) closeBtn.style.display = 'block';
+      if (closeX)   closeX.style.display   = 'block';
+      if (closeRow) closeRow.style.display = 'flex';
     }
   }
 
@@ -788,13 +791,22 @@
     const tbody = $('resultsBody');
     if (!tbody || !window.__ps5_lastRenderedItems) return;
     const rows = Array.from(tbody.querySelectorAll('tr'));
-    const filter = searchFilter.toLowerCase();
+    const filter     = searchFilter.toLowerCase();
+    const sizeFilter = ($('sizeFilter') && $('sizeFilter').value) || '';
     rows.forEach((tr, idx) => {
       const item = window.__ps5_lastRenderedItems[idx];
       if (!item) return;
       const name = (item.displayTitle || item.folderName || '').toLowerCase();
-      const visible = !filter || name.includes(filter);
-      tr.style.display = visible ? '' : 'none';
+      const nameOk = !filter || name.includes(filter);
+      let sizeOk = true;
+      if (sizeFilter && item.totalSize > 0) {
+        const gb = item.totalSize / (1024 ** 3);
+        if      (sizeFilter === 'xs')  sizeOk = gb < 1;
+        else if (sizeFilter === 'sm')  sizeOk = gb >= 1  && gb < 10;
+        else if (sizeFilter === 'md')  sizeOk = gb >= 10 && gb < 30;
+        else if (sizeFilter === 'lg')  sizeOk = gb >= 30;
+      }
+      tr.style.display = (nameOk && sizeOk) ? '' : 'none';
     });
     updateHeaderCheckboxState();
   }
@@ -1932,6 +1944,89 @@
     backdrop.setAttribute('aria-hidden', 'false');
   }
 
+  // ── Developer API settings modal ──────────────────────────────────────────────
+  async function openApiSettingsModal() {
+    const backdrop  = $('apiSettingsBackdrop');
+    if (!backdrop) return;
+
+    // Fetch live status from main process
+    let status = { port: 3731, keyPreview: '…' };
+    try {
+      if (window.ppsaApi && window.ppsaApi.getApiStatus) {
+        status = await window.ppsaApi.getApiStatus();
+      }
+    } catch (_) {}
+
+    const portEl     = $('apiSettingsPort');
+    const keyPreview = $('apiSettingsKeyPreview');
+    const copyBtn    = $('apiSettingsCopy');
+    const regenBtn   = $('apiSettingsRegen');
+    const closeBtn   = $('apiSettingsClose');
+
+    if (portEl)     portEl.textContent     = String(status.port || 3731);
+    if (keyPreview) keyPreview.textContent = status.keyPreview || '—';
+
+    const close = () => {
+      backdrop.style.display = 'none';
+      backdrop.setAttribute('aria-hidden', 'true');
+    };
+
+    if (copyBtn) {
+      copyBtn.onclick = async () => {
+        try {
+          const res = await window.ppsaApi.getApiKey();
+          if (res && res.key) {
+            await window.ppsaApi.copyToClipboard(res.key);
+            toast('API key copied to clipboard');
+          }
+        } catch (e) { toast('Copy failed: ' + e.message); }
+      };
+    }
+
+    if (regenBtn) {
+      regenBtn.onclick = async () => {
+        if (!confirm('Regenerate the API key?\n\nAll apps using the current key will stop working until updated.')) return;
+        try {
+          const res = await window.ppsaApi.regenerateApiKey();
+          if (keyPreview) keyPreview.textContent = res.keyPreview || '—';
+          toast('New API key generated — copy it now');
+        } catch (e) { toast('Regen failed: ' + e.message); }
+      };
+    }
+
+    if (closeBtn) closeBtn.onclick = close;
+    const doneBtn = $('apiSettingsDone');
+    if (doneBtn)  doneBtn.onclick  = close;
+    backdrop.onclick = (e) => { if (e.target === backdrop) close(); };
+    backdrop.style.display = 'flex';
+    backdrop.setAttribute('aria-hidden', 'false');
+  }
+
+  // ── Export transfer history as CSV ────────────────────────────────────────────
+  function exportHistoryCsv() {
+    const history = getTransferHistory();
+    if (!history.length) { toast('No transfer history to export'); return; }
+    const header = ['Date', 'Action', 'Source', 'Destination', 'Games', 'SizeBytes', 'DurationMs'];
+    const rows   = history.map(h => [
+      h.date || '',
+      h.action || '',
+      (h.source || '').replace(/"/g, '""'),
+      (h.dest   || '').replace(/"/g, '""'),
+      h.items   || 0,
+      h.totalBytes || 0,
+      h.durationMs || 0,
+    ].map(v => `"${v}"`).join(','));
+    const csv  = [header.join(','), ...rows].join('\r\n');
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
+    a.href     = url;
+    a.download = 'ps5vault-history.csv';
+    a.click();
+    URL.revokeObjectURL(url);
+    toast('Transfer history exported as CSV');
+  }
+
   document.addEventListener('DOMContentLoaded', () => {
     try {
       // Ensure inputs are always editable
@@ -2419,6 +2514,17 @@
         });
       }
 
+      // Bottom Close button — same behaviour as the ✕
+      const resultCloseBtn = $('resultCloseBtn');
+      if (resultCloseBtn) {
+        resultCloseBtn.addEventListener('click', () => {
+          const src = $('sourcePath').value.trim();
+          if (src) refreshResultsAfterOperation();
+          const rb = $('resultModalBackdrop');
+          if (rb) { rb.style.display = 'none'; rb.setAttribute('aria-hidden', 'true'); }
+        });
+      }
+
       const thName = document.querySelector('th.game');
       const thSize = document.querySelector('th.size');
       const thFolder = document.querySelector('th.folder');
@@ -2432,6 +2538,11 @@
           searchFilter = e.target.value;
           applySearchFilter();
         });
+      }
+
+      const sizeFilter = $('sizeFilter');
+      if (sizeFilter) {
+        sizeFilter.addEventListener('change', () => applySearchFilter());
       }
 
       setupDragDrop();
@@ -2509,6 +2620,10 @@
             } catch (err) {
               toast('Error clearing cache: ' + err.message);
             }
+          } else if (value === 'apiSettings') {
+            openApiSettingsModal();
+          } else if (value === 'exportCsv') {
+            exportHistoryCsv();
           }
           e.target.value = '';
         });
