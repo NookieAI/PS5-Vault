@@ -679,6 +679,7 @@
       display: flex;
       flex-direction: column;
       gap: 4px;
+      padding-right: 38px; /* reserve space for absolute-positioned ✕ button */
     }
 
     .modal-header .result-summary-title {
@@ -916,6 +917,11 @@
     .result-badge--skip { background: rgba(156,163,175,0.1); color: var(--muted); }
     .result-badge--err  { background: rgba(239,68,68,0.12);  color: #f87171; }
 
+    /* FTP test connection result */
+    .ftp-test-result     { background: rgba(255,255,255,0.05); color: var(--muted); border: 1px solid var(--card-border); }
+    .ftp-test-result.ftp-test-ok  { background: rgba(34,197,94,0.1);  color: #4ade80; border-color: rgba(34,197,94,0.25); }
+    .ftp-test-result.ftp-test-err { background: rgba(239,68,68,0.1);  color: #f87171; border-color: rgba(239,68,68,0.25); }
+
     /* ── Final summary badges ── */
     .summary-badge {
       display: inline-flex;
@@ -1005,8 +1011,9 @@
         <div id="madeBy" class="made-by" title="Click to toggle theme">Made by Nookie</div>
         <select id="topMenu" class="btn" style="margin-right:8px;">
           <option value="">Menu</option>
-          <option value="export">Export</option>
-          <option value="import">Import</option>
+          <option value="export">Export JSON</option>
+          <option value="import">Import JSON</option>
+          <option value="exportCsv">Export History CSV</option>
           <option value="help">Help</option>
           <option value="selectAll">Select All</option>
           <option value="unselectAll">Unselect All</option>
@@ -1015,6 +1022,7 @@
           <option value="checkForUpdates">Check for Updates</option>
           <option value="history">Transfer History</option>
           <option value="clearHistory">Clear History</option>
+          <option value="apiSettings">⚙ Developer API</option>
         </select>
         <a id="discordLink" class="discord-link" href="https://discord.gg/nj45kDSBEd" target="_blank" rel="noopener" title="Join Discord">💬 Discord</a>
       </div>
@@ -1092,6 +1100,13 @@
           <div style="display:flex;align-items:center;gap:12px;flex:1;justify-content:center;">
             <label for="searchInput" style="color:var(--muted);font-size:12px;">Search Games:</label>
             <input id="searchInput" class="search-input" type="text" placeholder="Filter by game name..." />
+            <select id="sizeFilter" class="btn" title="Filter by size" style="padding:4px 8px;font-size:12px;min-width:100px;">
+              <option value="">All sizes</option>
+              <option value="xs">&lt; 1 GB</option>
+              <option value="sm">1 – 10 GB</option>
+              <option value="md">10 – 30 GB</option>
+              <option value="lg">&gt; 30 GB</option>
+            </select>
           </div>
           <div class="batch-actions" style="display:flex;gap:8px;flex:1;justify-content:flex-end;flex-wrap:wrap;align-items:center;">
             <button type="button" id="btnRenameSelected" class="btn" style="min-width:120px; opacity:0.6;" title="Rename selected games">Rename Selected</button>
@@ -1198,9 +1213,10 @@
         <div id="resultList"></div>
       </div>
 
-      <!-- Hidden compat IDs -->
-      <div id="resultProgress" style="display:none;"></div>
-      <div id="resultCount" style="display:none;"></div>
+      <!-- Close row — shown only after transfer complete -->
+      <div id="resultModalActions" class="modal-actions" style="display:none;">
+        <button type="button" id="resultCloseBtn" class="btn-go">Close</button>
+      </div>
     </div>
   </div>
 
@@ -1242,33 +1258,6 @@
     </div>
   </div>
 
-  <!-- Help modal — content injected by help.js -->
-  <div id="helpModalBackdrop" class="modal-backdrop" aria-hidden="true">
-    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="helpTitle" style="max-width:780px;">
-      <div class="modal-header" style="padding-bottom:8px;">
-        <h4 id="helpTitle" style="margin:0;font-size:14px;font-weight:600;">PS5 Vault Help</h4>
-        <button type="button" id="helpCloseX" class="close-btn" title="Close">✕</button>
-      </div>
-      <div class="modal-body" id="helpModalBody" style="max-height:70vh;overflow-y:auto;"></div>
-      <div class="modal-actions">
-        <button type="button" id="helpClose" class="btn">Close</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- Custom name modal -->
-  <div id="customModalBackdrop" class="modal-backdrop" aria-hidden="true">
-    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="customTitle">
-      <div class="modal-header"><h4 id="customTitle">Enter Custom Folder Name</h4></div>
-      <div class="modal-body">
-        <input id="customNameInput" type="text" placeholder="Custom folder name" style="width:100%;padding:8px;border:1px solid var(--card-border);background:var(--select-bg);color:var(--title);border-radius:4px;" />
-      </div>
-      <div class="modal-actions">
-        <button type="button" id="customCancel" class="btn">Cancel</button>
-        <button type="button" id="customProceed" class="btn-go">OK</button>
-      </div>
-    </div>
-  </div>
 
   <!-- Rename modal -->
   <div id="renameModalBackdrop" class="modal-backdrop" aria-hidden="true">
@@ -1364,9 +1353,12 @@
         <div style="margin-top:8px;font-size:11px;color:var(--muted);">
           <strong>Security Note:</strong> Passwords are stored locally in plaintext. Avoid storing sensitive info or clear via logo click.
         </div>
+        <!-- Test result area -->
+        <div id="ftpTestResult" class="ftp-test-result" style="display:none;margin-top:8px;padding:6px 10px;border-radius:5px;font-size:12px;font-weight:600;"></div>
       </div>
       <div class="modal-actions">
         <button type="button" id="ftpCancel" class="btn">Cancel</button>
+        <button type="button" id="ftpTestBtn" class="btn" title="Test FTP connection">Test</button>
         <button type="button" id="ftpProceed" class="btn-go">Connect</button>
       </div>
     </div>
@@ -1393,12 +1385,7 @@
   <datalist id="sourceHistory"></datalist>
   <datalist id="destHistory"></datalist>
 
-  <script src="utils.js"></script>
-  <script src="help.js"></script>
-  <script src="ftp.js"></script>
-  <script src="renderer.js"></script>
-  <script src="datalist-init.js"></script>
-  <!-- Game Detail Modal -->
+<!-- Game Detail Modal -->
   <div id="gameDetailBackdrop" class="modal-backdrop" aria-hidden="true">
     <div class="modal" role="dialog" aria-modal="true" style="max-width:560px;">
       <div class="modal-header" style="padding-bottom:8px;">
@@ -1426,6 +1413,69 @@
       </div>
     </div>
   </div>
+
+  <!-- ── Developer API Settings Modal ──────────────────────────────────────── -->
+  <div id="apiSettingsBackdrop" class="modal-backdrop" aria-hidden="true">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="apiSettingsTitle" style="max-width:520px;">
+      <div class="modal-header">
+        <h4 id="apiSettingsTitle" style="margin:0;">Developer API</h4>
+        <button type="button" id="apiSettingsClose" class="close-btn" title="Close">✕</button>
+      </div>
+      <div class="modal-body" style="padding:16px 0 4px;">
+
+        <!-- Status strip -->
+        <div style="display:flex;gap:10px;align-items:center;margin-bottom:18px;padding:10px 14px;background:rgba(99,202,131,0.08);border:1px solid rgba(99,202,131,0.2);border-radius:7px;">
+          <span style="font-size:18px;">🟢</span>
+          <div>
+            <div style="font-size:12.5px;font-weight:700;color:var(--title);">API server running</div>
+            <div style="font-size:11.5px;color:var(--muted);margin-top:2px;">
+              Base URL: <code style="background:rgba(255,255,255,0.07);padding:1px 5px;border-radius:3px;font-size:11px;">http://127.0.0.1:<span id="apiSettingsPort">3731</span>/api/v1</code>
+            </div>
+          </div>
+        </div>
+
+        <!-- API Key -->
+        <div style="margin-bottom:14px;">
+          <div style="color:var(--muted);font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px;">API Key (X-API-Key header)</div>
+          <div style="display:flex;align-items:center;gap:8px;">
+            <code id="apiSettingsKeyPreview" style="flex:1;background:rgba(255,255,255,0.06);border:1px solid var(--card-border);border-radius:5px;padding:7px 10px;font-size:13px;color:var(--title);letter-spacing:.04em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">—</code>
+            <button type="button" id="apiSettingsCopy" class="btn" style="flex:0 0 auto;" title="Copy full API key">Copy</button>
+            <button type="button" id="apiSettingsRegen" class="btn" style="flex:0 0 auto;color:#f87171;border-color:rgba(248,113,113,0.3);" title="Generate a new API key">Regen</button>
+          </div>
+        </div>
+
+        <!-- Endpoints quick-ref -->
+        <div style="margin-bottom:8px;">
+          <div style="color:var(--muted);font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px;">Endpoints</div>
+          <div style="background:rgba(255,255,255,0.03);border:1px solid var(--card-border);border-radius:6px;padding:10px 12px;font-size:11.5px;line-height:2;">
+            <div><span style="color:#63cab3;font-weight:700;">GET</span>  <code>/api/v1/library</code> — list all scanned games</div>
+            <div><span style="color:#63cab3;font-weight:700;">GET</span>  <code>/api/v1/library/:ppsa</code> — single game by PPSA ID</div>
+            <div><span style="color:#63cab3;font-weight:700;">GET</span>  <code>/api/v1/library/:ppsa/icon</code> — game cover art (PNG)</div>
+            <div><span style="color:#f4a261;font-weight:700;">POST</span> <code>/api/v1/scan</code> — trigger scan <code>{"source":"C:\\Games"}</code></div>
+            <div><span style="color:#63cab3;font-weight:700;">GET</span>  <code>/api/v1/scan/status</code> — current scan state</div>
+            <div><span style="color:#f4a261;font-weight:700;">POST</span> <code>/api/v1/transfer</code> — trigger transfer</div>
+            <div><span style="color:#63cab3;font-weight:700;">GET</span>  <code>/api/v1/transfer/status</code> — current transfer state</div>
+            <div><span style="color:#63cab3;font-weight:700;">GET</span>  <code>/api/v1/events</code> — live SSE stream</div>
+            <div><span style="color:#63cab3;font-weight:700;">GET</span>  <code>/api/v1/status</code> — app status + library count</div>
+          </div>
+        </div>
+
+        <div style="font-size:11px;color:var(--muted);margin-top:10px;line-height:1.6;">
+          All requests must include the <code>X-API-Key</code> header. The server only listens on <code>127.0.0.1</code> — not accessible from other machines.
+          Subscribe to <code>/events</code> for real-time scan and transfer updates via Server-Sent Events (SSE).
+        </div>
+      </div>
+      <div class="modal-actions">
+        <button type="button" id="apiSettingsDone" class="btn-go">Done</button>
+      </div>
+    </div>
+  </div>
+
+<script src="utils.js"></script>
+  <script src="help.js"></script>
+  <script src="ftp.js"></script>
+  <script src="renderer.js"></script>
+  <script src="datalist-init.js"></script>
 
 </body>
 </html>

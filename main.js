@@ -23,7 +23,17 @@ const MAX_FILE_SIZE_BYTES = 200 * 1024 * 1024 * 1024; // 200GB limit for sanity
 const RETRY_ATTEMPTS = 3;
 const RETRY_DELAY_MS = 100;
 
-const VERSION = require('./package.json').version;
+const VERSION   = require('./package.json').version;
+const apiServer = require('./api-server');
+
+// ── API server state ──────────────────────────────────────────────────────────
+// Keeps the last scanned library available to the REST API without re-scanning.
+let apiLibrary        = [];
+let apiScanActive     = false;
+let apiScanSource     = '';
+let apiScanProgress   = { found: 0, sized: 0, total: 0 };
+let apiTransferActive = false;
+let apiTransferProg   = {};
 
 // ── Core helpers ─────────────────────────────────────────────────────────────
 function sanitize(name) {
@@ -2141,6 +2151,9 @@ ipcMain.handle('scan-source', async (event, sourceDir, opts = {}) => {
         setTimeout(() => startLocalSizingPhase(allItems, event.sender), 300);
       }
 
+      // Keep API library in sync
+      apiLibrary = allItems;
+
       // ── CRITICAL: clean up activeCancelFlags after Phase 2 completes ──────
       // Leaving the composite controller registered means a Cancel click queued
       // during the FTP scan (or any stale IPC message) can arrive just as the
@@ -2164,6 +2177,7 @@ ipcMain.handle('scan-source', async (event, sourceDir, opts = {}) => {
       } finally {
         activeCancelFlags.delete(event.sender.id);
       }
+      if (Array.isArray(items)) apiLibrary = items;
       return items || [];
     } else if (/^\d+\.\d+\.\d+\.\d+(:\d+)?$/.test(sourceDir)) {
       activeCancelFlags.set(event.sender.id, () => { /* FTP: no abort, runs to completion */ });
@@ -2181,6 +2195,7 @@ ipcMain.handle('scan-source', async (event, sourceDir, opts = {}) => {
       // Phase 1+2 only — all game-found events stream to renderer; sizing starts
       // 300ms later so renderResults builds the complete sorted table first.
       const items = await findContentFoldersByTopLevelWithProgress(sourceDir, event.sender);
+      if (Array.isArray(items)) apiLibrary = items;
       if (items?.length) setTimeout(() => startLocalSizingPhase(items, event.sender), 300);
       return items || [];
     }
@@ -2772,6 +2787,54 @@ ipcMain.handle('resume-transfer', async (event, state) => {
   return await doEnsureAndPopulate(event, state);
 });
 
+// ── Developer API management IPC ─────────────────────────────────────────────
+ipcMain.handle('get-api-status', async () => {
+  return {
+    port:       apiServer.getPort(),
+    keyPreview: (() => {
+      const k = apiServer.getKey() || '';
+      return k.length >= 12 ? k.slice(0, 8) + '…' + k.slice(-4) : k;
+    })(),
+  };
+});
+
+ipcMain.handle('get-api-key', async () => {
+  return { key: apiServer.getKey() };
+});
+
+ipcMain.handle('regenerate-api-key', async () => {
+  const newKey = apiServer.regenerateKey();
+  return {
+    key:        newKey,
+    keyPreview: newKey ? newKey.slice(0, 8) + '…' + newKey.slice(-4) : '',
+  };
+});
+
+// ── FTP test connection ───────────────────────────────────────────────────────
+ipcMain.handle('ftp-test-connection', async (_event, config) => {
+  const start = Date.now();
+  const client = new ftp.Client(8000); // 8s timeout
+  client.ftp.verbose = false;
+  try {
+    await client.access({
+      host:     config.host,
+      port:     parseInt(config.port, 10) || 1337,
+      user:     config.user     || 'anonymous',
+      password: config.pass     || '',
+      secure:   false,
+    });
+    const latencyMs = Date.now() - start;
+    // Try to list root to confirm read access
+    let listing = 0;
+    try { const list = await client.list('/'); listing = list.length; } catch (_) {}
+    return { ok: true, latencyMs, listing };
+  } catch (e) {
+    return { ok: false, latencyMs: Date.now() - start, error: e.message };
+  } finally {
+    try { client.close(); } catch (_) {}
+  }
+});
+
 // App bootstrap (unchanged)
 let mainWindow;
 const gotTheLock = app.requestSingleInstanceLock();
@@ -2788,6 +2851,103 @@ if (!gotTheLock) {
   loadFtpSizeCacheFromDisk(); loadLocalSizeCacheFromDisk(); createWindow();
   // Silently check for updates 5 s after launch — delay avoids blocking startup I/O
   setTimeout(() => { if (mainWindow) checkForUpdates(mainWindow); }, 5000);
+
+  // ── Start local developer API server ──────────────────────────────────────
+  // Creates http://127.0.0.1:3731/api/v1 with API key auth.
+  // The API key is auto-generated on first run and saved to userData.
+  try {
+    const apiKeyPath = path.join(app.getPath('userData'), 'ps5vault-api-key.json');
+
+    // Fake sender used when API-triggered scans need IPC-like progress events
+    const apiSender = {
+      id:          -9999,
+      isDestroyed: () => false,
+      send:        (channel, data) => {
+        if (channel === 'scan-progress') {
+          apiServer.broadcast('scan-progress', data);
+          // Mirror library updates back into apiLibrary
+          if (data && data.type === 'game-found' && data.item) {
+            if (!apiLibrary.some(g =>
+              (g.folderPath || g.ppsaFolderPath) === (data.item.folderPath || data.item.ppsaFolderPath)
+            )) {
+              apiLibrary.push(data.item);
+              apiScanProgress.found = apiLibrary.length;
+            }
+          }
+          if (data && data.type === 'size-update') {
+            const g = apiLibrary.find(x =>
+              (x.folderPath === data.folderPath || x.ppsaFolderPath === data.folderPath) ||
+              (data.contentId && x.contentId === data.contentId)
+            );
+            if (g) g.totalSize = data.totalSize;
+            apiScanProgress.sized = (apiScanProgress.sized || 0) + 1;
+            apiServer.broadcast('size-update', data);
+          }
+        }
+      },
+    };
+
+    apiServer.start({
+      keyPath: apiKeyPath,
+      state: {
+        getVersion:      () => VERSION,
+        getLibrary:      () => apiLibrary,
+        getScanStatus:   () => ({ active: apiScanActive, source: apiScanSource, progress: { ...apiScanProgress } }),
+        getTransferStatus: () => ({ active: apiTransferActive, progress: { ...apiTransferProg } }),
+        triggerScan: async (source) => {
+          if (apiScanActive) throw new Error('Scan already running');
+          apiScanActive   = true;
+          apiScanSource   = source;
+          apiLibrary      = [];
+          apiScanProgress = { found: 0, sized: 0, total: 0 };
+          apiServer.broadcast('scan-start', { source });
+          try {
+            let items;
+            if (source.startsWith('ftp://') || /^\d+\.\d+\.\d+\.\d+/.test(source)) {
+              const ftpSrc = source.startsWith('ftp://') ? source : 'ftp://' + source;
+              items = await scanFtpSource(ftpSrc, { sender: apiSender, calcSize: true });
+              apiLibrary = Array.isArray(items) ? items : [];
+            } else {
+              items = await findContentFoldersByTopLevelWithProgress(source === 'all-drives' ? 'C:\\' : source, apiSender);
+              apiLibrary = Array.isArray(items) ? items : [];
+            }
+            apiServer.broadcast('scan-complete', { count: apiLibrary.length });
+            return apiLibrary;
+          } finally {
+            apiScanActive = false;
+          }
+        },
+        triggerTransfer: async (opts) => {
+          if (apiTransferActive) throw new Error('Transfer already running');
+          apiTransferActive = true;
+          apiTransferProg   = {};
+          apiServer.broadcast('transfer-start', { itemCount: opts.items?.length || 0 });
+          // Create a minimal fake event for doEnsureAndPopulate
+          const fakeSender = {
+            id:          -9998,
+            isDestroyed: () => false,
+            send:        (channel, data) => {
+              if (channel === 'scan-progress') {
+                apiServer.broadcast('transfer-progress', data);
+                apiTransferProg = data;
+              }
+            },
+          };
+          const fakeEvent = { sender: fakeSender };
+          try {
+            const result = await doEnsureAndPopulate(fakeEvent, opts);
+            apiServer.broadcast('transfer-complete', { success: true });
+            return result;
+          } finally {
+            apiTransferActive = false;
+            apiTransferProg   = {};
+          }
+        },
+      },
+    });
+  } catch (e) {
+    console.error('[API] Failed to start API server:', e.message);
+  }
   });
 }
 app.on('window-all-closed', () => { app.quit(); });

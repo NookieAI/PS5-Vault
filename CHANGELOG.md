@@ -2,66 +2,82 @@
 
 ---
 
+## Version 2.2.0
+
+### Developer API
+PS5 Vault now runs a small local API server in the background, so other apps on your PC can read your game library and trigger scans or transfers automatically.
+
+If you have a friend building a portfolio site, a dashboard, or any tool that should show your PS5 games — give them your API key from **Menu → ⚙ Developer API** and they're good to go.
+
+- **Read your library** — any app can pull the full list of your scanned games, including cover art
+- **Trigger scans** — kick off a scan without touching the PS5 Vault window
+- **Monitor transfers** — subscribe to a live event stream that fires as files move
+- **Secure by default** — only works on your own PC (not reachable from outside), protected by an API key you control
+- Find the key, the base URL, and the full endpoint reference in **Menu → ⚙ Developer API**
+
+### FTP improvements
+- **Test Connection button** in the FTP config window — click it to check if PS5 Vault can reach your PS5 before starting a scan or transfer. Shows connection time and confirms read access.
+
+### Library filtering
+- **Filter by size** — new dropdown next to the search bar lets you narrow results to games under 1 GB, 1–10 GB, 10–30 GB, or over 30 GB
+
+### Export
+- **Export History CSV** in the Menu — saves your full transfer history as a spreadsheet you can open in Excel or Google Sheets
+
+### UI fixes
+- Every modal now has a proper **Close / Done button** at the bottom — no more hunting for the tiny ✕ in the corner after a transfer finishes
+- The **Developer API modal** has a clean endpoint reference, Copy and Regen buttons for your key, and a Done button that actually works
+- Fixed the **Help modal** — both the ✕ and the Close button were silently broken; both now work correctly
+- Fixed the **FTP Test button** — it was present but not connected to anything; it now runs a live connection check
+- Modal headers no longer overlap the close button on narrow text
+
+---
+
 ## Version 2.1.0
 
-### New features
+### Transfer speed throttle
+A speed limit field in the FTP settings lets you cap how fast the app uploads. Useful if you want to keep using your PS5 while a transfer runs in the background.
 
-**Transfer speed throttle**
-A slider in the FTP settings lets you cap how fast the app uploads files. Useful if you want to keep playing on your PS5 while a transfer runs in the background — just dial it back so the network doesn't get swamped.
+### Backup integrity checker
+A new "Check Integrity" mode verifies every file at the destination against the source — no copying, just checking. Answers: is my backup actually complete?
 
-**Backup integrity checker**
-A new "Check Integrity" mode scans a destination folder and verifies every file against the source using a hash check — without copying or moving anything. Answers the question: "Is my backup actually complete and uncorrupted?"
+### Free space warning
+Before a transfer starts, the app shows how much space is free at the destination and warns you if there isn't enough room. No more transfers failing halfway through a 50 GB game.
 
-**Free space warning**
-Before a transfer starts, the app now shows how much space is free at the destination and flags if there isn't enough room for the games you've selected. No more transfers failing halfway through because the drive was full.
+### Library comparison
+Point the app at two locations and it shows exactly what's different — what's missing from one side, what exists on both, what has a different version. Great for keeping a USB drive in sync with your main library.
 
-**Library comparison (diff)**
-Point the app at two locations — for example your PS5 and a USB drive — and it will show you exactly what's different: what's missing from one side, what exists on both, and what has a different version. Makes it easy to keep your drives in sync.
+### Game details panel
+Click any game in the list to see full metadata: title, version, content ID, region, required firmware, folder path, and size.
 
-**Game details panel**
-Click any game in the list to see its full details: title, version, content ID, region, required firmware, and more. No need to dig through folders in a file manager.
-
-**Send to multiple destinations at once**
-Select games and copy them to two places simultaneously — for example, your PS5 and a backup drive — in one go.
-
-**Scheduled transfers**
-Set a time for a transfer to run automatically. Kick it off before you go to bed and it'll be done by morning.
-
-**Transfer history**
-A persistent log of every copy and move you've done, with dates and results. Lives in the Menu and is saved between sessions so you always have a record of what went where.
+### Transfer history
+A persistent log of every copy and move you've run, with dates, sizes, and results. Saves between sessions. Find it under Menu → Transfer History.
 
 ---
 
 ## Version 2.0.0
 
 ### Much faster scanning
-
-Scanning large libraries is significantly faster than before, and re-scanning a library you've already scanned before is near-instant thanks to caching.
-
-- Games that were already measured load immediately from cache; only new or changed games are re-measured
-- The app now scans up to 12 games at the same time during cache checks, and uses 4 parallel connections per game during a full scan (previously 2)
-- Results start appearing in the list as soon as the first game is found — you don't have to wait for the whole scan to finish
-- The app no longer wastes time building information it doesn't need until a transfer actually starts
+- Games already in the cache load instantly — only new or changed games are re-measured
+- Scans up to 12 games simultaneously; full scans use 4 parallel connections per game
+- Results appear as soon as the first game is found, not after the full scan completes
 
 ### Bug fixes
-
-- Fixed a crash that happened the second time you launched the app
-- Fixed FTP size calculation ignoring the "Calculate Size" checkbox — it was always running even when unchecked
-- Fixed rename not working correctly on Windows (mixed slash characters in paths)
-- Fixed rename allowing names with slashes in them, which could cause files to end up in the wrong place
-- Fixed FTP delete and rename errors being silently ignored — failures now show a proper error message
-- Fixed conflict detection producing wrong results when a custom folder name was used
-- Fixed "Add to recent FTP" saving garbage data instead of the actual connection details
-- Fixed source folder being calculated incorrectly on Windows when paths used backslashes
+- Fixed a crash on the second launch
+- Fixed FTP size calculation ignoring the "Calculate Size" checkbox
+- Fixed rename not working correctly on Windows
+- Fixed rename allowing slashes in names (files ending up in the wrong place)
+- Fixed FTP delete/rename errors being silently swallowed
+- Fixed conflict detection giving wrong results with custom folder names
+- Fixed recent FTP list saving blank entries instead of actual connection details
 
 ---
 
 ## Version 1.1.3
 
-- Scanning results now appear in real time as games are found
-- FTP folder sizes are cached to disk so repeat scans are fast
+- Scan results appear in real time as games are found
+- FTP folder sizes are cached so repeat scans are fast
 - Transfers now work correctly when moving games across different drives
-- Various speed and reliability improvements
 
 ---
 
