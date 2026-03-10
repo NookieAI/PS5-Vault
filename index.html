@@ -1228,7 +1228,7 @@
         <!-- Source row + PS5 discover — both always present, scan overlay sits on top -->
         <div class="primary">
           <label style="color:var(--muted);margin-right:2px;white-space:nowrap;font-size:12px;">Source</label>
-          <input id="sourcePath" type="text" placeholder="Folder path or IP" style="width:360px;flex-shrink:1;min-width:0;" list="sourceHistory" />
+          <input id="sourcePath" type="text" placeholder="Folder path or IP" style="width:360px;flex-shrink:1;min-width:0;" />
           <button type="button" id="btnPickSource" class="btn" title="Browse for source folder">Browse</button>
           <button type="button" id="btnScan" class="btn-scan" title="Start scan">SCAN</button>
           <button type="button" id="btnScanAllDrives" class="btn" title="Scan all local drives" style="white-space:nowrap;">All Drives</button>
@@ -1253,7 +1253,7 @@
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:nowrap;">
           <button type="button" id="btnGoBig" class="btn-go" title="Start transfer">GO</button>
           <label style="color:var(--muted);margin-left:6px;white-space:nowrap;">Destination</label>
-          <input id="destPath" type="text" placeholder="Destination" style="width:360px;flex-shrink:1;min-width:0;" list="destHistory" />
+          <input id="destPath" type="text" placeholder="Destination" style="width:360px;flex-shrink:1;min-width:0;" />
           <button type="button" id="btnPickDest" class="btn" title="Browse for destination">Browse</button>
         </div>
         <!-- Second destination row -->
@@ -1504,21 +1504,21 @@
         <div style="display:flex;gap:6px;margin-bottom:6px;">
           <div style="flex:1;">
             <label style="color:var(--muted);font-size:11px;font-weight:600;margin-bottom:2px;display:block;">Host</label>
-            <input id="ftpHost" type="text" placeholder="192.168.137.100" autocomplete="off" list="hostHistory" />
+            <input id="ftpHost" type="text" placeholder="192.168.137.100" autocomplete="off" />
           </div>
           <div style="flex:0 0 80px;">
             <label style="color:var(--muted);font-size:11px;font-weight:600;margin-bottom:2px;display:block;">Port</label>
-            <input id="ftpPort" type="text" placeholder="1337 / 2121" autocomplete="off" list="portHistory" />
+            <input id="ftpPort" type="text" placeholder="1337 / 2121" autocomplete="off" />
           </div>
         </div>
         <div style="margin-bottom:6px;">
           <label style="color:var(--muted);font-size:11px;font-weight:600;margin-bottom:2px;display:block;">Path</label>
-          <input id="ftpPath" type="text" placeholder="/mnt/ext1/etaHEN/games" autocomplete="off" list="pathHistory" />
+          <input id="ftpPath" type="text" placeholder="/mnt/ext1/etaHEN/games" autocomplete="off" />
         </div>
         <div style="display:flex;gap:6px;margin-bottom:6px;">
           <div style="flex:1;">
             <label style="color:var(--muted);font-size:11px;font-weight:600;margin-bottom:2px;display:block;">User</label>
-            <input id="ftpUser" type="text" placeholder="anonymous" autocomplete="off" list="userHistory" />
+            <input id="ftpUser" type="text" placeholder="anonymous" autocomplete="off" />
           </div>
           <div style="flex:0 0 80px;">
             <label style="color:var(--muted);font-size:11px;font-weight:600;margin-bottom:2px;display:block;">Pass</label>
@@ -1765,6 +1765,7 @@
   </div>
 
 <script src="utils.js"></script>
+  <script src="dropdown-helper.js"></script>
   <script src="help.js"></script>
   <script src="ftp.js"></script>
   <script src="renderer.js"></script>

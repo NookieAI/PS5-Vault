@@ -5,72 +5,38 @@
 
   // Global API for FTP
   window.FtpApi = {
-    openFtpModal: openFtpModal,
-    handleProgress: handleProgress
+    openFtpModal: openFtpModal
   };
 
-  function populateFtpDatalists() {
+  // Build option arrays for the FTP dropdowns from recent connection history.
+  function buildFtpOptions() {
     const recents = window.getRecentFtp ? window.getRecentFtp() : [];
     const hosts = new Set();
-    const ports = new Set();
-    const paths = new Set();
+    const ports = new Set(['1337', '2121', '1338', '21']);
+    const paths = new Set([
+      '/data/etaHEN/games',
+      '/data/games',
+      '/mnt/ext1/etaHEN/games',
+      '/mnt/usb0/etaHEN/games',
+      '/mnt/usb1/etaHEN/games',
+      '/mnt/usb0',
+      '/mnt/usb1',
+      '/mnt/ext1',
+      '/data',
+    ]);
     const users = new Set();
     for (const c of recents) {
       if (c.host) hosts.add(c.host);
-      if (c.port) ports.add(c.port);
+      if (c.port) ports.add(String(c.port));
       if (c.path) paths.add(c.path);
       if (c.user) users.add(c.user);
     }
-    // Add preset paths
-    paths.add('/data/etaHEN/games');
-    paths.add('/data/games');
-    paths.add('/mnt/ext1/etaHEN/games');
-    paths.add('/mnt/usb0/etaHEN/games');
-    paths.add('/mnt/usb1/etaHEN/games');
-    paths.add('/mnt/usb0');
-    paths.add('/mnt/usb1');
-    paths.add('/mnt/ext1');
-    paths.add('/data');
-
-    const hostHistory = document.getElementById('hostHistory');
-    if (hostHistory) {
-      hostHistory.innerHTML = '';
-      for (const h of hosts) {
-        const opt = document.createElement('option');
-        opt.value = h;
-        hostHistory.appendChild(opt);
-      }
-    }
-    const portHistory = document.getElementById('portHistory');
-    if (portHistory) {
-      // Merge recent ports with the seeded common PS5 ports
-      const allPorts = new Set(['1337', '2121', '1338', '21']);
-      for (const p of ports) allPorts.add(String(p));
-      portHistory.innerHTML = '';
-      for (const p of allPorts) {
-        const opt = document.createElement('option');
-        opt.value = p;
-        portHistory.appendChild(opt);
-      }
-    }
-    const pathHistory = document.getElementById('pathHistory');
-    if (pathHistory) {
-      pathHistory.innerHTML = '';
-      for (const p of paths) {
-        const opt = document.createElement('option');
-        opt.value = p;
-        pathHistory.appendChild(opt);
-      }
-    }
-    const userHistory = document.getElementById('userHistory');
-    if (userHistory) {
-      userHistory.innerHTML = '';
-      for (const u of users) {
-        const opt = document.createElement('option');
-        opt.value = u;
-        userHistory.appendChild(opt);
-      }
-    }
+    return {
+      hosts: Array.from(hosts),
+      ports: Array.from(ports),
+      paths: Array.from(paths),
+      users: Array.from(users),
+    };
   }
 
   function getLastFtpConfig() {
@@ -78,104 +44,7 @@
     return recents.length > 0 ? recents[0] : null;
   }
 
-  // Delay (ms) before closing dropdown on blur, so mousedown on an option fires first.
-  const DROPDOWN_BLUR_DELAY_MS = 150;
-
-  // Custom show-all dropdown: shows ALL datalist options on focus/click,
-  // filters by substring as the user types, closes on blur or Escape.
-  function makeShowAllDropdown(inputEl, datalistId) {
-    let dropdownEl = null;
-
-    function getOptions() {
-      const dl = document.getElementById(datalistId);
-      if (!dl) return [];
-      return Array.from(dl.options).map(o => o.value).filter(Boolean);
-    }
-
-    function showDropdown() {
-      closeDropdown();
-      const options = getOptions();
-      const query = inputEl.value.toLowerCase();
-      const filtered = query
-        ? options.filter(o => o.toLowerCase().includes(query))
-        : options;
-      if (filtered.length === 0) return;
-
-      dropdownEl = document.createElement('ul');
-      dropdownEl.style.cssText = [
-        'position:absolute',
-        'left:0',
-        'right:0',
-        'top:100%',
-        'margin:2px 0 0',
-        'padding:0',
-        'list-style:none',
-        'background:var(--surface-2,#1a1e24)',
-        'border:1px solid rgba(255,255,255,0.1)',
-        'border-radius:6px',
-        'box-shadow:0 8px 24px rgba(0,0,0,0.5)',
-        'color:var(--title,#f1f5f9)',
-        'font-size:12.5px',
-        'z-index:99999',
-        'max-height:200px',
-        'overflow-y:auto',
-      ].join(';');
-
-      for (const val of filtered) {
-        const li = document.createElement('li');
-        li.textContent = val;
-        li.setAttribute('tabindex', '-1');
-        li.style.cssText = 'padding:7px 12px;cursor:pointer;border-bottom:1px solid rgba(255,255,255,0.04);';
-        li.addEventListener('mouseenter', () => {
-          li.style.background = 'rgba(59,130,246,0.15)';
-          li.style.color = '#60a5fa';
-        });
-        li.addEventListener('mouseleave', () => {
-          li.style.background = '';
-          li.style.color = '';
-        });
-        li.addEventListener('mousedown', (e) => {
-          e.preventDefault(); // Keep input focused so blur fires after
-          inputEl.value = val;
-          inputEl.dispatchEvent(new Event('input', { bubbles: true }));
-          closeDropdown();
-        });
-        dropdownEl.appendChild(li);
-      }
-
-      // Position relative to input
-      const wrapper = inputEl.parentElement;
-      if (wrapper) {
-        wrapper.style.position = 'relative';
-        wrapper.appendChild(dropdownEl);
-      }
-    }
-
-    function closeDropdown() {
-      if (dropdownEl) {
-        dropdownEl.remove();
-        dropdownEl = null;
-      }
-    }
-
-    inputEl.addEventListener('focus', () => showDropdown());
-    inputEl.addEventListener('input', () => showDropdown());
-    inputEl.addEventListener('blur', () => {
-      // Delay so mousedown on an option fires before blur closes the list
-      setTimeout(() => closeDropdown(), DROPDOWN_BLUR_DELAY_MS);
-    });
-    inputEl.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape') closeDropdown();
-      if (e.key === 'ArrowDown' && dropdownEl) {
-        e.preventDefault();
-        const first = dropdownEl.querySelector('li');
-        if (first) first.focus();
-      }
-    });
-  }
-
   async function openFtpModal(initialUrl) {
-    populateFtpDatalists();
     const backdrop = document.getElementById('ftpModalBackdrop');
     const hostInput = document.getElementById('ftpHost');
     const portInput = document.getElementById('ftpPort');
@@ -259,11 +128,15 @@
     backdrop.style.display = 'flex';
     backdrop.setAttribute('aria-hidden', 'false');
 
-    // Attach show-all custom dropdowns now that the modal is visible
-    makeShowAllDropdown(hostInput, 'hostHistory');
-    makeShowAllDropdown(portInput, 'portHistory');
-    makeShowAllDropdown(pathInput, 'pathHistory');
-    makeShowAllDropdown(userInput, 'userHistory');
+    // Attach show-all custom dropdowns now that the modal is visible.
+    // Build option arrays fresh from the latest recent-FTP history.
+    if (typeof window.makeShowAllDropdown === 'function') {
+      const opts = buildFtpOptions();
+      window.makeShowAllDropdown(hostInput, opts.hosts);
+      window.makeShowAllDropdown(portInput, opts.ports);
+      window.makeShowAllDropdown(pathInput, opts.paths);
+      window.makeShowAllDropdown(userInput, opts.users);
+    }
 
     hostInput.focus();
 
@@ -359,13 +232,5 @@
       document.addEventListener('keydown', onKeydown);
       if (testBtn) testBtn.addEventListener('click', onTest);
     });
-  }
-
-  function handleProgress(data) {
-    // Handle FTP-specific progress (e.g., transfer updates)
-    if (data.type === 'go-file-progress' || data.type === 'go-file-complete') {
-      // Update TransferStats or UI as needed
-      console.log('[FTP Progress]', data);
-    }
   }
 })();
