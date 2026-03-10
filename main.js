@@ -601,11 +601,13 @@ async function copyFileStream(src, dst, progressCallback, cancelCheck) {
         ws.destroy();
         reject(new Error('Cancelled'));
       } else {
-        ws.write(chunk);
         bytesCopied += chunk.length;
         progressCallback?.({ type: 'go-file-progress', totalBytesCopied: bytesCopied });
+        const ok = ws.write(chunk);
+        if (!ok) rs.pause(); // backpressure: pause reads until the write buffer drains
       }
     });
+    ws.on('drain', () => rs.resume()); // resume reading once the buffer has drained
     rs.on('end', () => ws.end());
     rs.on('error', (err) => { ws.destroy(); reject(err); });
     ws.on('error', (err) => { rs.destroy(); reject(err); });
