@@ -78,6 +78,102 @@
     return recents.length > 0 ? recents[0] : null;
   }
 
+  // Delay (ms) before closing dropdown on blur, so mousedown on an option fires first.
+  const DROPDOWN_BLUR_DELAY_MS = 150;
+
+  // Custom show-all dropdown: shows ALL datalist options on focus/click,
+  // filters by substring as the user types, closes on blur or Escape.
+  function makeShowAllDropdown(inputEl, datalistId) {
+    let dropdownEl = null;
+
+    function getOptions() {
+      const dl = document.getElementById(datalistId);
+      if (!dl) return [];
+      return Array.from(dl.options).map(o => o.value).filter(Boolean);
+    }
+
+    function showDropdown() {
+      closeDropdown();
+      const options = getOptions();
+      const query = inputEl.value.toLowerCase();
+      const filtered = query
+        ? options.filter(o => o.toLowerCase().includes(query))
+        : options;
+      if (filtered.length === 0) return;
+
+      dropdownEl = document.createElement('ul');
+      dropdownEl.style.cssText = [
+        'position:absolute',
+        'left:0',
+        'right:0',
+        'top:100%',
+        'margin:2px 0 0',
+        'padding:0',
+        'list-style:none',
+        'background:var(--surface-2,#1a1e24)',
+        'border:1px solid rgba(255,255,255,0.1)',
+        'border-radius:6px',
+        'box-shadow:0 8px 24px rgba(0,0,0,0.5)',
+        'color:var(--title,#f1f5f9)',
+        'font-size:12.5px',
+        'z-index:99999',
+        'max-height:200px',
+        'overflow-y:auto',
+      ].join(';');
+
+      for (const val of filtered) {
+        const li = document.createElement('li');
+        li.textContent = val;
+        li.setAttribute('tabindex', '-1');
+        li.style.cssText = 'padding:7px 12px;cursor:pointer;border-bottom:1px solid rgba(255,255,255,0.04);';
+        li.addEventListener('mouseenter', () => {
+          li.style.background = 'rgba(59,130,246,0.15)';
+          li.style.color = '#60a5fa';
+        });
+        li.addEventListener('mouseleave', () => {
+          li.style.background = '';
+          li.style.color = '';
+        });
+        li.addEventListener('mousedown', (e) => {
+          e.preventDefault(); // Keep input focused so blur fires after
+          inputEl.value = val;
+          inputEl.dispatchEvent(new Event('input', { bubbles: true }));
+          closeDropdown();
+        });
+        dropdownEl.appendChild(li);
+      }
+
+      // Position relative to input
+      const wrapper = inputEl.parentElement;
+      if (wrapper) {
+        wrapper.style.position = 'relative';
+        wrapper.appendChild(dropdownEl);
+      }
+    }
+
+    function closeDropdown() {
+      if (dropdownEl) {
+        dropdownEl.remove();
+        dropdownEl = null;
+      }
+    }
+
+    inputEl.addEventListener('focus', () => showDropdown());
+    inputEl.addEventListener('input', () => showDropdown());
+    inputEl.addEventListener('blur', () => {
+      // Delay so mousedown on an option fires before blur closes the list
+      setTimeout(() => closeDropdown(), DROPDOWN_BLUR_DELAY_MS);
+    });
+    inputEl.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') closeDropdown();
+      if (e.key === 'ArrowDown' && dropdownEl) {
+        e.preventDefault();
+        const first = dropdownEl.querySelector('li');
+        if (first) first.focus();
+      }
+    });
+  }
+
   async function openFtpModal(initialUrl) {
     populateFtpDatalists();
     const backdrop = document.getElementById('ftpModalBackdrop');
@@ -162,6 +258,13 @@
 
     backdrop.style.display = 'flex';
     backdrop.setAttribute('aria-hidden', 'false');
+
+    // Attach show-all custom dropdowns now that the modal is visible
+    makeShowAllDropdown(hostInput, 'hostHistory');
+    makeShowAllDropdown(portInput, 'portHistory');
+    makeShowAllDropdown(pathInput, 'pathHistory');
+    makeShowAllDropdown(userInput, 'userHistory');
+
     hostInput.focus();
 
     return new Promise((resolve) => {

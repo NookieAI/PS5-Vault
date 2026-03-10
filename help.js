@@ -37,6 +37,7 @@
     <li><strong>Game only</strong>: <code>{dest}/{game}/</code></li>
     <li><strong>PPSA only</strong>: <code>{dest}/{PPSA}/</code></li>
     <li><strong>Custom</strong>: Rename via modal, path is <code>{dest}/{customName}/</code></li>
+    <li><strong>Porkfolio</strong>: <code>{dest}/{game} ({version}) {PPSAID}/</code> — for Porkfolio backporting</li>
   </ul>
   <strong>Action</strong>: Copy (keeps source) or Move (deletes source).<br>
   <strong>Calculate Size</strong>: Enable for accurate sizes; disable for speed.
@@ -80,7 +81,30 @@
 </ul>
 
 <h3>About</h3>
-<p>PS5 Vault by NookieAI. For support, join <a href="https://discord.gg/nj45kDSBEd" target="_blank">Discord</a> or check the repo.</p>
+<p>PS5 Vault by <strong>NookieAI</strong>. For support, join <a href="https://discord.gg/nj45kDSBEd" target="_blank">Discord</a> or check the repo.</p>
+
+<h3 style="margin-top:20px;letter-spacing:0.04em;">✦ Credits</h3>
+<div style="display:flex;flex-direction:column;gap:8px;margin-top:8px;">
+
+  <div style="display:flex;align-items:center;gap:14px;padding:11px 16px;background:var(--surface-2,#1a1e24);border:1px solid rgba(59,130,246,0.25);border-radius:10px;box-shadow:0 2px 12px rgba(0,0,0,0.3);">
+    <div style="width:36px;height:36px;border-radius:50%;background:linear-gradient(135deg,#1d4ed8,#3b82f6);display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0;">🛠️</div>
+    <div>
+      <div style="font-weight:700;font-size:13.5px;color:var(--title,#f1f5f9);letter-spacing:0.01em;">NookieAI</div>
+      <div style="font-size:11px;color:var(--muted,#6b7280);margin-top:2px;font-weight:500;">Developer &amp; Creator</div>
+    </div>
+    <div style="margin-left:auto;font-size:10px;color:var(--accent,#3b82f6);font-weight:700;text-transform:uppercase;letter-spacing:0.08em;background:rgba(59,130,246,0.12);padding:3px 8px;border-radius:4px;">DEV</div>
+  </div>
+
+  <div style="display:flex;align-items:center;gap:14px;padding:11px 16px;background:var(--surface-2,#1a1e24);border:1px solid rgba(251,191,36,0.3);border-radius:10px;box-shadow:0 2px 12px rgba(0,0,0,0.3);">
+    <div style="width:36px;height:36px;border-radius:50%;background:linear-gradient(135deg,#92400e,#fbbf24);display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0;">⚡</div>
+    <div>
+      <div style="font-weight:700;font-size:13.5px;color:var(--title,#f1f5f9);letter-spacing:0.01em;">M///Class</div>
+      <div style="font-size:11px;color:var(--muted,#6b7280);margin-top:2px;font-weight:500;">Testing God — relentless QA &amp; bug hunting</div>
+    </div>
+    <div style="margin-left:auto;font-size:10px;color:#fbbf24;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;background:rgba(251,191,36,0.12);padding:3px 8px;border-radius:4px;">QA</div>
+  </div>
+
+</div>
 `;
 
   // Function to open help modal
