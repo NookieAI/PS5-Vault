@@ -3,8 +3,6 @@
 
   // Help modal content for PS5 Vault
   const helpContent = `
-<h2 style="margin:0 0 12px;font-size:17px;color:var(--title,#f1f5f9);">PS5 Vault Help</h2>
-
 <h3>Getting Started</h3>
 <p>PS5 Vault helps you organize and transfer PS5 game backups between local drives and FTP servers (e.g., your PS5 running etaHEN or ftpsrv). Scan a source folder or FTP path, select games, choose a destination and layout, then hit <strong>GO</strong>.</p>
 
@@ -165,6 +163,9 @@
     `;
 
     document.body.appendChild(backdrop);
+    // Show immediately — .modal-backdrop defaults to display:none in CSS so we
+    // must explicitly flip it here on first creation (same as the re-open path).
+    backdrop.style.display = 'flex';
 
     // Event listeners
     const closeBtn = document.getElementById('helpClose');
