@@ -603,7 +603,7 @@ async function copyFileStream(src, dst, progressCallback, cancelCheck) {
       } else {
         ws.write(chunk);
         bytesCopied += chunk.length;
-        progressCallback?.(bytesCopied); // FIX B1: pass cumulative bytes, not just this chunk's size
+        progressCallback?.({ type: 'go-file-progress', totalBytesCopied: bytesCopied });
       }
     });
     rs.on('end', () => ws.end());
@@ -724,7 +724,7 @@ async function copyFolderContentsSafely(srcDir, finalTarget, options = {}) {
         // Pass a proper progress object so progressFn can track bytes
         await copyAndVerifyFile(
           srcPath, dstPath,
-          (bytesDone) => progress?.({ type: 'go-file-progress', fileRel: ent.name, totalBytesCopied: bytesDone, totalBytes }),
+          (info) => progress?.({ type: 'go-file-progress', fileRel: ent.name, totalBytesCopied: info?.totalBytesCopied || 0, totalBytes }),
           cancelCheck
         );
         progress?.({ type: 'go-file-complete', fileRel: ent.name, totalBytesCopied: size, totalBytes });
