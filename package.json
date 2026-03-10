@@ -1,6 +1,6 @@
 {
   "name": "ps5-vault",
-  "version": "2.2.0",
+  "version": "2.3.0",
   "description": "PS5 game library manager \u2014 scan, organise and transfer games via USB or FTP",
   "main": "main.js",
   "author": "PS5 Vault",
@@ -27,10 +27,10 @@
     "asar": true,
     "files": [
       "main.js",
+      "api-server.js",
       "preload.js",
       "renderer.js",
       "ftp.js",
-      "api-server.js",
       "utils.js",
       "datalist-init.js",
       "help.js",
@@ -40,9 +40,7 @@
       "!**/*.bak",
       "!**/*.bak2",
       "!**/*.pre_perf",
-      "!**/node_modules/.cache/**",
-      "!scan.js",
-      "!ui-renderers.js"
+      "!**/node_modules/.cache/**"
     ],
     "win": {
       "target": [
@@ -70,15 +68,12 @@
     "mac": {
       "target": "dmg",
       "icon": "assets/icon.icns",
-      "category": "public.app-category.utilities",
-      "identity": null,
-      "hardenedRuntime": false
+      "category": "public.app-category.utilities"
     },
     "linux": {
       "target": "AppImage",
       "icon": "assets/icon.png",
-      "category": "Utility",
-      "artifactName": "${productName}-${version}-linux.${ext}"
+      "category": "Utility"
     },
     "directories": {
       "output": "dist",

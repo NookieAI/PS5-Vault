@@ -204,20 +204,22 @@
 
     .controls-left {
       display: flex;
-      gap: 8px;
-      min-width: 420px;
-      max-width: 65%;
       flex-direction: column;
-      align-items: flex-start;
+      gap: 0;
+      min-width: 420px;
+      max-width: 55%;
       flex-shrink: 0;
+      position: relative;
     }
 
     .controls-left .primary {
       display: flex;
-      gap: 8px;
+      gap: 6px;
       align-items: center;
       width: 100%;
-      flex-wrap: wrap;
+      flex-wrap: nowrap;
+      min-height: 32px;
+      overflow: visible;
     }
 
     .controls-right {
@@ -231,11 +233,14 @@
     }
 
     .scan-display {
-      width: 100%;
-      margin-top: var(--scan-display-margin);
+      position: absolute;
+      top: 0; left: 0; right: 0;
       display: flex;
       flex-direction: column;
-      gap: 4px;
+      gap: 5px;
+      background: var(--bg, #0d1117);
+      padding-top: 2px;
+      z-index: 2;
     }
 
     .current-scan {
@@ -652,12 +657,13 @@
       backdrop-filter: blur(3px);
       z-index: 10000;
       padding: 20px;
+      box-sizing: border-box;
     }
 
     .modal {
       width: var(--modal-max-width);
       max-width: 95vw;
-      max-height: 90vh;
+      max-height: calc(100vh - 40px);
       background: var(--modal-bg);
       color: var(--title);
       border-radius: var(--radius-lg);
@@ -667,6 +673,8 @@
       display: flex;
       flex-direction: column;
       gap: 10px;
+      box-sizing: border-box;
+      overflow: hidden;
     }
 
     .ftp-modal {
@@ -674,8 +682,8 @@
     }
 
     .modal-header {
+      flex-shrink: 0;
       position: relative;
-      text-align: center;
       display: flex;
       flex-direction: column;
       gap: 4px;
@@ -710,17 +718,26 @@
     }
 
     .modal-body {
-      max-height: 480px;
-      overflow-y: auto;
+      flex: 1 1 auto;
+      min-height: 0;
+      overflow: hidden;
       padding-top: 6px;
-      flex: 1;
     }
 
+    /* For modals with dynamic/variable-length content that must scroll */
+    .modal-body--scroll {
+      overflow-y: auto;
+    }
+    .modal-body--scroll::-webkit-scrollbar { width: 4px; }
+    .modal-body--scroll::-webkit-scrollbar-track { background: transparent; }
+    .modal-body--scroll::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.12); border-radius: 2px; }
+
     .modal-actions {
+      flex-shrink: 0;
       display: flex;
       justify-content: flex-end;
       gap: 8px;
-      margin-top: 8px;
+      margin-top: 4px;
     }
 
     .close-btn {
@@ -986,6 +1003,168 @@
       border-radius: 3px;
       padding: 1px 5px;
     }
+    /* ── Card grid view ── */
+    .card-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(148px, 1fr));
+      gap: 12px;
+      padding: 4px 0 16px;
+      width: 100%;
+      box-sizing: border-box;
+    }
+    .card-item {
+      background: var(--surface);
+      border: 1px solid var(--card-border);
+      border-radius: var(--radius);
+      overflow: hidden;
+      cursor: pointer;
+      transition: border-color 0.15s, transform 0.1s;
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+    }
+    .card-item:hover { border-color: var(--card-border-hover); transform: translateY(-2px); }
+    .card-item.card-selected { border-color: var(--accent); background: rgba(59,130,246,0.07); }
+    .card-item img.card-cover {
+      width: 100%;
+      aspect-ratio: 1 / 1;
+      object-fit: cover;
+      display: block;
+      background: rgba(255,255,255,0.03);
+    }
+    .card-placeholder {
+      width: 100%;
+      aspect-ratio: 1 / 1;
+      background: rgba(255,255,255,0.03);
+    }
+    .card-info {
+      padding: 7px 8px;
+      flex: 1;
+    }
+    .card-title {
+      font-size: 11.5px;
+      font-weight: 600;
+      color: var(--title);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      margin-bottom: 3px;
+    }
+    .card-size {
+      font-size: 10.5px;
+      color: var(--muted);
+    }
+    .card-chk {
+      position: absolute;
+      top: 6px;
+      left: 6px;
+      width: 16px;
+      height: 16px;
+      cursor: pointer;
+    }
+    /* ── Verify badges ── */
+    .verify-ok    { color: #4ade80; }
+    .verify-warn  { color: #fbbf24; }
+    .verify-error { color: #f87171; }
+    .verify-badge {
+      display: inline-flex; align-items: center; gap: 4px;
+      padding: 2px 8px; border-radius: 99px; font-size: 11px; font-weight: 700;
+      white-space: nowrap;
+    }
+    .verify-badge-ok    { background: rgba(74,222,128,0.1);  color: #4ade80; border: 1px solid rgba(74,222,128,0.25); }
+    .verify-badge-warn  { background: rgba(251,191,36,0.1);  color: #fbbf24; border: 1px solid rgba(251,191,36,0.25); }
+    .verify-badge-error { background: rgba(248,113,113,0.1); color: #f87171; border: 1px solid rgba(248,113,113,0.25); }
+    /* ── Speed sparkline ── */
+    .speed-sparkline { display: block; width: 100%; height: 32px; }
+    /* ── Stats chips ── */
+    .stats-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+    .stats-chip {
+      background: rgba(255,255,255,0.03); border: 1px solid var(--card-border);
+      border-radius: var(--radius); padding: 10px 12px;
+    }
+    .stats-chip-label { font-size: 10.5px; color: var(--muted); font-weight: 700; text-transform: uppercase; letter-spacing: .05em; margin-bottom: 4px; }
+    .stats-chip-value { font-size: 17px; font-weight: 700; color: var(--title); }
+    /* ── Diff modal ── */
+    .diff-section { border: 1px solid var(--card-border); border-radius: var(--radius); padding: 10px 14px; margin-bottom: 10px; }
+    .diff-section-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin-bottom: 8px; }
+    .diff-only-a  { background: rgba(59,130,246,0.06); border-color: rgba(59,130,246,0.2); }
+    .diff-only-b  { background: rgba(251,191,36,0.06); border-color: rgba(251,191,36,0.2); }
+    .diff-both    { background: rgba(74,222,128,0.04); border-color: rgba(74,222,128,0.15); }
+    .diff-item    { display: flex; align-items: center; gap: 8px; padding: 5px 0; border-bottom: 1px solid rgba(255,255,255,0.04); font-size: 12.5px; }
+    .diff-item:last-child { border-bottom: none; }
+    .diff-icon    { font-size: 14px; flex-shrink: 0; }
+
+    .btn-ps5-find {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      white-space: nowrap;
+      padding: 4px 9px;
+      font-size: 12px;
+      flex-shrink: 0;
+    }
+    .btn-ps5-find span:first-child { font-size: 13px; line-height: 1; }
+
+    #ps5DiscoverResults { flex-wrap: nowrap; }
+    #ps5DiscoverResults .ps5-chip {
+      min-width: 0;
+      max-width: none;
+    }
+
+    /* ── PS5 discover strip ─────────────────────────────────────────────── */
+    .ps5-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 3px 10px 3px 7px;
+      border-radius: 20px;
+      background: rgba(59,130,246,0.12);
+      border: 1px solid rgba(59,130,246,0.3);
+      color: var(--title);
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.15s, border-color 0.15s, transform 0.1s;
+      white-space: nowrap;
+      user-select: none;
+    }
+    .ps5-chip:hover {
+      background: rgba(59,130,246,0.22);
+      border-color: rgba(59,130,246,0.55);
+      transform: translateY(-1px);
+    }
+    .ps5-chip:active { transform: translateY(0); }
+    .ps5-chip--active {
+      background: rgba(59,130,246,0.28);
+      border-color: rgba(59,130,246,0.7);
+    }
+    .ps5-chip-dot {
+      width: 7px; height: 7px;
+      border-radius: 50%;
+      background: #3b82f6;
+      flex-shrink: 0;
+    }
+    .ps5-chip-dot--green { background: #4ade80; }
+    .ps5-chip-dismiss {
+      margin-left: 2px;
+      color: var(--muted);
+      font-size: 10px;
+      opacity: 0.5;
+      cursor: pointer;
+      padding: 0 2px;
+    }
+    .ps5-chip-dismiss:hover { opacity: 1; color: #f87171; }
+    @keyframes ps5-pulse {
+      0%,100% { opacity: 1; }
+      50% { opacity: 0.35; }
+    }
+    .ps5-scanning { animation: ps5-pulse 0.9s ease-in-out infinite; }
+    .ps5-discover-status {
+      font-size: 11.5px;
+      color: var(--muted);
+    }
+
   </style>
 
 
@@ -1023,6 +1202,9 @@
           <option value="history">Transfer History</option>
           <option value="clearHistory">Clear History</option>
           <option value="apiSettings">⚙ Developer API</option>
+          <option value="stats">📊 Library Stats</option>
+          <option value="verify">✔ Verify Library</option>
+          <option value="diff">⇄ Diff / Compare</option>
         </select>
         <a id="discordLink" class="discord-link" href="https://discord.gg/nj45kDSBEd" target="_blank" rel="noopener" title="Join Discord">💬 Discord</a>
       </div>
@@ -1043,14 +1225,22 @@
 
     <div class="controls-row" aria-label="Controls">
       <div class="controls-left">
+        <!-- Source row + PS5 discover — both always present, scan overlay sits on top -->
         <div class="primary">
-          <label style="color:var(--muted);margin-right:6px">Source</label>
-          <input id="sourcePath" type="text" placeholder="Choose root folder" style="width: 260px;" list="sourceHistory" />
-          <button type="button" id="btnPickSource" class="btn" title="Browse for source">Browse</button>
+          <label style="color:var(--muted);margin-right:2px;white-space:nowrap;font-size:12px;">Source</label>
+          <input id="sourcePath" type="text" placeholder="Folder path or IP" style="width:360px;flex-shrink:1;min-width:0;" list="sourceHistory" />
+          <button type="button" id="btnPickSource" class="btn" title="Browse for source folder">Browse</button>
           <button type="button" id="btnScan" class="btn-scan" title="Start scan">SCAN</button>
-          <button type="button" id="btnScanAllDrives" class="btn" title="Scan all local and network drives">Scan All Drives</button>
-          <button type="button" id="btnCancelScan" class="btn-cancel">Cancel</button>
+          <button type="button" id="btnScanAllDrives" class="btn" title="Scan all local drives" style="white-space:nowrap;">All Drives</button>
+          <button type="button" id="btnCancelScan" class="btn-cancel">✕</button>
+          <span style="width:1px;height:18px;background:rgba(255,255,255,0.1);flex-shrink:0;margin:0 2px;"></span>
+          <button type="button" id="btnFindPs5" class="btn btn-ps5-find" title="Scan network for a PS5 running an FTP payload">
+            <span id="btnFindPs5Icon">🎮</span><span>PS5</span>
+          </button>
+          <div id="ps5DiscoverResults" style="display:flex;gap:5px;align-items:center;flex-shrink:0;"></div>
         </div>
+
+        <!-- Scan progress — overlays the source row while scanning -->
         <div class="scan-display" id="scanDisplay" style="display:none;">
           <div id="currentScanLabel" class="current-scan"></div>
           <div class="wiggle-bar">
@@ -1060,10 +1250,10 @@
       </div>
 
       <div class="controls-right">
-        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:nowrap;">
           <button type="button" id="btnGoBig" class="btn-go" title="Start transfer">GO</button>
-          <label style="color:var(--muted);margin-left:6px">Destination</label>
-          <input id="destPath" type="text" placeholder="Destination" style="width: 260px;" list="destHistory" />
+          <label style="color:var(--muted);margin-left:6px;white-space:nowrap;">Destination</label>
+          <input id="destPath" type="text" placeholder="Destination" style="width:360px;flex-shrink:1;min-width:0;" list="destHistory" />
           <button type="button" id="btnPickDest" class="btn" title="Browse for destination">Browse</button>
         </div>
         <!-- Second destination row -->
@@ -1095,26 +1285,29 @@
 
     <div class="content">
       <div class="results" role="main">
-        <div style="display:flex;align-items:center;margin-bottom:6px">
-          <div style="flex:1;font-weight:800;font-size:14px">Scan Results <span id="scanCount" style="font-size:12px;color:var(--muted);margin-left:8px"></span></div>
-          <div style="display:flex;align-items:center;gap:12px;flex:1;justify-content:center;">
-            <label for="searchInput" style="color:var(--muted);font-size:12px;">Search Games:</label>
-            <input id="searchInput" class="search-input" type="text" placeholder="Filter by game name..." />
-            <select id="sizeFilter" class="btn" title="Filter by size" style="padding:4px 8px;font-size:12px;min-width:100px;">
-              <option value="">All sizes</option>
-              <option value="xs">&lt; 1 GB</option>
-              <option value="sm">1 – 10 GB</option>
-              <option value="md">10 – 30 GB</option>
-              <option value="lg">&gt; 30 GB</option>
-            </select>
-          </div>
-          <div class="batch-actions" style="display:flex;gap:8px;flex:1;justify-content:flex-end;flex-wrap:wrap;align-items:center;">
-            <button type="button" id="btnRenameSelected" class="btn" style="min-width:120px; opacity:0.6;" title="Rename selected games">Rename Selected</button>
-            <button type="button" id="btnDeleteSelected" class="btn" style="min-width:120px; opacity:0.6;" title="Delete selected games">Delete Selected</button>
-          </div>
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px;flex-wrap:nowrap;">
+          <div style="font-weight:800;font-size:14px;white-space:nowrap;flex-shrink:0;">Scan Results <span id="scanCount" style="font-size:12px;color:var(--muted);margin-left:6px;font-weight:400;"></span></div>
+          <input id="searchInput" class="search-input" type="text" placeholder="Search games…" style="flex:1;min-width:80px;max-width:220px;" />
+          <select id="sizeFilter" class="btn" title="Filter by size" style="padding:4px 8px;font-size:12px;flex-shrink:0;">
+            <option value="">All sizes</option>
+            <option value="xs">&lt; 1 GB</option>
+            <option value="sm">1 – 10 GB</option>
+            <option value="md">10 – 30 GB</option>
+            <option value="lg">&gt; 30 GB</option>
+          </select>
+          <!-- spacer pushes remaining buttons to the right -->
+          <div style="flex:1;min-width:0;"></div>
+          <div style="width:1px;height:18px;background:rgba(255,255,255,0.1);flex-shrink:0;"></div>
+          <button type="button" id="btnToggleView" class="btn" style="padding:4px 9px;font-size:12px;flex-shrink:0;" title="Toggle table / card view">⊞ Grid</button>
+          <button type="button" id="btnRenameSelected" class="btn" style="padding:4px 9px;font-size:12px;opacity:0.7;flex-shrink:0;" title="Rename selected game">Rename</button>
+          <button type="button" id="btnDeleteSelected" class="btn" style="padding:4px 9px;font-size:12px;opacity:0.7;flex-shrink:0;" title="Move selected games to trash">Delete</button>
+          <!-- hidden buttons still wired up for menu/keyboard actions -->
+          <button type="button" id="btnVerifyLibrary" style="display:none;"></button>
+          <button type="button" id="btnDiffSources" style="display:none;"></button>
+          <button type="button" id="btnStatsPanel" style="display:none;"></button>
         </div>
 
-        <div class="table-wrap" role="region" aria-label="Scan results table">
+        <div id="tableWrap" class="table-wrap" role="region" aria-label="Scan results table">
           <table>
             <thead>
               <tr>
@@ -1130,6 +1323,7 @@
             </tbody>
           </table>
         </div>
+        <div id="cardGrid" class="card-grid" style="display:none;padding:12px 0;"></div>
       </div>
     </div>
   </div>
@@ -1181,6 +1375,9 @@
         <!-- Progress detail text -->
         <div id="currentFileInfo" style="font-size:11.5px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"></div>
 
+        <!-- Speed sparkline (live graph of transfer speed over time) -->
+        <svg id="speedSparkline" class="speed-sparkline" aria-hidden="true" xmlns="http://www.w3.org/2000/svg"></svg>
+
         <!-- Cancel button -->
         <div id="resultActionsRow" style="display:none;padding-top:2px;"></div>
       </div>
@@ -1209,7 +1406,7 @@
       </div>
 
       <!-- Per-item results list -->
-      <div class="modal-body" style="display:none;padding-top:4px;" id="resultListWrap">
+      <div class="modal-body modal-body--scroll" style="display:none; padding-top:4px" id="resultListWrap">
         <div id="resultList"></div>
       </div>
 
@@ -1227,8 +1424,8 @@
         <h4 id="confirmTitle" style="margin:0;font-size:14px;font-weight:600;">Confirm transfer</h4>
       </div>
       <!-- Operation summary strip -->
-      <div id="confirmMeta" style="display:flex;gap:10px;flex-wrap:wrap;padding:4px 0 2px;"></div>
-      <div class="modal-body">
+      <div id="confirmMeta" style="display:flex;gap:10px;flex-wrap:wrap;padding:4px 0 2px;flex-shrink:0;"></div>
+      <div class="modal-body modal-body--scroll">
         <div id="confirmList"></div>
       </div>
       <div class="modal-actions">
@@ -1242,7 +1439,7 @@
   <div id="conflictModalBackdrop" class="modal-backdrop" aria-hidden="true">
     <div class="modal" role="dialog" aria-modal="true" aria-labelledby="conflictTitle">
       <div class="modal-header"><h4 id="conflictTitle">Conflicting targets detected</h4></div>
-      <div class="modal-body" id="conflictBody" style="color:var(--muted);">
+      <div class="modal-body modal-body--scroll" id="conflictBody" style="color:var(--muted)">
         <div id="conflictList" style="margin-bottom:12px"></div>
         <div style="margin-top:6px">Choose how to handle existing targets (applies to all conflicts):</div>
         <div style="margin-top:8px;display:flex;gap:8px;flex-direction:column">
@@ -1310,7 +1507,7 @@
           </div>
           <div style="flex:0 0 80px;">
             <label style="color:var(--muted);font-size:11px;font-weight:600;margin-bottom:2px;display:block;">Port</label>
-            <input id="ftpPort" type="text" placeholder="2121" autocomplete="off" list="portHistory" />
+            <input id="ftpPort" type="text" placeholder="1337 / 2121" autocomplete="off" list="portHistory" />
           </div>
         </div>
         <div style="margin-bottom:6px;">
@@ -1358,6 +1555,8 @@
       </div>
       <div class="modal-actions">
         <button type="button" id="ftpCancel" class="btn">Cancel</button>
+        <button type="button" id="ftpDiscoverBtn" class="btn" title="Scan local network for PS5">🔍 Find PS5</button>
+        <button type="button" id="ftpStorageBtn" class="btn" title="Show PS5 storage info">💾 Storage</button>
         <button type="button" id="ftpTestBtn" class="btn" title="Test FTP connection">Test</button>
         <button type="button" id="ftpProceed" class="btn-go">Connect</button>
       </div>
@@ -1373,7 +1572,12 @@
   <div id="persistentToast" role="status" aria-live="polite"></div>
 
   <datalist id="hostHistory"></datalist>
-  <datalist id="portHistory"></datalist>
+  <datalist id="portHistory">
+    <option value="1337"></option>
+    <option value="2121"></option>
+    <option value="1338"></option>
+    <option value="21"></option>
+  </datalist>
   <datalist id="pathHistory">
     <option value="/mnt/usb0"></option>
     <option value="/mnt/usb1"></option>
@@ -1392,7 +1596,7 @@
         <h4 id="gameDetailName" style="margin:0;font-size:14px;font-weight:600;">Game Details</h4>
         <button type="button" id="gameDetailCloseX" class="close-btn" title="Close">✕</button>
       </div>
-      <div class="modal-body" id="gameDetailBody" style="max-height:65vh;overflow-y:auto;padding:0 2px;"></div>
+      <div class="modal-body modal-body--scroll" id="gameDetailBody" style="padding:0 2px"></div>
       <div class="modal-actions">
         <button type="button" id="gameDetailClose" class="btn">Close</button>
       </div>
@@ -1406,7 +1610,7 @@
         <h4 style="margin:0;font-size:14px;font-weight:600;">Transfer History</h4>
         <button type="button" id="historyCloseX" class="close-btn" title="Close">✕</button>
       </div>
-      <div class="modal-body" id="historyModalBody" style="max-height:65vh;overflow-y:auto;padding-right:2px;"></div>
+      <div class="modal-body modal-body--scroll" id="historyModalBody" style="padding-right:2px"></div>
       <div class="modal-actions" style="justify-content:space-between;">
         <button type="button" id="historyClearAll" class="btn" style="color:#f87171;background:transparent;border:1px solid rgba(248,113,113,0.3);" title="Clear all history">Clear All</button>
         <button type="button" id="historyClose" class="btn">Close</button>
@@ -1421,33 +1625,33 @@
         <h4 id="apiSettingsTitle" style="margin:0;">Developer API</h4>
         <button type="button" id="apiSettingsClose" class="close-btn" title="Close">✕</button>
       </div>
-      <div class="modal-body" style="padding:16px 0 4px;">
+      <div class="modal-body" style="padding:14px 0 4px;">
 
         <!-- Status strip -->
-        <div style="display:flex;gap:10px;align-items:center;margin-bottom:18px;padding:10px 14px;background:rgba(99,202,131,0.08);border:1px solid rgba(99,202,131,0.2);border-radius:7px;">
-          <span style="font-size:18px;">🟢</span>
+        <div style="display:flex;gap:10px;align-items:center;margin-bottom:14px;padding:8px 12px;background:rgba(99,202,131,0.08);border:1px solid rgba(99,202,131,0.2);border-radius:7px;">
+          <span style="font-size:16px;">🟢</span>
           <div>
-            <div style="font-size:12.5px;font-weight:700;color:var(--title);">API server running</div>
-            <div style="font-size:11.5px;color:var(--muted);margin-top:2px;">
-              Base URL: <code style="background:rgba(255,255,255,0.07);padding:1px 5px;border-radius:3px;font-size:11px;">http://127.0.0.1:<span id="apiSettingsPort">3731</span>/api/v1</code>
+            <div style="font-size:12px;font-weight:700;color:var(--title);">API server running</div>
+            <div style="font-size:11px;color:var(--muted);margin-top:1px;">
+              Base URL: <code style="background:rgba(255,255,255,0.07);padding:1px 5px;border-radius:3px;font-size:10.5px;">http://127.0.0.1:<span id="apiSettingsPort">3731</span>/api/v1</code>
             </div>
           </div>
         </div>
 
         <!-- API Key -->
-        <div style="margin-bottom:14px;">
-          <div style="color:var(--muted);font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px;">API Key (X-API-Key header)</div>
+        <div style="margin-bottom:12px;">
+          <div style="color:var(--muted);font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;margin-bottom:5px;">API Key (X-API-Key header)</div>
           <div style="display:flex;align-items:center;gap:8px;">
-            <code id="apiSettingsKeyPreview" style="flex:1;background:rgba(255,255,255,0.06);border:1px solid var(--card-border);border-radius:5px;padding:7px 10px;font-size:13px;color:var(--title);letter-spacing:.04em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">—</code>
-            <button type="button" id="apiSettingsCopy" class="btn" style="flex:0 0 auto;" title="Copy full API key">Copy</button>
-            <button type="button" id="apiSettingsRegen" class="btn" style="flex:0 0 auto;color:#f87171;border-color:rgba(248,113,113,0.3);" title="Generate a new API key">Regen</button>
+            <code id="apiSettingsKeyPreview" style="flex:1;background:rgba(255,255,255,0.06);border:1px solid var(--card-border);border-radius:5px;padding:6px 10px;font-size:12px;color:var(--title);letter-spacing:.04em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">—</code>
+            <button type="button" id="apiSettingsCopy" class="btn" style="flex:0 0 auto;padding:4px 10px;font-size:12px;" title="Copy full API key">Copy</button>
+            <button type="button" id="apiSettingsRegen" class="btn" style="flex:0 0 auto;padding:4px 10px;font-size:12px;color:#f87171;border-color:rgba(248,113,113,0.3);" title="Generate a new API key">Regen</button>
           </div>
         </div>
 
         <!-- Endpoints quick-ref -->
-        <div style="margin-bottom:8px;">
-          <div style="color:var(--muted);font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px;">Endpoints</div>
-          <div style="background:rgba(255,255,255,0.03);border:1px solid var(--card-border);border-radius:6px;padding:10px 12px;font-size:11.5px;line-height:2;">
+        <div style="margin-bottom:6px;">
+          <div style="color:var(--muted);font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px;">Endpoints</div>
+          <div style="background:rgba(255,255,255,0.03);border:1px solid var(--card-border);border-radius:6px;padding:8px 12px;font-size:11px;line-height:1.85;">
             <div><span style="color:#63cab3;font-weight:700;">GET</span>  <code>/api/v1/library</code> — list all scanned games</div>
             <div><span style="color:#63cab3;font-weight:700;">GET</span>  <code>/api/v1/library/:ppsa</code> — single game by PPSA ID</div>
             <div><span style="color:#63cab3;font-weight:700;">GET</span>  <code>/api/v1/library/:ppsa/icon</code> — game cover art (PNG)</div>
@@ -1460,13 +1664,101 @@
           </div>
         </div>
 
-        <div style="font-size:11px;color:var(--muted);margin-top:10px;line-height:1.6;">
-          All requests must include the <code>X-API-Key</code> header. The server only listens on <code>127.0.0.1</code> — not accessible from other machines.
-          Subscribe to <code>/events</code> for real-time scan and transfer updates via Server-Sent Events (SSE).
+        <div style="font-size:10.5px;color:var(--muted);margin-top:8px;line-height:1.55;">
+          All requests must include the <code>X-API-Key</code> header. Server listens on <code>127.0.0.1</code> only.
+          Use <code>/events</code> for real-time SSE updates.
         </div>
       </div>
-      <div class="modal-actions">
+      <div class="modal-actions" style="flex-shrink:0;">
         <button type="button" id="apiSettingsDone" class="btn-go">Done</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Verify Library Modal ────────────────────────────────────────────────── -->
+  <div id="verifyModalBackdrop" class="modal-backdrop" aria-hidden="true">
+    <div class="modal" role="dialog" aria-modal="true" style="max-width:680px;">
+      <div class="modal-header" style="padding-bottom:8px;">
+        <h4 style="margin:0;font-size:14px;font-weight:600;">Verify Library</h4>
+        <button type="button" id="verifyCloseX" class="close-btn" title="Close">✕</button>
+      </div>
+      <div style="padding:2px 0 8px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+        <span id="verifyStatusText" style="font-size:12px;color:var(--muted);flex:1;">—</span>
+        <div id="verifyBadges" style="display:flex;gap:6px;"></div>
+      </div>
+      <div class="modal-body modal-body--scroll" id="verifyBody" style="padding:2px"></div>
+      <div class="modal-actions">
+        <button type="button" id="verifyClose" class="btn">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Diff / Compare Modal ────────────────────────────────────────────────── -->
+  <div id="diffModalBackdrop" class="modal-backdrop" aria-hidden="true">
+    <div class="modal" role="dialog" aria-modal="true" style="max-width:740px;">
+      <div class="modal-header" style="padding-bottom:8px;">
+        <h4 style="margin:0;font-size:14px;font-weight:600;">Library Diff / Compare</h4>
+        <button type="button" id="diffCloseX" class="close-btn" title="Close">✕</button>
+      </div>
+      <div style="display:flex;gap:8px;margin-bottom:10px;align-items:flex-end;flex-wrap:wrap;">
+        <div style="flex:1;">
+          <div style="font-size:11px;color:var(--muted);font-weight:600;margin-bottom:3px;">Source A (already scanned)</div>
+          <div id="diffLabelA" style="font-size:12px;color:var(--title);padding:5px 9px;background:rgba(59,130,246,0.08);border:1px solid rgba(59,130,246,0.2);border-radius:5px;min-height:26px;">—</div>
+        </div>
+        <div style="flex:1;">
+          <div style="font-size:11px;color:var(--muted);font-weight:600;margin-bottom:3px;">Source B (scan target)</div>
+          <input id="diffSourceB" type="text" placeholder="e.g., D:\Backup or ftp://192.168.1.x" style="width:100%;padding:5px 9px;border:1px solid var(--card-border);background:var(--select-bg);color:var(--title);border-radius:5px;font-size:12px;" />
+        </div>
+        <button type="button" id="diffScanBtn" class="btn-go" style="flex:0 0 auto;white-space:nowrap;">Compare</button>
+      </div>
+      <div id="diffStatusText" style="font-size:12px;color:var(--muted);margin-bottom:6px;"></div>
+      <div class="modal-body modal-body--scroll" id="diffBody" style="padding:2px"></div>
+      <div class="modal-actions">
+        <button type="button" id="diffTransferMissing" class="btn-go" style="display:none;" title="Transfer all games in A that are missing from B">Transfer Missing →</button>
+        <button type="button" id="diffClose" class="btn">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Library Stats Modal ─────────────────────────────────────────────────── -->
+  <div id="statsModalBackdrop" class="modal-backdrop" aria-hidden="true">
+    <div class="modal" role="dialog" aria-modal="true" style="max-width:560px;">
+      <div class="modal-header" style="padding-bottom:8px;">
+        <h4 style="margin:0;font-size:14px;font-weight:600;">Library Stats</h4>
+        <button type="button" id="statsCloseX" class="close-btn" title="Close">✕</button>
+      </div>
+      <div class="modal-body" id="statsBody" style="padding:4px 0 8px"></div>
+      <div class="modal-actions">
+        <button type="button" id="statsClose" class="btn">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Sub-folder picker Modal ─────────────────────────────────────────────── -->
+  <div id="subfolderModalBackdrop" class="modal-backdrop" aria-hidden="true">
+    <div class="modal" role="dialog" aria-modal="true" style="max-width:520px;">
+      <div class="modal-header" style="padding-bottom:8px;">
+        <h4 id="subfolderModalTitle" style="margin:0;font-size:14px;font-weight:600;">Select Sub-folders to Transfer</h4>
+        <button type="button" id="subfolderCloseX" class="close-btn" title="Close">✕</button>
+      </div>
+      <div class="modal-body modal-body--scroll" id="subfolderBody" style="padding:2px"></div>
+      <div class="modal-actions">
+        <button type="button" id="subfolderCancel" class="btn">Cancel</button>
+        <button type="button" id="subfolderProceed" class="btn-go">Transfer Selected</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── FTP Storage Info Modal ──────────────────────────────────────────────── -->
+  <div id="ftpStorageModalBackdrop" class="modal-backdrop" aria-hidden="true">
+    <div class="modal" role="dialog" aria-modal="true" style="max-width:460px;">
+      <div class="modal-header" style="padding-bottom:8px;">
+        <h4 style="margin:0;font-size:14px;font-weight:600;">PS5 Storage</h4>
+        <button type="button" id="ftpStorageCloseX" class="close-btn" title="Close">✕</button>
+      </div>
+      <div class="modal-body" id="ftpStorageBody" style="padding:4px 0 8px"></div>
+      <div class="modal-actions">
+        <button type="button" id="ftpStorageClose" class="btn">Close</button>
       </div>
     </div>
   </div>

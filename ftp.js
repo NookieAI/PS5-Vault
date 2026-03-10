@@ -22,6 +22,11 @@
       if (c.user) users.add(c.user);
     }
     // Add preset paths
+    paths.add('/data/etaHEN/games');
+    paths.add('/data/games');
+    paths.add('/mnt/ext1/etaHEN/games');
+    paths.add('/mnt/usb0/etaHEN/games');
+    paths.add('/mnt/usb1/etaHEN/games');
     paths.add('/mnt/usb0');
     paths.add('/mnt/usb1');
     paths.add('/mnt/ext1');
@@ -38,8 +43,11 @@
     }
     const portHistory = document.getElementById('portHistory');
     if (portHistory) {
+      // Merge recent ports with the seeded common PS5 ports
+      const allPorts = new Set(['1337', '2121', '1338', '21']);
+      for (const p of ports) allPorts.add(String(p));
       portHistory.innerHTML = '';
-      for (const p of ports) {
+      for (const p of allPorts) {
         const opt = document.createElement('option');
         opt.value = p;
         portHistory.appendChild(opt);
@@ -91,19 +99,29 @@
       return Promise.resolve(null);
     }
 
+    // Default path by port — 1337 = etaHEN internal, 2121 = ftpsrv (serves /data root)
+    function defaultPathForPort(port) {
+      const p = String(port);
+      if (p === '1337') return '/data/etaHEN/games';
+      if (p === '2121') return '/data/etaHEN/games';
+      return '/data/etaHEN/games';
+    }
+
     // Parse initialUrl if provided
     if (initialUrl) {
       try {
         const url = new URL(initialUrl.startsWith('ftp://') ? initialUrl : 'ftp://' + initialUrl);
+        const detectedPort = (url.port && /^\d+$/.test(url.port)) ? url.port : '';
         hostInput.value = url.hostname;
-        portInput.value = (url.port && /^\d+$/.test(url.port)) ? url.port : '1337';
-        pathInput.value = url.pathname || '/';
+        portInput.value = detectedPort;
+        // Only use URL pathname if it's something other than root '/'
+        pathInput.value = (url.pathname && url.pathname !== '/') ? url.pathname : defaultPathForPort(detectedPort);
         userInput.value = url.username || 'anonymous';
         passInput.value = url.password || '';
       } catch (e) {
         hostInput.value = initialUrl.replace('ftp://', '').split(':')[0] || '';
-        portInput.value = '1337';
-        pathInput.value = '/';
+        portInput.value = '';
+        pathInput.value = defaultPathForPort('');
         userInput.value = 'anonymous';
         passInput.value = '';
       }
@@ -112,8 +130,8 @@
       const lastConfig = getLastFtpConfig();
       if (lastConfig) {
         hostInput.value = lastConfig.host || '';
-        portInput.value = lastConfig.port || '1337';
-        pathInput.value = lastConfig.path || '/mnt/ext1/etaHEN/games';
+        portInput.value = lastConfig.port || '';
+        pathInput.value = lastConfig.path || defaultPathForPort(lastConfig.port);
         userInput.value = lastConfig.user || 'anonymous';
         passInput.value = lastConfig.pass || '';
         passiveCheckbox.checked = lastConfig.passive !== false; // Default to true
@@ -122,8 +140,8 @@
         if (speedLimitInput) speedLimitInput.value = lastConfig.speedLimitKbps || '0';
       } else {
         hostInput.value = '';
-        portInput.value = '1337';
-        pathInput.value = '/mnt/ext1/etaHEN/games';
+        portInput.value = '';
+        pathInput.value = defaultPathForPort('');
         userInput.value = 'anonymous';
         passInput.value = '';
         passiveCheckbox.checked = true; // Default passive mode
@@ -132,6 +150,15 @@
         if (speedLimitInput) speedLimitInput.value = '0';
       }
     }
+
+    // When port changes and path is still a default, update path suggestion to match port
+    portInput.addEventListener('change', () => {
+      const currentPath = pathInput.value.trim();
+      const suggestedPaths = ['/data/etaHEN/games', '/mnt/ext1/etaHEN/games', '/'];
+      if (!currentPath || suggestedPaths.includes(currentPath)) {
+        pathInput.value = defaultPathForPort(portInput.value.trim());
+      }
+    });
 
     backdrop.style.display = 'flex';
     backdrop.setAttribute('aria-hidden', 'false');
@@ -151,7 +178,7 @@
       // ── Test connection ──────────────────────────────────────────────────
       const onTest = async () => {
         const host = hostInput.value.trim();
-        const port = portInput.value.trim() || '1337';
+        const port = portInput.value.trim();
         const user = userInput.value.trim() || 'anonymous';
         const pass = passInput.value.trim() || '';
         if (!host) { toast('Enter a host address first'); return; }
@@ -190,13 +217,15 @@
 
         // Validate host
         if (!config.host) { toast('Please enter a host address.'); return; }
-        // Validate port
-        const portNum = parseInt(config.port);
-        if (isNaN(portNum) || portNum < 1 || portNum > 65535) {
+        // Validate port — blank → default 2121
+        const portNum = parseInt(config.port) || 2121;
+        if (portNum < 1 || portNum > 65535) {
           toast('Invalid port — must be between 1 and 65535.');
           return;
         }
         config.port = String(portNum);
+        // Save as last config immediately so port persists
+        if (window.addRecentFtp) window.addRecentFtp(config);
 
         // Validate buffer size
         if (config.bufferSize < 1024 || config.bufferSize > 1048576) {
