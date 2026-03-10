@@ -1,52 +1,56 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
-// Expose protected methods that allow the renderer process to use
-// the ipcRenderer without exposing the entire object
 contextBridge.exposeInMainWorld('ppsaApi', {
-  openDirectory: () => ipcRenderer.invoke('open-directory'),
-  cancelOperation: () => ipcRenderer.invoke('cancel-operation'),
-  scanSource: (sourceDir, opts) => ipcRenderer.invoke('scan-source', sourceDir, opts),
-  ensureAndPopulate: (opts) => ipcRenderer.invoke('ensure-and-populate', opts),
-  checkConflicts: (items, dest, layout, customName) => ipcRenderer.invoke('check-conflicts', items, dest, layout, customName),
-  showInFolder: (targetPath) => ipcRenderer.invoke('show-in-folder', targetPath),
-  openExternal: (url) => ipcRenderer.invoke('open-external-link', url),
-  copyToClipboard: (text) => ipcRenderer.invoke('clipboard-write', text),
-  deleteItem: (item) => ipcRenderer.invoke('delete-item', item),
-  renameItem: (item, newName) => ipcRenderer.invoke('rename-item', item, newName),
-  ftpRenameItem: (config, oldPath, newPath) => ipcRenderer.invoke('ftp-rename-item', config, oldPath, newPath),
-  ftpDeleteItem: (config, path) => ipcRenderer.invoke('ftp-delete-item', config, path),
-  clearFtpSizeCache: () => ipcRenderer.invoke('clear-ftp-size-cache'),
-  ftpCacheStats: () => ipcRenderer.invoke('ftp-cache-stats'),
-  moveToLayout: (item, dest, layout) => ipcRenderer.invoke('move-to-layout', item, dest, layout),
-  resumeTransfer: (state) => ipcRenderer.invoke('resume-transfer', state),
-  getAllDrives: () => ipcRenderer.invoke('get-all-drives'),
+  // ── Directory / file ops ────────────────────────────────────────────────
+  openDirectory:    ()            => ipcRenderer.invoke('open-directory'),
+  showInFolder:     (p)           => ipcRenderer.invoke('show-in-folder', p),
+  openExternal:     (url)         => ipcRenderer.invoke('open-external-link', url),
+  copyToClipboard:  (text)        => ipcRenderer.invoke('clipboard-write', text),
 
-  // Listener for progress updates
-  onScanProgress: (callback) => {
-    ipcRenderer.on('scan-progress', (event, data) => callback(data));
-  },
-  offScanProgress: () => {
-    ipcRenderer.removeAllListeners('scan-progress');
-  },
+  // ── Scan ────────────────────────────────────────────────────────────────
+  scanSource:       (src, opts)   => ipcRenderer.invoke('scan-source', src, opts),
+  getAllDrives:      ()            => ipcRenderer.invoke('get-all-drives'),
+  cancelOperation:  ()            => ipcRenderer.invoke('cancel-operation'),
 
-  // Auto-updater
-  onUpdateAvailable: (callback) => {
-    ipcRenderer.on('update-available', (event, info) => callback(info));
-  },
-  onAppVersion: (callback) => {
-    ipcRenderer.on('app-version', (event, ver) => callback(ver));
-  },
-  onUpdateDownloadProgress: (callback) => {
-    ipcRenderer.on('update-download-progress', (event, data) => callback(data));
-  },
-  downloadAndInstallUpdate: (downloadUrl) => ipcRenderer.invoke('download-and-install-update', downloadUrl),
-  checkForUpdatesManual:    ()             => ipcRenderer.invoke('check-for-updates-manual'),
+  // ── Transfer / layout ───────────────────────────────────────────────────
+  ensureAndPopulate:(opts)        => ipcRenderer.invoke('ensure-and-populate', opts),
+  checkConflicts:   (items, dest, layout, customName) => ipcRenderer.invoke('check-conflicts', items, dest, layout, customName),
+  moveToLayout:     (item, dest, layout) => ipcRenderer.invoke('move-to-layout', item, dest, layout),
+  resumeTransfer:   (state)       => ipcRenderer.invoke('resume-transfer', state),
 
-  // Developer API management
-  getApiStatus:      ()       => ipcRenderer.invoke('get-api-status'),
-  getApiKey:         ()       => ipcRenderer.invoke('get-api-key'),
-  regenerateApiKey:  ()       => ipcRenderer.invoke('regenerate-api-key'),
+  // ── Local item ops ──────────────────────────────────────────────────────
+  deleteItem:       (item)        => ipcRenderer.invoke('delete-item', item),
+  trashItem:        (item)        => ipcRenderer.invoke('trash-item', item),
+  renameItem:       (item, name)  => ipcRenderer.invoke('rename-item', item, name),
 
-  // FTP utilities
-  ftpTestConnection: (config) => ipcRenderer.invoke('ftp-test-connection', config),
+  // ── FTP ─────────────────────────────────────────────────────────────────
+  ps5Discover:            (timeout)        => ipcRenderer.invoke('ps5-discover', timeout),
+  ftpTestConnection:      (cfg)            => ipcRenderer.invoke('ftp-test-connection', cfg),
+  ftpStorageInfo:         (cfg, items)     => ipcRenderer.invoke('ftp-storage-info', cfg, items),
+  ftpRenameItem:          (cfg, old, nw)   => ipcRenderer.invoke('ftp-rename-item', cfg, old, nw),
+  ftpDeleteItem:          (cfg, path)      => ipcRenderer.invoke('ftp-delete-item', cfg, path),
+  clearFtpSizeCache:      ()               => ipcRenderer.invoke('clear-ftp-size-cache'),
+  ftpCacheStats:          ()               => ipcRenderer.invoke('ftp-cache-stats'),
+
+  // ── Verify / checksums ──────────────────────────────────────────────────
+  verifyLibrary:          (items, ftpCfg)  => ipcRenderer.invoke('verify-library', items, ftpCfg),
+  listGameSubfolders:     (p, cfg)         => ipcRenderer.invoke('list-game-subfolders', p, cfg),
+  getChecksumDb:          ()               => ipcRenderer.invoke('get-checksum-db'),
+  recordTransferChecksums:(data)           => ipcRenderer.invoke('record-transfer-checksums', data),
+
+  // ── API server ──────────────────────────────────────────────────────────
+  getApiKey:        ()            => ipcRenderer.invoke('get-api-key'),
+  getApiStatus:     ()            => ipcRenderer.invoke('get-api-status'),
+  regenerateApiKey: ()            => ipcRenderer.invoke('regenerate-api-key'),
+
+  // ── Auto-updater ────────────────────────────────────────────────────────
+  checkForUpdatesManual:      ()           => ipcRenderer.invoke('check-for-updates-manual'),
+  downloadAndInstallUpdate:   (url)        => ipcRenderer.invoke('download-and-install-update', url),
+
+  // ── IPC event listeners ─────────────────────────────────────────────────
+  onScanProgress:           (cb) => ipcRenderer.on('scan-progress',           (_, d) => cb(d)),
+  offScanProgress:          ()   => ipcRenderer.removeAllListeners('scan-progress'),
+  onUpdateAvailable:        (cb) => ipcRenderer.on('update-available',        (_, d) => cb(d)),
+  onUpdateDownloadProgress: (cb) => ipcRenderer.on('update-download-progress',(_, d) => cb(d)),
+  onAppVersion:             (cb) => ipcRenderer.on('app-version',             (_, v) => cb(v)),
 });

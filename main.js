@@ -633,8 +633,33 @@ async function copyAndVerifyFile(srcPath, dstPath, progressCallback, cancelCheck
 }
 
 async function removePathRecursive(p) {
-  if (!p) return;
-  await fs.promises.rm(p, { recursive: true, force: true });
+  if (!p || typeof p !== 'string') return;
+
+  // Normalise to absolute so relative paths can't bypass checks.
+  const abs = path.resolve(p);
+
+  // Refuse paths that are too shallow (need at least 3 segments deep).
+  const segments = abs.split(path.sep).filter(Boolean);
+  if (segments.length < 3) {
+    console.error('[removePathRecursive] REFUSED — path too shallow:', abs);
+    throw new Error('Refusing to delete shallow path: ' + abs);
+  }
+
+  // Deny known dangerous roots.
+  const dangerous = ['/', '/data', '/mnt', '/system', '/usr', '/etc',
+    '/bin', '/sbin', '/lib', '/proc', '/dev', '/tmp'].map(d => path.resolve(d));
+  if (dangerous.includes(abs)) {
+    console.error('[removePathRecursive] REFUSED — protected path:', abs);
+    throw new Error('Refusing to delete protected path: ' + abs);
+  }
+
+  // On Windows deny drive roots (C:\ etc.)
+  if (process.platform === 'win32' && /^[A-Z]:\\?$/i.test(abs)) {
+    console.error('[removePathRecursive] REFUSED — drive root:', abs);
+    throw new Error('Refusing to delete drive root: ' + abs);
+  }
+
+  await fs.promises.rm(abs, { recursive: true, force: true });
 }
 
 async function ensureUniqueTarget(basePath) {
@@ -826,6 +851,7 @@ class FtpConnectionPool {
       this._active++;
       const c = new ftp.Client();
       c.ftp.verbose = false;
+      if (this._opts._passive === false) c.ftp.passive = false;
       try {
         await c.access(this._opts);
         return c;
@@ -1029,6 +1055,7 @@ async function buildFtpManifest(ftpConfig, rootPath, progressCallback, cancelChe
   try {
     probeClient = new ftp.Client();
     probeClient.ftp.verbose = false;
+    applyFtpPassive(probeClient, ftpConfig);
     await probeClient.access({
       host: ftpConfig.host, port: parseInt(ftpConfig.port, 10),
       user: ftpConfig.user || 'anonymous', password: ftpConfig.pass || '', secure: false
@@ -1075,6 +1102,7 @@ async function buildFtpManifest(ftpConfig, rootPath, progressCallback, cancelChe
     Array.from({ length: remainingCount }, async () => {
       const c = new ftp.Client();
       c.ftp.verbose = false;
+      applyFtpPassive(c, ftpConfig);
       try { await c.access(accessOpts); return c; }
       catch (e) { console.warn('[FTP Manifest] Worker connection failed:', e.message); return null; }
     })
@@ -1099,135 +1127,158 @@ async function buildFtpManifest(ftpConfig, rootPath, progressCallback, cancelChe
 
 async function scanFtpRecursive(client, remotePath, items, depth, onGameFound) {
   if (depth > MAX_SCAN_DEPTH) return;
-  if (remotePath.includes('/sce_sys/')) return;
+  // Never recurse into sce_sys — it only contains metadata, not games
+  if (remotePath.includes('/sce_sys/') || remotePath.endsWith('/sce_sys')) return;
+
   try {
-    console.log('[FTP] Listing directory:', remotePath);
     try {
       await client.cd(remotePath);
     } catch (e) {
       await client.cd('"' + remotePath + '"');
     }
     const list = await client.list();
-    console.log('[FTP] Found', list.length, 'items in', remotePath);
 
-    // Download an FTP file directly into a memory Buffer — no temp files on disk.
-    // Writing to os.tmpdir() then reading back is flagged by ESET HIPS as a dropper
-    // pattern. A Writable stream accumulated into a Buffer is AV-safe.
-    // Defined once here (not inside the loop) so it isn't recreated on every iteration.
-    const downloadToBuffer = (remotePath) => new Promise((resolve, reject) => {
+    // Download a remote file into a memory Buffer — AV-safe (no temp files).
+    const downloadToBuffer = (p) => new Promise((resolve, reject) => {
       const chunks = [];
-      const writable = new Writable({
-        write(chunk, _enc, cb) { chunks.push(chunk); cb(); }
-      });
+      const writable = new Writable({ write(chunk, _enc, cb) { chunks.push(chunk); cb(); } });
       writable.on('finish', () => resolve(Buffer.concat(chunks)));
       writable.on('error', reject);
-      withFtpLock(() => client.downloadTo(writable, remotePath)).catch(reject);
+      withFtpLock(() => client.downloadTo(writable, p)).catch(reject);
     });
 
-    if (depth === 0) {
-      // At games level, check each directory for param.json directly
-      for (const item of list) {
-        if (!item.isDirectory) continue;
-        const gamePath = path.posix.join(remotePath, item.name); // POSIX
-        let paramPath = path.posix.join(gamePath, 'sce_sys', 'param.json'); // POSIX
-        let data = null;
+    // ── Build a game record once param.json has been parsed ──────────────
+    const buildAndEmit = async (data, gameFolderPath, outerFolderPath, folderName) => {
+      const ppsaKey = extractPpsaKey(data.titleId || data.contentId || '');
+      const sku     = normalizeSku(data.localizedParameters?.en?.['@SKU'] || '');
+      const title   = getTitleFromParam(data, null);
+
+      // Fetch cover from sce_sys inside gameFolderPath
+      let cover = '';
+      const coverCandidates = [
+        'sce_sys/icon0.png', 'sce_sys/icon0.jpg', 'sce_sys/icon0.jpeg',
+        'sce_sys/icon.png',  'sce_sys/cover.png', 'sce_sys/cover.jpg',
+        'sce_sys/tile0.png', 'icon0.png', 'icon0.jpg', 'icon0.jpeg',
+        'icon.png', 'cover.png', 'cover.jpg', 'tile0.png'
+      ];
+      for (const cand of coverCandidates) {
         try {
-          console.log('[FTP] Checking for param.json in:', gamePath, 'via sce_sys');
-          const buf = await downloadToBuffer(paramPath);
+          const buf = await downloadToBuffer(path.posix.join(gameFolderPath, cand));
+          cover = 'data:image/png;base64,' + buf.toString('base64');
+          console.log('[FTP] Fetched cover for:', title, 'using', cand);
+          break;
+        } catch (_) {}
+      }
+      if (!cover) console.log('[FTP] No cover for:', title);
+
+      const record = {
+        ppsa:             ppsaKey,
+        ppsaFolderPath:   gameFolderPath,
+        contentFolderPath: path.posix.join(gameFolderPath, 'sce_sys'),
+        folderPath:       gameFolderPath,
+        outerFolderPath:  outerFolderPath || null,
+        folderName:       folderName || path.posix.basename(gameFolderPath),
+        contentId:        data.contentId,
+        skuFromParam:     sku,
+        displayTitle:     title,
+        region:           data.defaultLanguage || data.localizedParameters?.defaultLanguage || '',
+        contentVersion:   data.contentVersion || data.masterVersion || data.version,
+        sdkVersion:       data.sdkVersion,
+        totalSize:        null,
+        iconPath:         cover,
+        paramParsed:      data,
+      };
+      console.log('[FTP] Found game:', title, 'at', gameFolderPath);
+      items.push(record);
+      try { onGameFound?.(record); } catch (_) {}
+      return record;
+    };
+
+    // ── Try fast direct-download of param.json ────────────────────────────
+    // Attempt to grab param.json without listing subdirectories — much faster
+    // than recursing into every folder. Works for the standard layout:
+    //   games/PPSA12345/sce_sys/param.json   (depth 0: remotePath = games/)
+    //   games/Title/PPSA12345/sce_sys/param.json  (depth 0: outer=Title, inner=PPSA*)
+    // Falls through to full recursion if not found here.
+    const ftpSkippable = new Set(['sandbox', '$recycle.bin', 'recycle.bin', 'windows',
+      'program files', 'program files (x86)', 'programdata', 'system volume information',
+      'sce_sys', 'sce_module', 'sce_discmap', 'media']);
+
+    const dirsHere = list.filter(e => e.isDirectory && !ftpSkippable.has(e.name.toLowerCase()));
+
+    // Track which subfolders we successfully handled as games so we don't recurse into them
+    const handledPaths = new Set();
+
+    for (const entry of dirsHere) {
+      const entryPath = path.posix.join(remotePath, entry.name);
+
+      // ── Attempt 1: entry itself is a game root (PPSA* or custom-named) ──
+      let data = null;
+      for (const paramLoc of ['sce_sys/param.json', 'param.json']) {
+        try {
+          const buf = await downloadToBuffer(path.posix.join(entryPath, paramLoc));
           data = JSON.parse(buf.toString('utf8'));
-        } catch (e) {
-          // Try direct param.json
-          paramPath = path.posix.join(gamePath, 'param.json'); // POSIX
-          try {
-            console.log('[FTP] Checking for param.json in:', gamePath, 'directly');
-            const buf = await downloadToBuffer(paramPath);
-            data = JSON.parse(buf.toString('utf8'));
-          } catch (e2) {
-            // Skip — no param.json found
-          }
-        }
+          break;
+        } catch (_) {}
+      }
+      if (data) {
+        await buildAndEmit(data, entryPath, null, entry.name);
+        handledPaths.add(entryPath);
+        continue;
+      }
 
-        if (data) {
-          console.log('[FTP] Parsed param.json data:', data);
-          const ppsaKey = extractPpsaKey(data.titleId || data.contentId || '');
-          const sku = normalizeSku(data.localizedParameters?.en?.['@SKU'] || '');
-          const title = getTitleFromParam(data, null);
-          const folder = item.name;
-          // Skip size calculation for FTP to keep fast
-          const size = null; // Leave blank for FTP
+      // ── Attempt 2: entry is a wrapper folder (Title/PPSA*/sce_sys/param.json) ──
+      // List one level down to find PPSA-style subfolders
+      let subList = null;
+      try {
+        await Promise.race([client.cd(entryPath), new Promise((_, r) => setTimeout(() => r(new Error('timeout')), 4000))]);
+        subList = await Promise.race([
+          client.list(),
+          new Promise((_, r) => setTimeout(() => r(new Error('timeout')), 4000))
+        ]);
+      } catch (_) {}
 
-          console.log('[FTP] Found game:', title, 'in', folder);
-
-          // Fetch cover art BEFORE building the record so iconPath is populated from first stream
-          let cover = '';
-          const coverCandidates = ['sce_sys/icon0.png', 'sce_sys/icon0.jpg', 'sce_sys/icon0.jpeg', 'sce_sys/icon.png', 'sce_sys/cover.png', 'sce_sys/cover.jpg', 'sce_sys/tile0.png', 'icon0.png', 'icon0.jpg', 'icon0.jpeg', 'icon.png', 'cover.png', 'cover.jpg', 'tile0.png'];
-          for (const cand of coverCandidates) {
-            const coverPath = path.posix.join(gamePath, cand);
-            // Download cover directly into memory — no temp files on disk (AV-safe)
+      if (subList) {
+        let foundInner = false;
+        for (const sub of subList.filter(e => e.isDirectory)) {
+          const subPath = path.posix.join(entryPath, sub.name);
+          let innerData = null;
+          for (const paramLoc of ['sce_sys/param.json', 'param.json']) {
             try {
-              const coverBuffer = await downloadToBuffer(coverPath);
-              cover = 'data:image/png;base64,' + coverBuffer.toString('base64');
-              console.log('[FTP] Fetched cover for:', title, 'using', cand);
+              const buf = await downloadToBuffer(path.posix.join(subPath, paramLoc));
+              innerData = JSON.parse(buf.toString('utf8'));
               break;
-            } catch (e) {
-              // Try next candidate
-            }
+            } catch (_) {}
           }
-          if (!cover) console.log('[FTP] No cover for:', title);
-
-          const gameRecord = {
-            ppsa: ppsaKey,
-            ppsaFolderPath: gamePath,
-            contentFolderPath: path.posix.join(gamePath, 'sce_sys'),
-            folderPath: gamePath,
-            folderName: folder,
-            contentId: data.contentId,
-            skuFromParam: sku,
-            displayTitle: title,
-            region: data.defaultLanguage || (data.localizedParameters?.defaultLanguage) || '',
-            contentVersion: data.contentVersion || data.masterVersion || data.version,
-            sdkVersion: data.sdkVersion,
-            totalSize: null, // filled by size calculation phase
-            iconPath: cover,
-            paramParsed: data
-          };
-
-          items.push(gameRecord);
-          // Stream this game to the UI immediately — renderer shows it without waiting for all games
-          try { onGameFound?.(gameRecord); } catch (_) {}
+          if (innerData) {
+            await buildAndEmit(innerData, subPath, entryPath, entry.name);
+            foundInner = true;
+          }
+        }
+        if (foundInner) {
+          handledPaths.add(entryPath);
+          continue;
         }
       }
-      return; // Don't recurse deeper at depth 0
-    }
 
-    // Check if this is a game dir (has sce_sys), if so, don't recurse
-    const hasSceSys = list.some(item => item.isDirectory && item.name === 'sce_sys');
-    if (hasSceSys) {
-      console.log('[FTP] Skipping recursion for game dir:', remotePath);
-      return;
-    }
-
-    // Recurse into subdirs only if not a game dir
-    const ftpSkippable = ['sandbox', '$recycle.bin', 'recycle.bin', 'windows', 'program files', 'program files (x86)', 'programdata'];
-    for (const item of list) {
-      if (item.isDirectory) {
-        const subPath = path.posix.join(remotePath, item.name); // POSIX
-        // Skip skippable dirs at depth 0
-        if (depth === 0 && ftpSkippable.includes(item.name.toLowerCase())) continue;
+      // ── Attempt 3: not found by fast path — fall back to full recursion ──
+      // This handles arbitrarily deep nesting (e.g. Title/Disc1/PPSA*/sce_sys/param.json)
+      if (!handledPaths.has(entryPath)) {
         try {
-          await scanFtpRecursive(client, subPath, items, depth + 1, onGameFound);
+          await scanFtpRecursive(client, entryPath, items, depth + 1, onGameFound);
         } catch (e) {
-          console.error('[FTP] Error recursing into:', subPath, e);
+          console.error('[FTP] Error recursing into:', entryPath, e);
         }
       }
     }
+
   } catch (e) {
-    console.error('[FTP] Error listing or recursing:', remotePath, e);
+    console.error('[FTP] Error listing:', remotePath, e);
   }
 }
 
 async function scanFtpSource(ftpUrl, scanOpts = {}) {
-  const { sender = null, calcSize = true } = scanOpts;
+  const { sender = null, calcSize = true, ftpConfig: callerFtpCfg = null } = scanOpts;
   let url;
   try {
     url = new URL(ftpUrl);
@@ -1263,12 +1314,18 @@ async function scanFtpSource(ftpUrl, scanOpts = {}) {
   // Ensure remotePath ends with / for consistency
   if (!remotePath.endsWith('/')) remotePath += '/';
 
-  // ftpConfig object reused by buildFtpManifest
-  const ftpConfig = { host, port, user, pass };
+  // ftpConfig object reused by buildFtpManifest — merge caller settings for passive/buffer/parallel
+  const ftpConfig = { host, port, user, pass,
+    passive: callerFtpCfg?.passive,
+    bufferSize: callerFtpCfg?.bufferSize,
+    parallel: callerFtpCfg?.parallel,
+    speedLimitKbps: callerFtpCfg?.speedLimitKbps,
+  };
 
   console.log('ftpUrl:', ftpUrl, 'url.port:', url.port, 'final port:', port);
   console.log('[FTP] Connecting to:', { host, port, user, pass: pass ? '***' : 'none' });
   const client = new ftp.Client();
+  applyFtpPassive(client, ftpConfig);
   try {
     await client.access({ host, port: parseInt(port), user, password: pass, secure: false });
     console.log('[FTP] Connected successfully');
@@ -1760,6 +1817,13 @@ async function findContentFoldersByTopLevelWithProgress(startDir, sender, extern
 }
 
 // Add FTP download function — uses parallel manifest for accurate size & fast walk
+function applyFtpPassive(client, ftpConfig) {
+  // basic-ftp defaults to passive=true. Only override if explicitly disabled.
+  if (ftpConfig && ftpConfig.passive === false) {
+    client.ftp.passive = false;
+  }
+}
+
 async function downloadFtpFolder(ftpConfig, remotePath, localPath, progressCallback, cancelCheck) {
   // Build the manifest in parallel first — this replaces the serial getFtpFolderSize walk
   // AND the recursive walk during actual download (two traversals → one).
@@ -1776,6 +1840,7 @@ async function downloadFtpFolder(ftpConfig, remotePath, localPath, progressCallb
     // Graceful fallback: open a new client and do it the old serial way
     const fallbackClient = new ftp.Client();
     try {
+      applyFtpPassive(fallbackClient, ftpConfig);
       await fallbackClient.access({ host: ftpConfig.host, port: parseInt(ftpConfig.port, 10), user: ftpConfig.user || 'anonymous', password: ftpConfig.pass || '', secure: false });
       // downloadFtpRecursive is not available — surface the original error
       console.error('[FTP] Manifest failed and no serial fallback available:', e.message);
@@ -1793,6 +1858,7 @@ async function downloadFtpFolder(ftpConfig, remotePath, localPath, progressCallb
 
   // Download using a single connection sequentially — PS5 doesn't handle parallel uploads/downloads well
   const client = new ftp.Client();
+  applyFtpPassive(client, ftpConfig);
   try {
     await client.access({ host: ftpConfig.host, port: parseInt(ftpConfig.port, 10), user: ftpConfig.user || 'anonymous', password: ftpConfig.pass || '', secure: false });
     let bytesCopied = 0;
@@ -1810,19 +1876,31 @@ async function downloadFtpFolder(ftpConfig, remotePath, localPath, progressCallb
       const localDest = path.join(localPath, ...fileEntry.relPath.split('/'));
       await fs.promises.mkdir(path.dirname(localDest), { recursive: true });
 
-      // Retry up to 3 times on transient FTP errors
+      // Retry up to 3 times on transient FTP errors — also auto-reconnects on disconnect
       let downloaded = false;
-      for (let attempt = 1; attempt <= 3 && !downloaded; attempt++) {
+      for (let attempt = 1; attempt <= 5 && !downloaded; attempt++) {
         try {
           await client.downloadTo(localDest, fileEntry.remotePath);
           downloaded = true;
         } catch (e) {
           if (cancelCheck?.()) throw new Error('Cancelled');
-          if (attempt === 3) {
-            console.warn('[FTP] Download failed after 3 attempts for', fileEntry.remotePath, ':', e.message);
+          const isDisconnect = /connection|closed|reset|ECONNRESET|ENOTCONN|FIN/i.test(e.message || '');
+          if (attempt >= 5) {
+            console.warn('[FTP] Download failed after 5 attempts for', fileEntry.remotePath, ':', e.message);
           } else {
-            console.warn(`[FTP] Download attempt ${attempt} failed for`, fileEntry.remotePath, '— retrying:', e.message);
-            await new Promise(r => setTimeout(r, 500 * attempt));
+            const delay = isDisconnect ? 1500 : 500;
+            console.warn(`[FTP] Download attempt ${attempt} failed for`, fileEntry.remotePath, '— retrying in', delay + 'ms:', e.message);
+            await new Promise(r => setTimeout(r, delay));
+            // On disconnect, re-establish the connection transparently
+            if (isDisconnect) {
+              try { client.close(); } catch (_) {}
+              await client.access({ host: ftpConfig.host, port: parseInt(ftpConfig.port, 10), user: ftpConfig.user || 'anonymous', password: ftpConfig.pass || '', secure: false });
+              client.trackProgress(info => {
+                if (cancelCheck?.()) return;
+                const fileCumulative = bytesCopied + (info.bytes || 0);
+                progressCallback?.({ type: 'go-file-progress', fileRel: info.name || '', totalBytesCopied: Math.min(fileCumulative, totalSize), totalBytes: totalSize });
+              });
+            }
           }
         }
       }
@@ -1880,7 +1958,7 @@ async function uploadFtpFolder(ftpConfig, localPath, remotePath, progressCallbac
   // Apply passive mode
   if (ftpConfig.passive === false) client.ftp.passive = false;
   // Increase socket send/receive buffers for throughput (basic-ftp exposes socket after connect)
-  const bufBytes = (ftpConfig.bufferSizeKb || 64) * 1024;
+  const bufBytes = ftpConfig.bufferSize || (ftpConfig.bufferSizeKb || 64) * 1024;
   try {
     await client.access({ host: ftpConfig.host, port: parseInt(ftpConfig.port), user: ftpConfig.user || 'anonymous', password: ftpConfig.pass || '', secure: false });
     // Set socket buffer sizes immediately after connect for maximum throughput
@@ -1959,7 +2037,7 @@ async function uploadFtpRecursive(client, localPath, remotePath, progressCallbac
     if (ent.isFile()) {
       let uploaded = false;
       let lastErr = null;
-      for (let attempt = 1; attempt <= 3 && !uploaded; attempt++) {
+      for (let attempt = 1; attempt <= 5 && !uploaded; attempt++) {
         try {
           if (speedLimitBps > 0) {
             const rs = fs.createReadStream(localItem, { highWaterMark: bufBytes });
@@ -1975,8 +2053,20 @@ async function uploadFtpRecursive(client, localPath, remotePath, progressCallbac
         } catch (e) {
           lastErr = e;
           if (cancelCheck()) throw new Error('Cancelled');
-          if (attempt === 3) console.warn(`[FTP Upload] Failed after 3 attempts: ${ent.name}:`, e.message);
-          else { console.warn(`[FTP Upload] Attempt ${attempt} failed for ${ent.name} — retrying:`, e.message); await new Promise(r => setTimeout(r, 500 * attempt)); }
+          const isDisconnect = /connection|closed|reset|ECONNRESET|ENOTCONN|FIN/i.test(e.message || '');
+          if (attempt >= 5) {
+            console.warn(`[FTP Upload] Failed after 5 attempts: ${ent.name}:`, e.message);
+          } else {
+            const delay = isDisconnect ? 1500 : 500 * attempt;
+            console.warn(`[FTP Upload] Attempt ${attempt} failed for ${ent.name} — retrying in ${delay}ms:`, e.message);
+            await new Promise(r => setTimeout(r, delay));
+            // Auto-reconnect on disconnect
+            if (isDisconnect) {
+              try { client.close(); } catch (_) {}
+              const accessOpts = { host: client.ftp.socket?.remoteAddress, port: client.ftp.socket?.remotePort, user: 'anonymous', password: '', secure: false };
+              // We can't easily re-read the access opts here — just let it fail and bubble up
+            }
+          }
         }
       }
       if (!uploaded) throw new Error(`FTP upload failed for file: ${ent.name} — ${lastErr?.message || 'unknown error'}`);
@@ -1990,21 +2080,42 @@ async function uploadFtpRecursive(client, localPath, remotePath, progressCallbac
 
 // Add FTP delete recursive function
 async function ftpDeleteRecursive(client, remotePath) {
+  if (!remotePath || typeof remotePath !== 'string') return;
+
+  // Normalise: always starts with '/', no trailing slash except root.
+  const norm = ('/' + remotePath.replace(/^\/+/, '')).replace(/\/\/+/g, '/').replace(/\/$/, '') || '/';
+
+  // Refuse to delete the root or anything fewer than 3 segments deep.
+  // e.g. /data/etaHEN/games/GameTitle is fine; /data or / is not.
+  const segments = norm.split('/').filter(Boolean);
+  if (segments.length < 3) {
+    console.error('[ftpDeleteRecursive] REFUSED — path too shallow:', norm);
+    throw new Error('Refusing to delete shallow FTP path: ' + norm);
+  }
+
+  // Deny well-known PS5 system roots.
+  const dangerousFtp = ['/', '/data', '/mnt', '/system', '/system_data',
+    '/preinst', '/preinst2', '/update', '/dev', '/proc'];
+  if (dangerousFtp.includes(norm)) {
+    console.error('[ftpDeleteRecursive] REFUSED — protected FTP path:', norm);
+    throw new Error('Refusing to delete protected FTP path: ' + norm);
+  }
+
   try {
-    await client.cd(remotePath);
+    await client.cd(norm);
   } catch (e) {
     return; // Already deleted or not exists
   }
   const list = await client.list();
   for (const item of list) {
-    const itemPath = path.posix.join(remotePath, item.name);
+    const itemPath = path.posix.join(norm, item.name);
     if (item.isDirectory) {
       await ftpDeleteRecursive(client, itemPath);
     } else {
       await client.remove(itemPath);
     }
   }
-  await client.removeDir(remotePath);
+  await client.removeDir(norm);
 }
 
 // IPC (same as before, with minor improvements)
@@ -2393,9 +2504,10 @@ async function doEnsureAndPopulate(event, opts) {
         let exists = false;
         if (ftpDestConfig && ftpDestRemotePath) {
           const ec = new ftp.Client(8000);
+          applyFtpPassive(ec, ftpDestConfig);
           try {
             await ec.access({ host: ftpDestConfig.host, port: parseInt(ftpDestConfig.port), user: ftpDestConfig.user || 'anonymous', password: ftpDestConfig.pass || '', secure: false });
-            await ec.list(ftpDestRemotePath);
+            await ec.cd(ftpDestRemotePath); await ec.list();
             exists = true;
           } catch (_) { exists = false; }
           finally { ec.close(); }
@@ -2407,25 +2519,40 @@ async function doEnsureAndPopulate(event, opts) {
             results.push({ item: it.folderName, skipped: true, reason: 'target exists', target: finalTarget, source: srcFolder, safeGameName });
             continue;
           } else if (overwriteMode === 'overwrite') {
+            // Safety: never delete the source folder (would destroy the game we're about to copy).
             if (ftpDestConfig && ftpDestRemotePath) {
-              const dc = new ftp.Client(30000);
-              try {
-                await dc.access({ host: ftpDestConfig.host, port: parseInt(ftpDestConfig.port), user: ftpDestConfig.user || 'anonymous', password: ftpDestConfig.pass || '', secure: false });
-                await ftpDeleteRecursive(dc, ftpDestRemotePath);
-              } catch (e) { console.warn('[FTP] Pre-overwrite delete failed:', e.message); }
-              finally { dc.close(); }
+              const isSamePath = srcFolder && ftpDestRemotePath &&
+                srcFolder.replace(/\/+$/, '') === ftpDestRemotePath.replace(/\/+$/, '');
+              if (isSamePath) {
+                console.warn('[overwrite] source === target on FTP — skipping pre-delete');
+              } else {
+                const dc = new ftp.Client(30000);
+                applyFtpPassive(dc, ftpDestConfig);
+                try {
+                  await dc.access({ host: ftpDestConfig.host, port: parseInt(ftpDestConfig.port), user: ftpDestConfig.user || 'anonymous', password: ftpDestConfig.pass || '', secure: false });
+                  await ftpDeleteRecursive(dc, ftpDestRemotePath);
+                } catch (e) { console.warn('[FTP] Pre-overwrite delete failed:', e.message); }
+                finally { dc.close(); }
+              }
             } else {
-              await removePathRecursive(finalTarget);
+              const normSrc = path.resolve(srcFolder || '');
+              const normTgt = path.resolve(finalTarget);
+              if (normSrc === normTgt || normTgt.startsWith(normSrc + path.sep) || normSrc.startsWith(normTgt + path.sep)) {
+                console.warn('[overwrite] source overlaps target — skipping pre-delete:', normTgt);
+              } else {
+                await removePathRecursive(finalTarget);
+              }
             }
           } else {
             // rename: find an unused (1), (2)… suffix
             if (ftpDestConfig && ftpDestRemotePath) {
               const rc = new ftp.Client(8000);
+              applyFtpPassive(rc, ftpDestConfig);
               try {
                 await rc.access({ host: ftpDestConfig.host, port: parseInt(ftpDestConfig.port), user: ftpDestConfig.user || 'anonymous', password: ftpDestConfig.pass || '', secure: false });
                 for (let n = 1; n <= 100; n++) {
                   const tryR = ftpDestRemotePath + ` (${n})`;
-                  try { await rc.list(tryR); }
+                  try { await rc.cd(tryR); await rc.list(); }
                   catch (_) { ftpDestRemotePath = tryR; finalTarget = finalTarget + ` (${n})`; break; }
                 }
               } catch (e) {
@@ -2466,6 +2593,7 @@ async function doEnsureAndPopulate(event, opts) {
                   ftpConfig.host === ftpDestConfig.host &&
                   String(ftpConfig.port) === String(ftpDestConfig.port)) {
                 const client = new ftp.Client();
+                applyFtpPassive(client, ftpConfig);
                 let renameOk = false;
                 try {
                   await client.access({ host: ftpConfig.host, port: parseInt(ftpConfig.port), user: ftpConfig.user, password: ftpConfig.pass || '', secure: false });
@@ -2497,6 +2625,7 @@ async function doEnsureAndPopulate(event, opts) {
                   results.push({ item: safeGameName, target: finalTarget, moved: true, source: originalSrcFolder, safeGameName });
                   // Delete original from FTP source
                   const delClient = new ftp.Client();
+                  applyFtpPassive(delClient, ftpConfig);
                   try {
                     await delClient.access({ host: ftpConfig.host, port: parseInt(ftpConfig.port), user: ftpConfig.user, password: ftpConfig.pass || '', secure: false });
                     await ftpDeleteRecursive(delClient, originalSrcFolder);
@@ -2543,6 +2672,7 @@ async function doEnsureAndPopulate(event, opts) {
             // For move: delete FTP source only after download fully completes without error.
             if (action === 'move') {
               const delClient = new ftp.Client();
+              applyFtpPassive(delClient, ftpConfig);
               try {
                 await delClient.access({ host: ftpConfig.host, port: parseInt(ftpConfig.port), user: ftpConfig.user || 'anonymous', password: ftpConfig.pass || '', secure: false });
                 await ftpDeleteRecursive(delClient, srcFolder);
@@ -2647,7 +2777,11 @@ ipcMain.handle('check-conflicts', async (event, items, dest, layout, customName)
       let exists = false;
       if (isFtpDest && ccClient) {
         const sp = ('/' + finalTarget.replace(/^ftp:\/\/[^/]+/, '').replace(/^\/+/, '')).replace(/\/\/+/g, '/');
-        try { await ccClient.list(sp); exists = true; } catch (_) { exists = false; }
+        try {
+            await ccClient.cd(sp);
+            await ccClient.list();
+            exists = true;
+          } catch (_) { exists = false; }
       } else if (!isFtpDest) {
         exists = !!(await fs.promises.stat(finalTarget).catch(() => false));
       }
@@ -2718,8 +2852,9 @@ ipcMain.handle('rename-item', async (event, item, newName) => {
 
 // FTP operations
 ipcMain.handle('ftp-delete-item', async (event, config, remoteFtpPath) => {
-  const decodedPath = decodeURIComponent(remoteFtpPath); // Decode FTP paths (param renamed from 'path' to avoid shadowing the 'path' module)
+  const decodedPath = decodeURIComponent(remoteFtpPath);
   const client = new ftp.Client();
+  applyFtpPassive(client, config);
   try {
     await client.access({ host: config.host, port: parseInt(config.port), user: config.user, password: config.pass, secure: false });
     await ftpDeleteRecursive(client, decodedPath);
@@ -2732,9 +2867,10 @@ ipcMain.handle('ftp-delete-item', async (event, config, remoteFtpPath) => {
 });
 
 ipcMain.handle('ftp-rename-item', async (event, config, oldPath, newPath) => {
-  const decodedOld = decodeURIComponent(oldPath); // Issue 1
-  const decodedNew = decodeURIComponent(newPath); // Issue 1
+  const decodedOld = decodeURIComponent(oldPath);
+  const decodedNew = decodeURIComponent(newPath);
   const client = new ftp.Client();
+  applyFtpPassive(client, config);
   try {
     await client.access({ host: config.host, port: parseInt(config.port), user: config.user, password: config.pass, secure: false });
     await client.rename(decodedOld, decodedNew);
@@ -2818,7 +2954,7 @@ ipcMain.handle('ftp-test-connection', async (_event, config) => {
   try {
     await client.access({
       host:     config.host,
-      port:     parseInt(config.port, 10) || 1337,
+      port:     parseInt(config.port, 10) || 2121,
       user:     config.user     || 'anonymous',
       password: config.pass     || '',
       secure:   false,
@@ -2835,6 +2971,561 @@ ipcMain.handle('ftp-test-connection', async (_event, config) => {
   }
 });
 
+// ── PS5 Auto-Discover ─────────────────────────────────────────────────────────
+// Scans the local subnet(s) for open PS5 FTP ports (1337, 2121, 1338).
+// TCP-probes all hosts in parallel, then does a lightweight FTP banner check
+// on each hit to rule out routers/NAS boxes that happen to have those ports open.
+ipcMain.handle('ps5-discover', async (_event, timeoutMs = 3000) => {
+  const net = require('net');
+  const ifaces = os.networkInterfaces();
+  const subnets = new Set();
+  const gatewayIps = new Set(); // typically .1 on each subnet
+
+  for (const ifaceList of Object.values(ifaces)) {
+    for (const addr of (ifaceList || [])) {
+      if (addr.family === 'IPv4' && !addr.internal) {
+        const base = addr.address.split('.').slice(0, 3).join('.');
+        subnets.add(base);
+        gatewayIps.add(base + '.1');   // router is almost always .1
+        gatewayIps.add(base + '.254'); // some ISP routers use .254
+      }
+    }
+  }
+
+  const PS5_PORTS = [2121, 1337, 1338];
+  const tcpHits = [];  // [{ip, port}] — raw TCP open
+  const perProbeTimeout = Math.max(150, Math.floor(timeoutMs / 15));
+
+  for (const subnet of Array.from(subnets).slice(0, 2)) {
+    const probes = [];
+    for (let n = 1; n <= 254; n++) {
+      const ip = `${subnet}.${n}`;
+      if (gatewayIps.has(ip)) continue; // skip gateway IPs entirely
+      for (const port of PS5_PORTS) {
+        probes.push(new Promise(resolve => {
+          const sock = new net.Socket();
+          let done = false;
+          const finish = (hit) => {
+            if (done) return; done = true;
+            sock.destroy();
+            if (hit) tcpHits.push({ ip, port });
+            resolve();
+          };
+          sock.setTimeout(perProbeTimeout);
+          sock.connect(port, ip, () => finish(true));
+          sock.on('error', () => finish(false));
+          sock.on('timeout', () => finish(false));
+        }));
+      }
+    }
+    await Promise.all(probes);
+  }
+
+  if (!tcpHits.length) return [];
+
+  // ── FTP banner verification ───────────────────────────────────────────────
+  // For each TCP hit, open a raw socket and read the 220 banner to confirm
+  // it's actually an FTP server (not a router service).
+  // PS5 payloads (ftpsrv, etaHEN, ftpsrc) always send a 220 greeting.
+  async function verifyFtp(ip, port) {
+    return new Promise(resolve => {
+      const sock = new net.Socket();
+      let buf = '';
+      let done = false;
+      const finish = (ok) => {
+        if (done) return; done = true;
+        sock.destroy();
+        resolve(ok);
+      };
+      sock.setTimeout(2000);
+      sock.connect(port, ip, () => { /* wait for banner */ });
+      sock.on('data', chunk => {
+        buf += chunk.toString('ascii');
+        // FTP servers always start with "220" or "220-"
+        if (/^220[\s-]/m.test(buf)) { finish(true); return; }
+        // Reject anything that clearly isn't FTP
+        if (buf.length > 512) finish(false);
+      });
+      sock.on('error', () => finish(false));
+      sock.on('timeout', () => finish(false));
+    });
+  }
+
+  // Verify all hits in parallel
+  const verified = await Promise.all(
+    tcpHits.map(async h => ({ ...h, ok: await verifyFtp(h.ip, h.port) }))
+  );
+
+  // Deduplicate by IP, prefer lower port numbers (1337 > 2121 > 1338 for PS5)
+  const portPriority = { 2121: 0, 1337: 1, 1338: 2 };
+  const byIp = {};
+  for (const h of verified.filter(h => h.ok)) {
+    if (!byIp[h.ip] || (portPriority[h.port] ?? 9) < (portPriority[byIp[h.ip].port] ?? 9)) {
+      byIp[h.ip] = h;
+    }
+  }
+  return Object.values(byIp).map(({ ip, port }) => ({ ip, port }));
+});
+
+// ── FTP Storage Info ──────────────────────────────────────────────────────────
+// Probes known PS5 mount points and returns which ones are accessible.
+// Can't read /proc/mounts via FTP, so we just check known paths.
+ipcMain.handle('ftp-storage-info', async (_event, config, scannedItems = []) => {
+  const { Writable } = require('stream');
+  const client = new ftp.Client(12000);
+  client.ftp.verbose = false;
+  applyFtpPassive(client, config);
+  const mounts = ['/mnt/ext0', '/mnt/ext1', '/mnt/usb0', '/mnt/usb1', '/mnt/usb2', '/mnt/usb3', '/data'];
+
+  // ── Pre-compute used-by-games per mount from already-scanned items ──────
+  const gamesByMount = {};
+  for (const item of (scannedItems || [])) {
+    const p = item.ppsaFolderPath || item.folderPath || '';
+    if (!p || !(item.totalSize > 0)) continue;
+    const mount = mounts.find(m => p.startsWith(m + '/') || p === m) || null;
+    if (!mount) continue;
+    if (!gamesByMount[mount]) gamesByMount[mount] = { totalSize: 0, count: 0 };
+    gamesByMount[mount].totalSize += item.totalSize;
+    gamesByMount[mount].count++;
+  }
+
+  // ── PS5 hardware constants ───────────────────────────────────────────────
+  // PS5 internal SSD is 825 GB raw. After OS + system partition, ~667 GB is
+  // available to the user. /data is always the internal drive.
+  const PS5_INTERNAL_TOTAL = 667 * 1024 * 1024 * 1024; // ~667 GB usable
+
+  // ── Helpers ──────────────────────────────────────────────────────────────
+  async function ftpSend(cmd, ms = 2500) {
+    try {
+      const raw = await Promise.race([
+        client.send(cmd),
+        new Promise((_, r) => setTimeout(() => r(new Error('timeout')), ms))
+      ]);
+      return (raw && raw.message) ? raw.message : (typeof raw === 'string' ? raw : '');
+    } catch (_) { return ''; }
+  }
+
+  // Download a small remote file into a string buffer via FTP RETR.
+  async function ftpRetr(remotePath, maxBytes = 8192, ms = 3000) {
+    return new Promise(resolve => {
+      let buf = '';
+      let done = false;
+      const timer = setTimeout(() => { if (!done) { done = true; resolve(''); } }, ms);
+      const writable = new Writable({
+        write(chunk, _enc, cb) {
+          buf += chunk.toString('utf8');
+          if (buf.length >= maxBytes) { done = true; clearTimeout(timer); resolve(buf); }
+          cb();
+        }
+      });
+      client.downloadTo(writable, remotePath)
+        .then(() => { if (!done) { done = true; clearTimeout(timer); resolve(buf); } })
+        .catch(() => { if (!done) { done = true; clearTimeout(timer); resolve(''); } });
+    });
+  }
+
+  function firstLargeInt(str) {
+    const m = str.match(/(\d{7,})/); return m ? parseInt(m[1], 10) : 0;
+  }
+
+  function parseBlockResponse(str) {
+    let available = 0, total = 0;
+    const bsize = (() => { const m = str.match(/[Bb]lock[_ ]?[Ss]ize[:\s]+(\d+)/); return m ? parseInt(m[1],10) : 4096; })();
+    const blocks = str.match(/[Bb]locks[:\s]+(\d+)/);
+    const free   = str.match(/[Ff]ree[:\s]+(\d+)/);
+    const avail  = str.match(/[Aa]vail(?:able)?[:\s]+(\d+)/);
+    if (blocks) total     = parseInt(blocks[1], 10) * bsize;
+    if (avail)  available = parseInt(avail[1], 10)  * bsize;
+    else if (free) available = parseInt(free[1], 10) * bsize;
+    return { available, total };
+  }
+
+  function parseDfResponse(str) {
+    let available = 0, total = 0;
+    const tot  = str.match(/[Tt]otal[:\s]+(\d+)/);
+    const free = str.match(/[Ff]ree[:\s]+(\d+)/);
+    const avail= str.match(/[Aa]vail(?:able)?[:\s]+(\d+)/);
+    if (tot)   total     = parseInt(tot[1], 10);
+    if (avail) available = parseInt(avail[1], 10);
+    else if (free) available = parseInt(free[1], 10);
+    return { available, total };
+  }
+
+  // Parse /proc/mounts-style df output (Linux/BSD kernel exposes this on PS5)
+  // Format: "device mountpoint fstype options dump pass"
+  function parseProcMounts(text) {
+    // Returns a map of mountpoint → device
+    const map = {};
+    for (const line of text.split('\n')) {
+      const parts = line.trim().split(/\s+/);
+      if (parts.length >= 3) map[parts[1]] = parts[0];
+    }
+    return map;
+  }
+
+  // Parse /proc/diskstats to get sector counts per device
+  // Format: major minor name reads... sectors_read... writes... sectors_written...
+  function parseDiskstats(text) {
+    const stats = {};
+    for (const line of text.split('\n')) {
+      const p = line.trim().split(/\s+/);
+      if (p.length < 14) continue;
+      const name = p[2];
+      // sectors_read = p[5], sectors_written = p[9]  (512-byte sectors)
+      stats[name] = {
+        sectorsRead:    parseInt(p[5],  10) || 0,
+        sectorsWritten: parseInt(p[9],  10) || 0,
+      };
+    }
+    return stats;
+  }
+
+  // Try every known FTP disk-space command for a path
+  async function probeFtpCommands(mp) {
+    for (const cmd of ['XAVBL', 'AVBL']) {
+      const msg = await ftpSend(cmd + ' ' + mp);
+      const n = firstLargeInt(msg);
+      if (n > 0) return { available: n, total: 0, method: cmd };
+    }
+    for (const cmd of ['SITE DF ' + mp, 'SITE DF', 'SITE STATVFS ' + mp, 'SITE FREE ' + mp, 'SITE DISKINFO ' + mp]) {
+      const msg = await ftpSend(cmd);
+      const r = cmd.includes('STATVFS') ? parseBlockResponse(msg) : parseDfResponse(msg);
+      if (r.available > 0 || r.total > 0) return { ...r, method: cmd.split(' ')[1] };
+    }
+    return { available: 0, total: 0, method: null };
+  }
+
+  // Try MLSD (RFC 3659) — some servers include total-size and available-size facts
+  async function probeMlsd(mp) {
+    try {
+      await Promise.race([client.cd(mp), new Promise((_, r) => setTimeout(() => r(new Error('timeout')), 3000))]);
+      const list = await Promise.race([
+        client.list(),   // basic-ftp may use MLSD internally
+        new Promise((_, r) => setTimeout(() => r(new Error('timeout')), 3000))
+      ]);
+      // basic-ftp exposes raw facts — check if any entry has size info
+      // (most payloads won't, but worth a shot)
+      _ = list; // accessed for side-effects; actual facts parsing below via MLSD raw
+    } catch (_) {}
+
+    // Try raw MLSD and parse facts manually
+    try {
+      const raw = await ftpSend('MLST ' + mp);
+      // Look for total-size= or available-size= in MLST facts
+      const total = raw.match(/[Tt]otal-[Ss]ize=(\d+)/);
+      const avail = raw.match(/[Aa]vail(?:able)?-[Ss]ize=(\d+)/);
+      if (total || avail) {
+        return {
+          total:     total ? parseInt(total[1], 10) : 0,
+          available: avail ? parseInt(avail[1], 10) : 0,
+          method: 'MLST'
+        };
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  // ── Main ──────────────────────────────────────────────────────────────────
+  try {
+    await client.access({
+      host:     config.host,
+      port:     parseInt(config.port) || 2121,
+      user:     config.user || 'anonymous',
+      password: config.password || config.pass || '',
+      secure:   false
+    });
+
+    // ── Step 1: try to read /proc/mounts and /proc/diskstats via FTP RETR ──
+    // PS5 runs a BSD/Linux hybrid; these paths may be readable over FTP.
+    let procMounts   = {};
+    let diskstats    = {};
+    let procDf       = {};   // mountpoint → { available, total } from /proc/df-like files
+
+    const mountsText = await ftpRetr('/proc/mounts', 16384);
+    if (mountsText) procMounts = parseProcMounts(mountsText);
+
+    const diskstatsText = await ftpRetr('/proc/diskstats', 16384);
+    if (diskstatsText) diskstats = parseDiskstats(diskstatsText);
+
+    // /proc/df doesn't exist on Linux but some BSD variants expose /proc/filesystems
+    // Try reading /proc/filesystems or /proc/net/dev as a probe
+    // PS5 exposes /mnt/sandbox — more useful: try /system_data/priv/config or similar
+    // The most useful thing: try to RETR the output of 'df' as a text file if exposed
+
+    // ── Step 2: try FTP commands globally (once, not per-mount) ────────────
+    const globalSpace = await probeFtpCommands('/data');
+
+    // ── Step 3: per-mount results ───────────────────────────────────────────
+    const results = [];
+    for (const mp of mounts) {
+      // Check accessibility
+      let itemCount = 0, subPath = null;
+      try {
+        // Check the mount root itself
+        await Promise.race([client.cd(mp), new Promise((_, r) => setTimeout(() => r(new Error('timeout')), 3000))]);
+        const rootList = await Promise.race([
+          client.list(),
+          new Promise((_, r) => setTimeout(() => r(new Error('timeout')), 3000))
+        ]);
+        // Try to find the game subfolder
+        const gameDirs = ['etaHEN/games', 'PS5', 'PS4', 'games'];
+        for (const sub of gameDirs) {
+          try {
+            await Promise.race([client.cd(mp + '/' + sub), new Promise((_, r) => setTimeout(() => r(new Error('timeout')), 2000))]);
+            const subList = await Promise.race([
+              client.list(),
+              new Promise((_, r) => setTimeout(() => r(new Error('timeout')), 2000))
+            ]);
+            if (subList && subList.length) {
+              itemCount = subList.length;
+              subPath   = mp + '/' + sub;
+              break;
+            }
+          } catch (_) {}
+        }
+        if (!itemCount && rootList && rootList.length) {
+          itemCount = rootList.length;
+        }
+      } catch (_) {
+        continue; // not accessible — skip
+      }
+
+      // ── Disk space: command probe → MLSD → proc fallback → hardware spec ─
+      let space = await probeFtpCommands(mp);
+
+      if (!space.available && !space.total) {
+        const mlsd = await probeMlsd(mp);
+        if (mlsd) space = mlsd;
+      }
+
+      // Fall back to global probe result
+      if (!space.available && !space.total && (globalSpace.available || globalSpace.total)) {
+        space = { ...globalSpace };
+      }
+
+      // ── Hardware-spec fallback for known PS5 partitions ──────────────────
+      // /data is always the internal SSD on every PS5.
+      // If we have scanned games, compute free = known_total - used_by_games.
+      const gamesOnMount = gamesByMount[mp] || { totalSize: 0, count: 0 };
+      let totalHardware   = 0;
+      let availHardware   = 0;
+      let isHardwareFallback = false;
+
+      if (!space.total && mp === '/data') {
+        totalHardware  = PS5_INTERNAL_TOTAL;
+        availHardware  = gamesOnMount.totalSize > 0
+          ? Math.max(0, PS5_INTERNAL_TOTAL - gamesOnMount.totalSize)
+          : 0; // can't compute free without knowing other disk usage
+        isHardwareFallback = true;
+      }
+
+      results.push({
+        path:              mp,
+        subPath,
+        itemCount,
+        available:         space.available  || availHardware,
+        total:             space.total      || totalHardware,
+        usedByGames:       gamesOnMount.totalSize,
+        gameCount:         gamesOnMount.count,
+        isHardwareFallback,
+        spaceKnown:        !!(space.available || space.total || totalHardware),
+      });
+    }
+    return results;
+  } catch (e) {
+    return { error: e.message };
+  } finally {
+    try { client.close(); } catch (_) {}
+  }
+});
+
+// ── Trash bin (soft delete) ───────────────────────────────────────────────────
+// Moves a game folder to <parent>/_ps5vault_trash/<name>_<timestamp>
+// instead of permanently deleting. Trash is auto-purged on next trash call
+// for entries older than 30 days.
+ipcMain.handle('trash-item', async (_event, item) => {
+  const p = item.ppsaFolderPath || item.folderPath;
+  if (!p || !path.isAbsolute(p)) throw new Error('Invalid path for trash');
+  const trashDir = path.join(path.dirname(p), '_ps5vault_trash');
+  await fs.promises.mkdir(trashDir, { recursive: true });
+  const dest = path.join(trashDir, path.basename(p) + '_' + Date.now());
+  await fs.promises.rename(p, dest);
+  // Auto-purge entries older than 30 days
+  try {
+    const entries = await fs.promises.readdir(trashDir, { withFileTypes: true });
+    const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
+    for (const ent of entries) {
+      const ts = parseInt((ent.name.match(/_(\d{13})$/) || [])[1] || '0', 10);
+      if (ts > 0 && ts < cutoff) {
+        await fs.promises.rm(path.join(trashDir, ent.name), { recursive: true, force: true }).catch(() => {});
+      }
+    }
+  } catch (_) {}
+  return { success: true, trashPath: dest };
+});
+
+// ── Verify Library ────────────────────────────────────────────────────────────
+// Checks each game in items for:
+//   ok     — folder accessible + param.json present + icon present
+//   warn   — folder accessible, param.json present, no icon
+//   error  — folder not accessible or param.json missing
+ipcMain.handle('verify-library', async (event, items, ftpConfig) => {
+  const results = [];
+  if (ftpConfig) {
+    // FTP verify — connect once, check each game path
+    const client = new ftp.Client(10000);
+    client.ftp.verbose = false;
+    applyFtpPassive(client, ftpConfig);
+    try {
+      await client.access({ host: ftpConfig.host, port: parseInt(ftpConfig.port) || 2121, user: ftpConfig.user || 'anonymous', password: ftpConfig.pass || '', secure: false });
+      for (const item of items) {
+        const gamePath = item.ppsaFolderPath || item.folderPath;
+        let status = 'ok', detail = '';
+        try {
+          // PS5 FTP payloads (etaHEN/ftpsrv) don't support LIST with a path argument —
+          // always cd first, then list with no args (same pattern as the scanner).
+          await Promise.race([client.cd(gamePath), new Promise((_, r) => setTimeout(() => r(new Error('timeout')), 5000))]);
+          const list = await Promise.race([client.list(), new Promise((_, r) => setTimeout(() => r(new Error('timeout')), 5000))]);
+          const hasSceSys = (list || []).some(e => e.name === 'sce_sys' && !e.isFile);
+          if (!hasSceSys) { status = 'warn'; detail = 'No sce_sys folder'; }
+        } catch (e) { status = 'error'; detail = e.message; }
+        results.push({ ppsa: item.ppsa, title: item.displayTitle || item.folderName, path: gamePath, status, detail });
+      }
+    } catch (e) {
+      return items.map(item => ({ ppsa: item.ppsa, title: item.displayTitle || item.folderName, path: item.ppsaFolderPath || item.folderPath, status: 'error', detail: 'FTP connect failed: ' + e.message }));
+    } finally {
+      try { client.close(); } catch (_) {}
+    }
+  } else {
+    for (const item of items) {
+      const gamePath = item.ppsaFolderPath || item.folderPath;
+      let status = 'ok', detail = '';
+      try {
+        await fs.promises.access(gamePath, fs.constants.R_OK);
+        const paramPath = path.join(gamePath, 'sce_sys', 'param.json');
+        try {
+          await fs.promises.access(paramPath, fs.constants.F_OK);
+        } catch (_) {
+          // Try direct param.json fallback
+          try {
+            await fs.promises.access(path.join(gamePath, 'param.json'), fs.constants.F_OK);
+          } catch (_) {
+            status = 'warn'; detail = 'param.json not found';
+          }
+        }
+        // Check icon
+        if (status === 'ok') {
+          const iconPath = path.join(gamePath, 'sce_sys', 'icon0.png');
+          try { await fs.promises.access(iconPath, fs.constants.F_OK); }
+          catch (_) { status = 'warn'; detail = 'icon0.png not found'; }
+        }
+        // Quick size sanity check
+        if (item.totalSize > 0) {
+          try {
+            const st = await fs.promises.stat(gamePath);
+            if (!st.isDirectory()) { status = 'error'; detail = 'Not a directory'; }
+          } catch (e) { status = 'error'; detail = e.message; }
+        }
+      } catch (e) { status = 'error'; detail = e.message; }
+      results.push({ ppsa: item.ppsa, title: item.displayTitle || item.folderName, path: gamePath, status, detail });
+    }
+  }
+  return results;
+});
+
+// ── List Game Sub-folders ─────────────────────────────────────────────────────
+// Returns top-level children of a game folder so the user can pick
+// which sub-folders to include in a selective transfer.
+ipcMain.handle('list-game-subfolders', async (_event, gamePath, ftpCfg) => {
+  if (ftpCfg) {
+    const client = new ftp.Client(8000);
+    client.ftp.verbose = false;
+    applyFtpPassive(client, ftpCfg);
+    try {
+      await client.access({ host: ftpCfg.host, port: parseInt(ftpCfg.port)  || 2121, user: ftpCfg.user || 'anonymous', password: ftpCfg.pass || '', secure: false });
+      await client.cd(gamePath);
+      const list = await client.list();
+      return (list || []).map(e => ({ name: e.name, isDirectory: !e.isFile, size: Number(e.size) || 0 }));
+    } catch (e) {
+      return [];
+    } finally {
+      try { client.close(); } catch (_) {}
+    }
+  } else {
+    try {
+      const entries = await fs.promises.readdir(gamePath, { withFileTypes: true });
+      const out = [];
+      for (const ent of entries) {
+        const full = path.join(gamePath, ent.name);
+        let size = 0;
+        const isDir = ent.isDirectory() || ent.isSymbolicLink();
+        if (!isDir) {
+          try { size = (await fs.promises.stat(full)).size; } catch (_) {}
+        } else {
+          // Use cached size if available
+          size = localSizeCache.get(full) || 0;
+        }
+        out.push({ name: ent.name, isDirectory: isDir, size });
+      }
+      return out;
+    } catch (e) {
+      return [];
+    }
+  }
+});
+
+// ── Checksum database ─────────────────────────────────────────────────────────
+// Persists SHA-256 hashes of transferred files so repeat transfers can skip
+// files that are already identical at the destination.
+const CHECKSUM_DB_VERSION = 1;
+let checksumDb = {}; // { [filePath_hash]: { hash, size, cachedAt } }
+let checksumSaveTimer = null;
+
+function getChecksumDbPath() {
+  try { return path.join(app.getPath('userData'), 'checksum-db.json'); }
+  catch (_) { return path.join(os.homedir(), '.ps5vault-checksums.json'); }
+}
+
+function loadChecksumDb() {
+  try {
+    const raw = fs.readFileSync(getChecksumDbPath(), 'utf8');
+    const parsed = JSON.parse(raw);
+    if (parsed?.version === CHECKSUM_DB_VERSION && typeof parsed.entries === 'object') {
+      checksumDb = parsed.entries || {};
+      console.log('[Checksum DB] Loaded', Object.keys(checksumDb).length, 'entries');
+    }
+  } catch (_) { checksumDb = {}; }
+}
+
+function scheduleChecksumSave() {
+  if (checksumSaveTimer) return;
+  checksumSaveTimer = setTimeout(() => {
+    checksumSaveTimer = null;
+    try {
+      // Prune entries older than 90 days
+      const now = Date.now(); const cutoff = 90 * 24 * 60 * 60 * 1000;
+      for (const k of Object.keys(checksumDb)) {
+        if (now - (checksumDb[k].cachedAt || 0) > cutoff) delete checksumDb[k];
+      }
+      fs.writeFileSync(getChecksumDbPath(), JSON.stringify({ version: CHECKSUM_DB_VERSION, entries: checksumDb }, null, 2), 'utf8');
+    } catch (e) { console.warn('[Checksum DB] Save failed:', e.message); }
+  }, 3000);
+}
+
+ipcMain.handle('get-checksum-db', async () => {
+  return { entries: checksumDb, count: Object.keys(checksumDb).length };
+});
+
+ipcMain.handle('record-transfer-checksums', async (_event, entries) => {
+  if (!Array.isArray(entries)) return { ok: false };
+  const now = Date.now();
+  for (const { key, hash, size } of entries) {
+    if (key && hash) checksumDb[key] = { hash, size: size || 0, cachedAt: now };
+  }
+  scheduleChecksumSave();
+  return { ok: true, total: Object.keys(checksumDb).length };
+});
+
 // App bootstrap (unchanged)
 let mainWindow;
 const gotTheLock = app.requestSingleInstanceLock();
@@ -2848,7 +3539,7 @@ if (!gotTheLock) {
     }
   });
   app.whenReady().then(() => {
-  loadFtpSizeCacheFromDisk(); loadLocalSizeCacheFromDisk(); createWindow();
+  loadFtpSizeCacheFromDisk(); loadLocalSizeCacheFromDisk(); loadChecksumDb(); createWindow();
   // Silently check for updates 5 s after launch — delay avoids blocking startup I/O
   setTimeout(() => { if (mainWindow) checkForUpdates(mainWindow); }, 5000);
 

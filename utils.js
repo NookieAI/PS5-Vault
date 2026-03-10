@@ -60,5 +60,26 @@ window.Utils = {
    */
   pathEndsWithSceSys: function(p) {
     return p && p.toLowerCase().endsWith('/sce_sys');
+  },
+
+  /**
+   * Cleans and HTML-escapes a path for display (handles FTP and local paths).
+   * @param {string} p - The path to clean.
+   * @returns {string} Cleaned, escaped path string.
+   */
+  cleanPath: function(p) {
+    if (!p) return '';
+    if (p.startsWith('ftp://')) {
+      const parts = p.split('://');
+      if (parts.length === 2) {
+        const proto = parts[0] + '://';
+        let rest = parts[1].replace(/\/+/g, '/');
+        rest = decodeURIComponent(rest);
+        return window.Utils.escapeHtml(proto + rest);
+      }
+    }
+    let cleaned = p.replace(/\/+/g, '/');
+    cleaned = decodeURIComponent(cleaned);
+    return window.Utils.escapeHtml(cleaned);
   }
 };

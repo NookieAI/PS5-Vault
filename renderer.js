@@ -63,7 +63,7 @@
   function shouldDisableByState(id) {
     // Re-check real DOM checkbox state so setAppBusy(false) restores correct enabled/disabled
     if (id === 'btnGoBig' || id === 'btnDeleteSelected' || id === 'btnRenameSelected') {
-      const selected = getSelectedItems();
+      const selected = getSelectedItemsAny();
       if (id === 'btnRenameSelected') return selected.length !== 1;
       return selected.length === 0;
     }
@@ -175,10 +175,15 @@
   }
 
   function showScanUI(show) {
-    const sd = $('scanDisplay');
-    const label = $('currentScanLabel');
+    const sd        = $('scanDisplay');
+    const primary   = document.querySelector('.controls-left .primary');
+    const label     = $('currentScanLabel');
     const cancelBtn = $('btnCancelScan');
-    if (sd) sd.style.display = show ? 'block' : 'none';
+    // Scan overlay: show scan bar (absolute, on top of primary row)
+    // Hide the primary row's content so the overlay doesn't stack weirdly.
+    // The primary row keeps its height via min-height so layout doesn't shift.
+    if (sd) sd.style.display = show ? 'flex' : 'none';
+    if (primary) primary.style.visibility = show ? 'hidden' : 'visible';
     if (!show && label) label.textContent = '';
     if (cancelBtn) cancelBtn.style.display = show ? 'inline-block' : 'none';
   }
@@ -788,26 +793,38 @@
   }
 
   function applySearchFilter() {
-    const tbody = $('resultsBody');
-    if (!tbody || !window.__ps5_lastRenderedItems) return;
-    const rows = Array.from(tbody.querySelectorAll('tr'));
+    if (!window.__ps5_lastRenderedItems) return;
     const filter     = searchFilter.toLowerCase();
-    const sizeFilter = ($('sizeFilter') && $('sizeFilter').value) || '';
-    rows.forEach((tr, idx) => {
-      const item = window.__ps5_lastRenderedItems[idx];
-      if (!item) return;
+    const szFilter   = ($('sizeFilter') && $('sizeFilter').value) || '';
+
+    function itemVisible(item) {
+      if (!item) return false;
       const name = (item.displayTitle || item.folderName || '').toLowerCase();
-      const nameOk = !filter || name.includes(filter);
-      let sizeOk = true;
-      if (sizeFilter && item.totalSize > 0) {
+      if (filter && !name.includes(filter)) return false;
+      if (szFilter && item.totalSize > 0) {
         const gb = item.totalSize / (1024 ** 3);
-        if      (sizeFilter === 'xs')  sizeOk = gb < 1;
-        else if (sizeFilter === 'sm')  sizeOk = gb >= 1  && gb < 10;
-        else if (sizeFilter === 'md')  sizeOk = gb >= 10 && gb < 30;
-        else if (sizeFilter === 'lg')  sizeOk = gb >= 30;
+        if      (szFilter === 'xs')  return gb < 1;
+        else if (szFilter === 'sm')  return gb >= 1  && gb < 10;
+        else if (szFilter === 'md')  return gb >= 10 && gb < 30;
+        else if (szFilter === 'lg')  return gb >= 30;
       }
-      tr.style.display = (nameOk && sizeOk) ? '' : 'none';
-    });
+      return true;
+    }
+
+    if (viewMode === 'card') {
+      const cards = Array.from(document.querySelectorAll('#cardGrid .card-item'));
+      cards.forEach((card, idx) => {
+        const item = window.__ps5_lastRenderedItems[parseInt(card.dataset.index ?? idx, 10)];
+        card.style.display = itemVisible(item) ? '' : 'none';
+      });
+    } else {
+      const tbody = $('resultsBody');
+      if (!tbody) return;
+      Array.from(tbody.querySelectorAll('tr')).forEach((tr, idx) => {
+        const item = window.__ps5_lastRenderedItems[idx];
+        tr.style.display = itemVisible(item) ? '' : 'none';
+      });
+    }
     updateHeaderCheckboxState();
   }
 
@@ -827,7 +844,7 @@
   }
 
   function updateButtonStates() {
-    const selected = getSelectedItems();
+    const selected = getSelectedItemsAny();
     const hasSelected = selected.length > 0;
     const hasExactlyOne = selected.length === 1;
 
@@ -871,7 +888,7 @@
   }
 
   async function goClickHandler() {
-    let selected = getSelectedItems();
+    let selected = getSelectedItemsAny();
     if (!selected.length) {
       toast('No items selected');
       return;
@@ -1460,32 +1477,36 @@
 
   function updateHeaderCheckboxState() {
     const header = $('chkHeader');
-    if (!header) return;
-    const visible = Array.from(document.querySelectorAll('#resultsBody tr')).filter(tr => tr.offsetParent !== null && tr.style.display !== 'none');
-    if (!visible.length) {
-      header.checked = false;
-      header.indeterminate = false;
-      updateButtonStates();
-      return;
-    }
-    const checked = visible.filter(tr => {
-      const cb = tr.querySelector('input[type="checkbox"]');
-      return cb && cb.checked;
-    }).length;
-    if (checked === 0) {
-      header.checked = false;
-      header.indeterminate = false;
-    } else if (checked === visible.length) {
-      header.checked = true;
-      header.indeterminate = false;
-    } else {
-      header.checked = false;
-      header.indeterminate = true;
-    }
     updateButtonStates();
+    if (!header) return;
+    let total = 0, checked = 0;
+    if (viewMode === 'card') {
+      const cards = document.querySelectorAll('#cardGrid .card-item');
+      total = cards.length;
+      checked = Array.from(cards).filter(c => c.querySelector('.card-chk')?.checked).length;
+    } else {
+      const visible = Array.from(document.querySelectorAll('#resultsBody tr')).filter(tr => tr.offsetParent !== null && tr.style.display !== 'none');
+      total = visible.length;
+      checked = visible.filter(tr => { const cb = tr.querySelector('input[type="checkbox"]'); return cb && cb.checked; }).length;
+    }
+    if (total === 0) { header.checked = false; header.indeterminate = false; return; }
+    if (checked === 0) { header.checked = false; header.indeterminate = false; }
+    else if (checked === total) { header.checked = true; header.indeterminate = false; }
+    else { header.checked = false; header.indeterminate = true; }
   }
 
   function toggleHeaderSelect() {
+    if (viewMode === 'card') {
+      const cards = Array.from(document.querySelectorAll('#cardGrid .card-item'));
+      if (!cards.length) return;
+      const allChecked = cards.every(c => c.querySelector('.card-chk')?.checked);
+      cards.forEach(c => {
+        const chk = c.querySelector('.card-chk');
+        if (chk) { chk.checked = !allChecked; updateCardSelected(c, chk.checked); }
+      });
+      updateHeaderCheckboxState();
+      return;
+    }
     const visible = Array.from(document.querySelectorAll('#resultsBody tr')).filter(tr => tr.offsetParent !== null && tr.style.display !== 'none');
     if (!visible.length) return;
     const checkedCount = visible.filter(tr => {
@@ -1570,6 +1591,14 @@
     }
 
     // Main process is counting files before copy (size was unknown at scan time)
+    if (d.type === 'ftp-manifest-progress') {
+      const lbl = $('resultItemLabel');
+      const cf  = $('currentFileInfo');
+      if (lbl) lbl.textContent = 'Counting files on PS5…';
+      if (cf)  cf.textContent  = d.filesFound ? `${d.filesFound} files found` : '';
+      return;
+    }
+
     if (d.type === 'go-counting') {
       // 'resultItemLabel' is the correct ID (same as go-file-progress handler uses)
       const itemLabel = $('resultItemLabel');
@@ -1718,6 +1747,8 @@
 
       // Speed: only show once we have at least 2 valid window samples
       if (statSpeed) statSpeed.textContent = stats.speedBps > 1024 ? bytesToHuman(stats.speedBps) + '/s' : '—';
+      // Update sparkline
+      if (typeof Sparkline !== 'undefined') Sparkline.push(stats.speedBps);
 
       // ETA: based on overall remaining
       if (statEta) {
@@ -2027,6 +2058,515 @@
     toast('Transfer history exported as CSV');
   }
 
+  // ── FTP Connection Profiles ───────────────────────────────────────────────
+  const FTP_PROFILES_KEY = 'ps5vault.ftpProfiles';
+  function getFtpProfiles() {
+    try { return JSON.parse(localStorage.getItem(FTP_PROFILES_KEY) || '[]'); } catch (_) { return []; }
+  }
+  function saveFtpProfiles(profiles) {
+    try { localStorage.setItem(FTP_PROFILES_KEY, JSON.stringify(profiles)); } catch (_) {}
+  }
+  window.FtpProfiles = { get: getFtpProfiles, save: saveFtpProfiles };
+
+  // ── Per-game transfer history ─────────────────────────────────────────────
+  // Key: ppsa or folderName → array of { date, dest, action, bytes }
+  const GAME_HISTORY_KEY = 'ps5vault.gameHistory';
+  function getGameHistory() {
+    try { return JSON.parse(localStorage.getItem(GAME_HISTORY_KEY) || '{}'); } catch (_) { return {}; }
+  }
+  function recordGameTransfer(item, dest, action) {
+    try {
+      const key = item.ppsa || item.contentId || item.folderName || '';
+      if (!key) return;
+      const db = getGameHistory();
+      if (!db[key]) db[key] = [];
+      db[key].unshift({ date: new Date().toISOString(), dest, action });
+      db[key] = db[key].slice(0, 10); // keep 10 per game
+      localStorage.setItem(GAME_HISTORY_KEY, JSON.stringify(db));
+    } catch (_) {}
+  }
+  function getGameTransferHistory(item) {
+    const key = item.ppsa || item.contentId || item.folderName || '';
+    if (!key) return [];
+    const db = getGameHistory();
+    return db[key] || [];
+  }
+  window.GameHistory = { record: recordGameTransfer, get: getGameTransferHistory };
+
+  // ── Persistent column widths ──────────────────────────────────────────────
+  const COL_WIDTHS_KEY = 'ps5vault.columnWidths';
+  function saveColumnWidths() {
+    try {
+      const heads = document.querySelectorAll('thead th');
+      const widths = {};
+      heads.forEach(th => { if (th.className) widths[th.className] = th.offsetWidth; });
+      localStorage.setItem(COL_WIDTHS_KEY, JSON.stringify(widths));
+    } catch (_) {}
+  }
+  function restoreColumnWidths() {
+    try {
+      const widths = JSON.parse(localStorage.getItem(COL_WIDTHS_KEY) || '{}');
+      const heads = document.querySelectorAll('thead th');
+      heads.forEach(th => {
+        if (th.className && widths[th.className]) {
+          th.style.width = widths[th.className] + 'px';
+        }
+      });
+    } catch (_) {}
+  }
+  function initColumnResize() {
+    const heads = document.querySelectorAll('thead th');
+    heads.forEach(th => {
+      const handle = document.createElement('div');
+      handle.style.cssText = 'position:absolute;right:0;top:0;width:6px;height:100%;cursor:col-resize;user-select:none;';
+      th.style.position = 'relative';
+      th.appendChild(handle);
+      let startX, startW;
+      handle.addEventListener('mousedown', e => {
+        startX = e.clientX; startW = th.offsetWidth; e.preventDefault();
+        const onMove = ev => { th.style.width = Math.max(50, startW + ev.clientX - startX) + 'px'; };
+        const onUp = () => { document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp); saveColumnWidths(); };
+        document.addEventListener('mousemove', onMove);
+        document.addEventListener('mouseup', onUp);
+      });
+    });
+    restoreColumnWidths();
+  }
+
+  // ── Speed Sparkline ───────────────────────────────────────────────────────
+  const Sparkline = {
+    data: [],        // [speedBps, ...]
+    maxPoints: 60,
+    reset() { this.data = []; this.render(); },
+    push(speedBps) {
+      this.data.push(Math.max(0, speedBps));
+      if (this.data.length > this.maxPoints) this.data.shift();
+      this.render();
+    },
+    render() {
+      const svg = $('speedSparkline');
+      if (!svg) return;
+      const w = svg.clientWidth || 400, h = svg.clientHeight || 32;
+      if (!this.data.length) { svg.innerHTML = ''; return; }
+      const max = Math.max(...this.data, 1);
+      const pts = this.data.map((v, i) => {
+        const x = (i / (this.maxPoints - 1)) * w;
+        const y = h - (v / max) * (h - 2) - 1;
+        return `${x.toFixed(1)},${y.toFixed(1)}`;
+      }).join(' ');
+      svg.innerHTML = `<polyline points="${pts}" fill="none" stroke="rgba(59,130,246,0.6)" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/>`;
+    }
+  };
+
+  // ── Card / Grid view ──────────────────────────────────────────────────────
+  let viewMode = 'table'; // 'table' | 'card'
+
+  function buildCardItem(r, index) {
+    const card = document.createElement('div');
+    card.className = 'card-item';
+    card.dataset.index = String(index);
+
+    const chk = document.createElement('input');
+    chk.type = 'checkbox';
+    chk.className = 'card-chk chk';
+    chk.addEventListener('click', e => { e.stopPropagation(); updateCardSelected(card, chk.checked); updateHeaderCheckboxState(); });
+    card.appendChild(chk);
+
+    if (r.iconPath) {
+      const img = document.createElement('img');
+      img.className = 'card-cover';
+      img.src = r.iconPath;
+      img.alt = r.displayTitle || '';
+      img.loading = 'lazy';
+      img.addEventListener('error', () => img.style.display = 'none');
+      card.appendChild(img);
+    } else {
+      const ph = document.createElement('div');
+      ph.className = 'card-placeholder';
+      card.appendChild(ph);
+    }
+
+    const info = document.createElement('div');
+    info.className = 'card-info';
+    const title = document.createElement('div');
+    title.className = 'card-title';
+    title.textContent = r.displayTitle || r.folderName || '';
+    info.appendChild(title);
+    const size = document.createElement('div');
+    size.className = 'card-size';
+    size.textContent = r.totalSize > 0 ? bytesToHuman(r.totalSize) : '⟳';
+    info.appendChild(size);
+    card.appendChild(info);
+
+    card.addEventListener('click', () => {
+      chk.checked = !chk.checked;
+      updateCardSelected(card, chk.checked);
+      updateHeaderCheckboxState();
+    });
+    return card;
+  }
+
+  function updateCardSelected(card, sel) {
+    if (sel) card.classList.add('card-selected'); else card.classList.remove('card-selected');
+  }
+
+  function renderCardView(list) {
+    const gridDiv = $('cardGrid');
+    if (!gridDiv) return;
+    gridDiv.innerHTML = '';
+    list.forEach((r, i) => gridDiv.appendChild(buildCardItem(r, i)));
+  }
+
+  function toggleViewMode() {
+    viewMode = viewMode === 'table' ? 'card' : 'table';
+    const btn = $('btnToggleView');
+    const tableWrap = $('tableWrap');
+    const gridDiv = $('cardGrid');
+    if (btn) btn.textContent = viewMode === 'card' ? '☰ Table' : '⊞ Grid';
+    if (!window.__ps5_lastRenderedItems) return;
+    if (viewMode === 'card') {
+      if (tableWrap) tableWrap.style.display = 'none';
+      if (gridDiv) gridDiv.style.display = 'grid';
+      renderCardView(window.__ps5_lastRenderedItems);
+    } else {
+      if (gridDiv) { gridDiv.style.display = 'none'; gridDiv.innerHTML = ''; }
+      if (tableWrap) tableWrap.style.display = '';
+      renderResults(window.__ps5_lastRenderedItems);
+    }
+  }
+
+  // Override getSelectedItems to work in both view modes
+  const _origGetSelectedItems = getSelectedItems;
+  function getSelectedItemsAny() {
+    if (viewMode === 'card') {
+      const cards = document.querySelectorAll('#cardGrid .card-item');
+      return Array.from(cards).filter(c => c.querySelector('.card-chk')?.checked)
+        .map(c => window.__ps5_lastRenderedItems[parseInt(c.dataset.index || '-1', 10)])
+        .filter(Boolean);
+    }
+    return _origGetSelectedItems();
+  }
+
+  // ── Library Stats ─────────────────────────────────────────────────────────
+  function openStatsModal() {
+    const items = window.__ps5_lastRenderedItems || [];
+    const backdrop = $('statsModalBackdrop');
+    const body = $('statsBody');
+    if (!backdrop || !body) return;
+
+    const total = items.length;
+    const totalSize = items.reduce((s, i) => s + (i.totalSize || 0), 0);
+    const sized = items.filter(i => i.totalSize > 0);
+    const avgSize = sized.length ? totalSize / sized.length : 0;
+    const largest = items.reduce((m, i) => (i.totalSize || 0) > (m.totalSize || 0) ? i : m, items[0] || {});
+    const smallest = sized.reduce((m, i) => (i.totalSize || 0) < (m.totalSize || 0) ? i : m, sized[0] || {});
+
+    // Region breakdown
+    const regionCounts = {};
+    for (const i of items) {
+      const r = i.region || 'Unknown';
+      regionCounts[r] = (regionCounts[r] || 0) + 1;
+    }
+    const topRegions = Object.entries(regionCounts).sort((a, b) => b[1] - a[1]).slice(0, 5);
+
+    // Version breakdown
+    const versionCounts = {};
+    for (const i of items) {
+      const v = i.contentVersion || '(none)';
+      versionCounts[v] = (versionCounts[v] || 0) + 1;
+    }
+
+    // Transfer history stats
+    const history = getTransferHistory();
+    const histTotal = history.reduce((s, h) => s + (h.totalBytes || 0), 0);
+
+    body.innerHTML = `
+      <div class="stats-grid" style="margin-bottom:14px;">
+        <div class="stats-chip"><div class="stats-chip-label">Total Games</div><div class="stats-chip-value">${total}</div></div>
+        <div class="stats-chip"><div class="stats-chip-label">Total Size</div><div class="stats-chip-value">${totalSize > 0 ? bytesToHuman(totalSize) : '—'}</div></div>
+        <div class="stats-chip"><div class="stats-chip-label">Avg Game Size</div><div class="stats-chip-value">${avgSize > 0 ? bytesToHuman(avgSize) : '—'}</div></div>
+        <div class="stats-chip"><div class="stats-chip-label">Largest Game</div><div class="stats-chip-value" title="${Utils.escapeHtml(largest.displayTitle || '')}" style="font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${largest.displayTitle ? Utils.escapeHtml(largest.displayTitle) : '—'}</div></div>
+        <div class="stats-chip"><div class="stats-chip-label">Smallest Game</div><div class="stats-chip-value" title="${Utils.escapeHtml(smallest?.displayTitle || '')}" style="font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${smallest?.displayTitle ? Utils.escapeHtml(smallest.displayTitle) : '—'}</div></div>
+        <div class="stats-chip"><div class="stats-chip-label">Total Transferred</div><div class="stats-chip-value">${histTotal > 0 ? bytesToHuman(histTotal) : '—'}</div></div>
+      </div>
+      <div style="margin-bottom:10px;">
+        <div style="color:var(--muted);font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px;">By Region</div>
+        ${topRegions.map(([r, n]) => `<div style="display:flex;justify-content:space-between;align-items:center;padding:4px 0;border-bottom:1px solid rgba(255,255,255,0.04);font-size:12.5px;"><span style="color:var(--title);">${Utils.escapeHtml(r)}</span><span style="color:var(--muted);font-weight:600;">${n}</span></div>`).join('')}
+      </div>
+      <div>
+        <div style="color:var(--muted);font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px;">Transfer History</div>
+        <div style="font-size:12.5px;color:var(--muted);">${history.length} operation${history.length !== 1 ? 's' : ''} recorded &nbsp;·&nbsp; ${histTotal > 0 ? bytesToHuman(histTotal) + ' total' : 'no data'}</div>
+      </div>
+    `;
+
+    const close = () => { backdrop.style.display = 'none'; backdrop.setAttribute('aria-hidden', 'true'); };
+    $('statsClose').onclick = close;
+    $('statsCloseX').onclick = close;
+    backdrop.onclick = e => { if (e.target === backdrop) close(); };
+    backdrop.style.display = 'flex';
+    backdrop.setAttribute('aria-hidden', 'false');
+  }
+
+  // ── Verify Library ────────────────────────────────────────────────────────
+  async function openVerifyModal() {
+    const items = getSelectedItemsAny();
+    const allItems = items.length > 0 ? items : (window.__ps5_lastRenderedItems || []);
+    if (!allItems.length) { toast('No games to verify'); return; }
+
+    const backdrop = $('verifyModalBackdrop');
+    const body = $('verifyBody');
+    const statusText = $('verifyStatusText');
+    const badges = $('verifyBadges');
+    if (!backdrop || !body) return;
+
+    backdrop.style.display = 'flex';
+    backdrop.setAttribute('aria-hidden', 'false');
+    body.innerHTML = '<div style="color:var(--muted);padding:12px;">Verifying…</div>';
+    if (statusText) statusText.textContent = `Checking ${allItems.length} games…`;
+    if (badges) badges.innerHTML = '';
+
+    const ftpCfg = isFtpScan ? ftpConfig : null;
+    let results;
+    try {
+      results = await window.ppsaApi.verifyLibrary(allItems, ftpCfg);
+    } catch (e) {
+      body.innerHTML = `<div style="color:#f87171;padding:12px;">Verify failed: ${Utils.escapeHtml(e.message)}</div>`;
+      return;
+    }
+
+    const ok = results.filter(r => r.status === 'ok').length;
+    const warn = results.filter(r => r.status === 'warn').length;
+    const errored = results.filter(r => r.status === 'error').length;
+
+    if (statusText) statusText.textContent = `${results.length} games checked`;
+    if (badges) {
+      badges.innerHTML = '';
+      if (ok)      badges.innerHTML += `<span class="verify-badge verify-badge-ok">✓ ${ok} OK</span>`;
+      if (warn)    badges.innerHTML += `<span class="verify-badge verify-badge-warn">⚠ ${warn} Warning</span>`;
+      if (errored) badges.innerHTML += `<span class="verify-badge verify-badge-error">✗ ${errored} Error</span>`;
+    }
+
+    body.innerHTML = '';
+    // Sort: errors first, then warnings, then ok
+    const sorted = [...results].sort((a, b) => {
+      const ord = { error: 0, warn: 1, ok: 2 };
+      return (ord[a.status] ?? 3) - (ord[b.status] ?? 3);
+    });
+    for (const r of sorted) {
+      const row = document.createElement('div');
+      row.style.cssText = 'display:flex;align-items:flex-start;gap:10px;padding:7px 0;border-bottom:1px solid rgba(255,255,255,0.04);font-size:12.5px;';
+      const icon = r.status === 'ok' ? '✓' : r.status === 'warn' ? '⚠' : '✗';
+      const cls  = r.status === 'ok' ? 'verify-ok' : r.status === 'warn' ? 'verify-warn' : 'verify-error';
+      row.innerHTML = `<span class="${cls}" style="flex:0 0 16px;font-weight:700;">${icon}</span>
+        <div style="flex:1;min-width:0;">
+          <div style="font-weight:600;color:var(--title);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${Utils.escapeHtml(r.title || r.ppsa || '')}</div>
+          ${r.detail ? `<div style="font-size:11px;color:var(--muted);margin-top:2px;">${Utils.escapeHtml(r.detail)}</div>` : ''}
+        </div>`;
+      body.appendChild(row);
+    }
+
+    const close = () => { backdrop.style.display = 'none'; backdrop.setAttribute('aria-hidden', 'true'); };
+    $('verifyClose').onclick = close;
+    $('verifyCloseX').onclick = close;
+    backdrop.onclick = e => { if (e.target === backdrop) close(); };
+  }
+
+  // ── Diff / Compare ────────────────────────────────────────────────────────
+  let diffMissingItems = []; // games in A not in B
+
+  async function openDiffModal() {
+    const backdrop = $('diffModalBackdrop');
+    if (!backdrop) return;
+    const labelA = $('diffLabelA');
+    const srcA = $('sourcePath')?.value?.trim() || '';
+    if (labelA) labelA.textContent = srcA || 'No source scanned';
+    const statusEl = $('diffStatusText');
+    const body = $('diffBody');
+    const transferBtn = $('diffTransferMissing');
+    diffMissingItems = [];
+    if (transferBtn) transferBtn.style.display = 'none';
+    if (body) body.innerHTML = '';
+    if (statusEl) statusEl.textContent = 'Enter a second location and click Compare.';
+
+    const close = () => { backdrop.style.display = 'none'; backdrop.setAttribute('aria-hidden', 'true'); };
+    $('diffClose').onclick = close;
+    $('diffCloseX').onclick = close;
+    backdrop.onclick = e => { if (e.target === backdrop) close(); };
+
+    if (transferBtn) {
+      transferBtn.onclick = async () => {
+        if (!diffMissingItems.length) return;
+        const destB = $('diffSourceB')?.value?.trim();
+        if (!destB) { toast('Enter destination B first'); return; }
+        close();
+        // Pre-select the missing items — set them as selected in main table
+        const tbody = $('resultsBody');
+        if (!tbody || !window.__ps5_lastRenderedItems) return;
+        // Uncheck all first
+        document.querySelectorAll('#resultsBody input[type="checkbox"]').forEach(cb => { cb.checked = false; cb.closest('tr')?.classList.remove('row-selected'); });
+        // Check matching
+        diffMissingItems.forEach(item => {
+          const idx = window.__ps5_lastRenderedItems.indexOf(item);
+          if (idx >= 0) {
+            const tr = tbody.querySelector(`tr[data-index="${idx}"]`);
+            if (tr) { const cb = tr.querySelector('input[type="checkbox"]'); if (cb) { cb.checked = true; tr.classList.add('row-selected'); } }
+          }
+        });
+        $('destPath').value = destB;
+        updateHeaderCheckboxState();
+        toast(`${diffMissingItems.length} games selected — click GO to transfer`);
+      };
+    }
+
+    const scanBtn = $('diffScanBtn');
+    if (scanBtn) {
+      scanBtn.onclick = async () => {
+        const srcAItems = window.__ps5_lastRenderedItems || [];
+        const srcB = $('diffSourceB')?.value?.trim();
+        if (!srcA || !srcAItems.length) { toast('Scan source A first'); return; }
+        if (!srcB) { toast('Enter source B path'); return; }
+        if (statusEl) statusEl.textContent = 'Scanning B…';
+        scanBtn.disabled = true;
+        try {
+          let itemsB = [];
+          if (/^(\d+\.\d+\.\d+\.\d+|ftp:\/\/)/.test(srcB)) {
+            const cfgB = await window.FtpApi.openFtpModal(srcB.startsWith('ftp://') ? srcB : 'ftp://' + srcB);
+            if (!cfgB) { scanBtn.disabled = false; return; }
+            itemsB = await window.ppsaApi.scanSource('ftp://' + cfgB.host + ':' + cfgB.port + cfgB.path);
+            itemsB = Array.isArray(itemsB) ? itemsB : (itemsB?.items || []);
+          } else {
+            itemsB = await window.ppsaApi.scanSource(srcB);
+            itemsB = Array.isArray(itemsB) ? itemsB : (itemsB?.items || []);
+          }
+
+          const setPpsaB = new Set(itemsB.map(i => i.ppsa || i.contentId || i.folderName).filter(Boolean));
+          const setFolderB = new Set(itemsB.map(i => (i.folderName || '').toLowerCase()).filter(Boolean));
+
+          const onlyInA = srcAItems.filter(i => {
+            const key = i.ppsa || i.contentId;
+            if (key && setPpsaB.has(key)) return false;
+            const fn = (i.folderName || '').toLowerCase();
+            if (fn && setFolderB.has(fn)) return false;
+            return true;
+          });
+          const onlyInB = itemsB.filter(i => {
+            const key = i.ppsa || i.contentId;
+            if (key) {
+              const setA = new Set(srcAItems.map(x => x.ppsa || x.contentId).filter(Boolean));
+              if (setA.has(key)) return false;
+            }
+            return true;
+          });
+          const inBoth = srcAItems.filter(i => !onlyInA.includes(i));
+
+          diffMissingItems = onlyInA;
+          if (transferBtn) transferBtn.style.display = onlyInA.length ? 'inline-flex' : 'none';
+
+          if (statusEl) statusEl.textContent = `A: ${srcAItems.length} games · B: ${itemsB.length} games`;
+
+          if (body) {
+            body.innerHTML = '';
+            const renderSection = (title, items, cls, icon) => {
+              if (!items.length) return;
+              const sec = document.createElement('div');
+              sec.className = `diff-section ${cls}`;
+              const titleEl = document.createElement('div');
+              titleEl.className = 'diff-section-title';
+              titleEl.textContent = `${title} (${items.length})`;
+              sec.appendChild(titleEl);
+              for (const item of items.slice(0, 100)) {
+                const row = document.createElement('div');
+                row.className = 'diff-item';
+                row.innerHTML = `<span class="diff-icon">${icon}</span><span style="color:var(--title);font-size:12.5px;">${Utils.escapeHtml(item.displayTitle || item.folderName || '')}</span>`;
+                sec.appendChild(row);
+              }
+              if (items.length > 100) {
+                const more = document.createElement('div');
+                more.style.cssText = 'font-size:11px;color:var(--muted);padding:4px 0;';
+                more.textContent = `… and ${items.length - 100} more`;
+                sec.appendChild(more);
+              }
+              body.appendChild(sec);
+            };
+            renderSection('Only in A — not on B yet', onlyInA, 'diff-only-a', '📦');
+            renderSection('Only in B — not in A', onlyInB, 'diff-only-b', '🎮');
+            renderSection('In both locations', inBoth, 'diff-both', '✓');
+          }
+        } catch (e) {
+          if (statusEl) statusEl.textContent = 'Error: ' + e.message;
+          toast('Diff failed: ' + e.message);
+        } finally {
+          scanBtn.disabled = false;
+        }
+      };
+    }
+
+    backdrop.style.display = 'flex';
+    backdrop.setAttribute('aria-hidden', 'false');
+  }
+
+  // ── Sub-folder selective transfer ─────────────────────────────────────────
+  async function openSubfolderPicker(item) {
+    const backdrop = $('subfolderModalBackdrop');
+    const body = $('subfolderBody');
+    const titleEl = $('subfolderModalTitle');
+    if (!backdrop || !body) return null;
+    if (titleEl) titleEl.textContent = `Sub-folders: ${item.displayTitle || item.folderName || ''}`;
+
+    body.innerHTML = '<div style="color:var(--muted);padding:12px;">Loading sub-folders…</div>';
+    backdrop.style.display = 'flex';
+    backdrop.setAttribute('aria-hidden', 'false');
+
+    const gamePath = item.ppsaFolderPath || item.folderPath;
+    const ftpCfg = isFtpScan ? ftpConfig : null;
+    let entries = [];
+    try {
+      entries = await window.ppsaApi.listGameSubfolders(gamePath, ftpCfg);
+    } catch (e) {
+      body.innerHTML = `<div style="color:#f87171;padding:12px;">Error: ${Utils.escapeHtml(e.message)}</div>`;
+    }
+
+    if (!entries.length) {
+      body.innerHTML = '<div style="color:var(--muted);padding:12px;">No sub-folders found.</div>';
+    } else {
+      body.innerHTML = '';
+      for (const ent of entries) {
+        const row = document.createElement('div');
+        row.style.cssText = 'display:flex;align-items:center;gap:10px;padding:6px 2px;border-bottom:1px solid rgba(255,255,255,0.04);font-size:12.5px;cursor:pointer;';
+        const chk = document.createElement('input');
+        chk.type = 'checkbox';
+        chk.checked = true; // default: select all
+        chk.value = ent.name;
+        const icon = ent.isDirectory ? '📁' : '📄';
+        const size = ent.size > 0 ? ` (${bytesToHuman(ent.size)})` : '';
+        row.innerHTML = ''; row.appendChild(chk);
+        const lbl = document.createElement('label');
+        lbl.style.cssText = 'flex:1;cursor:pointer;';
+        lbl.textContent = `${icon} ${ent.name}${size}`;
+        row.appendChild(lbl);
+        row.addEventListener('click', e => { if (e.target !== chk) chk.checked = !chk.checked; });
+        body.appendChild(row);
+      }
+    }
+
+    return new Promise(resolve => {
+      const close = (result) => {
+        backdrop.style.display = 'none';
+        backdrop.setAttribute('aria-hidden', 'true');
+        $('subfolderProceed').onclick = null;
+        $('subfolderCancel').onclick = null;
+        $('subfolderCloseX').onclick = null;
+        resolve(result);
+      };
+      $('subfolderProceed').onclick = () => {
+        const checked = Array.from(body.querySelectorAll('input[type="checkbox"]:checked')).map(c => c.value);
+        close(checked);
+      };
+      $('subfolderCancel').onclick = () => close(null);
+      $('subfolderCloseX').onclick = () => close(null);
+    });
+  }
+
   document.addEventListener('DOMContentLoaded', () => {
     try {
       // Ensure inputs are always editable
@@ -2322,6 +2862,9 @@
                 ftpConfig = config;
                 isFtpScan = true;
                 actualSrc = 'ftp://' + config.host + ':' + config.port + config.path;
+                // Update source field to full FTP URL so it's readable and re-scannable
+                const srcEl = $('sourcePath');
+                if (srcEl) srcEl.value = 'ftp://' + config.host + ':' + config.port + config.path;
                 addRecentFtp(config);
               } else { return; }
             } else {
@@ -2336,7 +2879,7 @@
             scanStartTime = Date.now();
             window.__ps5_lastRenderedItems = [];
             $('resultsBody').innerHTML = '';
-            const res = await window.ppsaApi.scanSource(actualSrc);
+            const res = await window.ppsaApi.scanSource(actualSrc, isFtpScan && ftpConfig ? { ftpConfig } : undefined);
             const arr = Array.isArray(res) ? res : (Array.isArray(res?.items) ? res.items : []);
             if (arr.length > 0) {
               const duration = Math.round((Date.now() - scanStartTime) / 1000);
@@ -2349,6 +2892,7 @@
           } catch (e) {
             console.error(e);
             toast('Scan failed: Check connection or path. Try again.');
+            showScanUI(false);
           } finally {
             setAppBusy(false);
           }
@@ -2384,6 +2928,7 @@
           } catch (e) {
             console.error(e);
             toast('Scan failed: ' + e.message);
+            showScanUI(false);
           } finally {
             setAppBusy(false);
           }
@@ -2424,23 +2969,26 @@
       if (btnDeleteSelected) {
         btnDeleteSelected.addEventListener('click', async () => {
           if (appBusy) { toast('Please wait for the current operation to finish.'); return; }
-          const selected = getSelectedItems();
+          const selected = getSelectedItemsAny();
           if (!selected.length) { toast('No items selected'); return; }
-          if (!confirm(`Delete ${selected.length} selected item(s)? This cannot be undone and will remove files from disk.`)) return;
+          const confirmed = await confirm(`Move ${selected.length} selected item(s) to trash? You can recover them from the _ps5vault_trash folder.`);
+          if (!confirmed) return;
           try {
-            setAppBusy(true, `Deleting ${selected.length} item(s)…`);
-            showPersistentToast('Deleting selected items...');
+            setAppBusy(true, `Trashing ${selected.length} item(s)…`);
+            showPersistentToast('Moving to trash...');
             for (const item of selected) {
               if (isFtpScan && ftpConfig) {
                 const pathToDelete = item.ppsaFolderPath || item.folderPath;
                 const delRes = await window.ppsaApi.ftpDeleteItem(ftpConfig, pathToDelete);
                 if (delRes && delRes.error) throw new Error(delRes.error);
               } else {
-                await window.ppsaApi.deleteItem(item);
+                // Use soft-delete / trash
+                const trashRes = await window.ppsaApi.trashItem(item);
+                if (trashRes && trashRes.error) throw new Error(trashRes.error);
               }
             }
             hidePersistentToast();
-            toast(`Deleted ${selected.length} item(s)`);
+            toast(`Moved ${selected.length} item(s) to trash`);
             const src = $('sourcePath').value.trim();
             if (src) {
               showPersistentToast('Refreshing results...');
@@ -2460,11 +3008,282 @@
         });
       }
 
+      // ── New feature buttons ──────────────────────────────────────────────
+      const btnToggleView = $('btnToggleView');
+      if (btnToggleView) btnToggleView.addEventListener('click', toggleViewMode);
+
+      const btnVerifyLibrary = $('btnVerifyLibrary');
+      if (btnVerifyLibrary) btnVerifyLibrary.addEventListener('click', () => openVerifyModal());
+
+      const btnDiffSources = $('btnDiffSources');
+      if (btnDiffSources) btnDiffSources.addEventListener('click', () => openDiffModal());
+
+      const btnStatsPanel = $('btnStatsPanel');
+      if (btnStatsPanel) btnStatsPanel.addEventListener('click', () => openStatsModal());
+
+      // ── PS5 Discover button in FTP modal ─────────────────────────────────
+      const ftpDiscoverBtn = $('ftpDiscoverBtn');
+      if (ftpDiscoverBtn) {
+        ftpDiscoverBtn.addEventListener('click', async () => {
+          ftpDiscoverBtn.disabled = true;
+          ftpDiscoverBtn.textContent = '🔍 Scanning…';
+          try {
+            const results = await window.ppsaApi.ps5Discover(4000);
+            if (!results || !results.length) {
+              toast('No PS5 found — make sure your FTP payload is running and PS5 is on the same network');
+            } else {
+              const first = results[0];
+              const hostEl = $('ftpHost');
+              const portEl = $('ftpPort');
+              if (hostEl) hostEl.value = first.ip;
+              if (portEl) portEl.value = String(first.port);
+              toast(`Found PS5 at ${first.ip}:${first.port}`);
+            }
+          } catch (e) {
+            toast('PS5 discovery failed: ' + e.message);
+          } finally {
+            ftpDiscoverBtn.disabled = false;
+            ftpDiscoverBtn.textContent = '🔍 Find PS5';
+          }
+        });
+      }
+
+      // ── FTP Storage info button ───────────────────────────────────────────
+      const ftpStorageBtn = $('ftpStorageBtn');
+      if (ftpStorageBtn) {
+        ftpStorageBtn.addEventListener('click', async () => {
+          const hostVal = $('ftpHost')?.value?.trim();
+          const portVal = parseInt($('ftpPort')?.value?.trim() || '2121', 10);
+          if (!hostVal) { toast('Enter FTP host first'); return; }
+          const cfg = {
+            host: hostVal, port: portVal,
+            user: $('ftpUser')?.value?.trim() || 'anonymous',
+            password: $('ftpPass')?.value?.trim() || '',
+            secure: false
+          };
+          // Pass already-scanned game items so the backend can sum sizes per mount
+          const scannedItems = (window.__ps5_lastRenderedItems || []).filter(i => i.totalSize > 0);
+          ftpStorageBtn.disabled = true;
+          ftpStorageBtn.textContent = '💾 Loading…';
+          try {
+            const info = await window.ppsaApi.ftpStorageInfo(cfg, scannedItems);
+            const backdrop = $('ftpStorageModalBackdrop');
+            const body = $('ftpStorageBody');
+            if (backdrop && body) {
+              if (!info || info.error) {
+                body.innerHTML = `<div style="color:#f87171;padding:12px;">Connection failed: ${Utils.escapeHtml(info?.error || 'Could not connect')}</div>`;
+              } else if (!info.length) {
+                body.innerHTML = '<div style="color:var(--muted);padding:12px;">No accessible mount points found. Make sure your PS5 FTP payload is running.</div>';
+              } else {
+                body.innerHTML = info.map(s => {
+                  const hasAvail = s.available > 0;
+                  const hasTotal = s.total > 0;
+                  const hasGames = s.usedByGames > 0;
+                  const hasItems = s.itemCount > 0;
+
+                  let spaceStr = '', spaceNote = '', bar = '';
+
+                  if (hasAvail && hasTotal) {
+                    const usedBytes = s.total - s.available;
+                    const pct = Math.round((usedBytes / s.total) * 100);
+                    const col = pct > 85 ? '#f87171' : pct > 65 ? '#fbbf24' : '#3b82f6';
+                    const label = s.isHardwareFallback
+                      ? `${bytesToHuman(usedBytes)} used of ~${bytesToHuman(s.total)}`
+                      : `${bytesToHuman(s.available)} free of ${bytesToHuman(s.total)}`;
+                    spaceStr = label;
+                    if (s.isHardwareFallback) {
+                      spaceNote = `<div style="font-size:11px;color:rgba(148,163,184,0.5);margin-top:3px;">~${bytesToHuman(s.total)} usable on PS5 internal SSD · games only, other system usage not counted</div>`;
+                    }
+                    bar = `<div style="background:rgba(255,255,255,0.07);border-radius:4px;height:5px;margin-top:8px;overflow:hidden;" title="${pct}% used"><div style="background:${col};width:${pct}%;height:100%;border-radius:4px;"></div></div>`;
+                  } else if (hasAvail) {
+                    spaceStr = `${bytesToHuman(s.available)} free`;
+                  } else if (hasTotal) {
+                    // Hardware spec known but no free space — show total + games used
+                    const pct = hasGames ? Math.round((s.usedByGames / s.total) * 100) : 0;
+                    const col = pct > 85 ? '#f87171' : pct > 65 ? '#fbbf24' : '#3b82f6';
+                    spaceStr = `${bytesToHuman(s.total)} total`;
+                    if (hasGames) {
+                      spaceNote = `<div style="font-size:11px;color:rgba(148,163,184,0.5);margin-top:3px;">${bytesToHuman(s.usedByGames)} in scanned games</div>`;
+                      bar = `<div style="background:rgba(255,255,255,0.07);border-radius:4px;height:5px;margin-top:8px;overflow:hidden;" title="${pct}% used by games"><div style="background:${col};width:${pct}%;height:100%;border-radius:4px;"></div></div>`;
+                    }
+                  } else if (hasGames) {
+                    spaceStr = `${bytesToHuman(s.usedByGames)} in ${s.gameCount} game${s.gameCount !== 1 ? 's' : ''}`;
+                    spaceNote = `<div style="font-size:11px;color:rgba(148,163,184,0.5);margin-top:3px;">Scanned game data only · total capacity not available</div>`;
+                  } else {
+                    spaceStr = 'No games';
+                  }
+
+                  const itemLabel = hasItems
+                    ? `<div style="font-size:11px;color:var(--muted);margin-top:2px;">${s.itemCount} folder${s.itemCount !== 1 ? 's' : ''}${s.subPath ? ` · ${Utils.escapeHtml(s.subPath)}` : ''}</div>`
+                    : '';
+
+                  const dimmed = !hasGames && !hasItems;
+                  return `<div style="padding:10px 0;border-bottom:1px solid rgba(255,255,255,0.06);${dimmed ? 'opacity:0.35;' : ''}">
+                    <div style="display:flex;justify-content:space-between;align-items:baseline;font-size:13px;gap:12px;">
+                      <span style="font-weight:600;color:var(--title);flex-shrink:0;">${Utils.escapeHtml(s.path)}</span>
+                      <span style="color:${hasGames||hasAvail||hasTotal ? 'var(--title)' : 'var(--muted)'};font-size:12px;font-weight:${hasGames||hasAvail||hasTotal ? '500' : '400'};text-align:right;">${spaceStr}</span>
+                    </div>${itemLabel}${spaceNote}${bar}</div>`;
+                }).join('');
+              }
+              const close = () => { backdrop.style.display = 'none'; backdrop.setAttribute('aria-hidden', 'true'); };
+              $('ftpStorageClose').onclick = close;
+              $('ftpStorageCloseX').onclick = close;
+              backdrop.onclick = e => { if (e.target === backdrop) close(); };
+              backdrop.style.display = 'flex';
+              backdrop.setAttribute('aria-hidden', 'false');
+            }
+          } catch (e) {
+            toast('Storage info failed: ' + e.message);
+          } finally {
+            ftpStorageBtn.disabled = false;
+            ftpStorageBtn.textContent = '💾 Storage';
+          }
+        });
+      }
+
+      // ── Init column resize after table renders ────────────────────────────
+      initColumnResize();
+
+      // ── PS5 Auto-Discover (main UI) ───────────────────────────────────────
+      // Scans the local network for PS5 consoles running an FTP payload.
+      // Shows results as clickable chips in the source row.
+      // Clicking a chip pre-fills the FTP modal and starts a scan immediately.
+      (function initPs5Discover() {
+        const btn       = $('btnFindPs5');
+        const icon      = $('btnFindPs5Icon');
+        const results   = $('ps5DiscoverResults');
+        if (!btn || !results) return;
+
+        let discovered  = []; // [{ip, port}]
+        let scanning    = false;
+        let activeChip  = null; // currently connected ps5
+
+        function setScanning(on) {
+          scanning = on;
+          btn.disabled = on;
+          icon.classList.toggle('ps5-scanning', on);
+          icon.textContent = on ? '🔍' : '🎮';
+          btn.querySelector('span:last-child').textContent = on ? 'Scanning…' : 'Find PS5';
+        }
+
+        function renderChips() {
+          // Keep status text if present
+          const statusEl = results.querySelector('.ps5-discover-status');
+          results.innerHTML = '';
+          if (statusEl) results.appendChild(statusEl);
+
+          for (const ps5 of discovered) {
+            const chip = document.createElement('div');
+            chip.className = 'ps5-chip' + (activeChip && activeChip.ip === ps5.ip ? ' ps5-chip--active' : '');
+            chip.title = `Click to connect to PS5 at ${ps5.ip}:${ps5.port}`;
+            const isActive = activeChip && activeChip.ip === ps5.ip;
+            chip.innerHTML =
+              `<span class="ps5-chip-dot${isActive ? ' ps5-chip-dot--green' : ''}"></span>` +
+              `<span>${ps5.ip}<span style="opacity:.6;font-weight:400;">:${ps5.port}</span></span>` +
+              `<span class="ps5-chip-dismiss" title="Dismiss" data-ip="${ps5.ip}">✕</span>`;
+
+            // Dismiss button
+            chip.querySelector('.ps5-chip-dismiss').addEventListener('click', e => {
+              e.stopPropagation();
+              discovered = discovered.filter(p => p.ip !== ps5.ip);
+              if (activeChip && activeChip.ip === ps5.ip) activeChip = null;
+              renderChips();
+            });
+
+            // Click to connect
+            chip.addEventListener('click', async () => {
+              if (appBusy) { toast('Wait for current operation to finish'); return; }
+
+              // Open FTP modal pre-filled with discovered host:port
+              try {
+                const ftpUrl = 'ftp://' + ps5.ip + ':' + ps5.port;
+                const config = await window.FtpApi.openFtpModal(ftpUrl);
+                if (!config) return;
+
+                ftpConfig = config;
+                isFtpScan = true;
+
+                // Update chip with confirmed port + path so it shows full FTP URL
+                ps5.port = config.port;
+                ps5.path = config.path;
+                activeChip = { ip: config.host, port: config.port };
+                renderChips();
+
+                const actualSrc = 'ftp://' + config.host + ':' + config.port + config.path;
+                // Update source field to full FTP URL so re-scan / refresh works
+                const srcEl = $('sourcePath');
+                if (srcEl) srcEl.value = actualSrc;
+
+                addRecentFtp(config);
+                try { localStorage.setItem(LAST_SRC_KEY, actualSrc); } catch (_) {}
+
+                setAppBusy(true, 'Scanning…');
+                showScanUI(true);
+                $('currentScanLabel').textContent = 'Scanning PS5 — discovering games…';
+                scanStartTime = Date.now();
+                window.__ps5_lastRenderedItems = [];
+                $('resultsBody').innerHTML = '';
+                const res = await window.ppsaApi.scanSource(actualSrc, { ftpConfig: config });
+                const arr = Array.isArray(res) ? res : (Array.isArray(res?.results) ? res.results : (Array.isArray(res?.items) ? res.items : []));
+                if (!arr.length && (!res || res.error)) throw new Error(res?.error || 'Scan failed');
+                const duration = Math.round((Date.now() - scanStartTime) / 1000);
+                renderResults(arr, duration);
+              } catch (e) {
+                err('PS5 connect scan error:', e);
+                toast('Scan failed: ' + e.message);
+              } finally {
+                setAppBusy(false);
+                showScanUI(false);
+              }
+            });
+
+            results.appendChild(chip);
+          }
+        }
+
+        function setStatus(msg, isErr) {
+          let el = results.querySelector('.ps5-discover-status');
+          if (!el) { el = document.createElement('span'); el.className = 'ps5-discover-status'; results.appendChild(el); }
+          el.textContent = msg;
+          el.style.color = isErr ? '#f87171' : 'var(--muted)';
+          if (!msg) el.remove();
+        }
+
+        async function runScan() {
+          if (scanning) return;
+          setScanning(true);
+          results.innerHTML = '';
+          setStatus('Scanning network…');
+          try {
+            const found = await window.ppsaApi.ps5Discover(4000);
+            results.innerHTML = '';
+            if (!found || !found.length) {
+              setStatus('No PS5 found — make sure your FTP payload is running');
+            } else {
+              // Merge with existing, dedupe by IP
+              for (const f of found) {
+                if (!discovered.find(d => d.ip === f.ip)) discovered.push(f);
+              }
+              renderChips();
+              setStatus('');
+            }
+          } catch (e) {
+            results.innerHTML = '';
+            setStatus('Scan failed: ' + e.message, true);
+          } finally {
+            setScanning(false);
+          }
+        }
+
+        btn.addEventListener('click', runScan);
+      })();
+
+
       const btnRenameSelected = $('btnRenameSelected');
       if (btnRenameSelected) {
         btnRenameSelected.addEventListener('click', async () => {
           if (appBusy) { toast('Please wait for the current operation to finish.'); return; }
-          const selected = getSelectedItems();
+          const selected = getSelectedItemsAny();
           if (!selected.length) { toast('No items selected'); return; }
           const item = selected[0];
           const currentName = item.displayTitle || '';
@@ -2582,16 +3401,18 @@
               toast('Update check failed: ' + (e.message || String(e)));
             }
           } else if (value === 'selectAll') {
-            Array.from(document.querySelectorAll('#resultsBody input[type="checkbox"]')).filter(cb => cb.closest('tr').style.display !== 'none').forEach(cb => {
-              cb.checked = true;
-              cb.closest('tr')?.classList.add('row-selected');
-            });
+            if (viewMode === 'card') {
+              document.querySelectorAll('#cardGrid .card-item').forEach(c => { const chk = c.querySelector('.card-chk'); if (chk) { chk.checked = true; updateCardSelected(c, true); } });
+            } else {
+              Array.from(document.querySelectorAll('#resultsBody input[type="checkbox"]')).filter(cb => cb.closest('tr').style.display !== 'none').forEach(cb => { cb.checked = true; cb.closest('tr')?.classList.add('row-selected'); });
+            }
             updateHeaderCheckboxState();
           } else if (value === 'unselectAll') {
-            Array.from(document.querySelectorAll('#resultsBody input[type="checkbox"]')).filter(cb => cb.closest('tr').style.display !== 'none').forEach(cb => {
-              cb.checked = false;
-              cb.closest('tr')?.classList.remove('row-selected');
-            });
+            if (viewMode === 'card') {
+              document.querySelectorAll('#cardGrid .card-item').forEach(c => { const chk = c.querySelector('.card-chk'); if (chk) { chk.checked = false; updateCardSelected(c, false); } });
+            } else {
+              Array.from(document.querySelectorAll('#resultsBody input[type="checkbox"]')).filter(cb => cb.closest('tr').style.display !== 'none').forEach(cb => { cb.checked = false; cb.closest('tr')?.classList.remove('row-selected'); });
+            }
             updateHeaderCheckboxState();
           } else if (value === 'clear') {
             if (!confirm('Clear all scan results?')) return;
@@ -2624,6 +3445,12 @@
             openApiSettingsModal();
           } else if (value === 'exportCsv') {
             exportHistoryCsv();
+          } else if (value === 'stats') {
+            openStatsModal();
+          } else if (value === 'verify') {
+            openVerifyModal();
+          } else if (value === 'diff') {
+            openDiffModal();
           }
           e.target.value = '';
         });

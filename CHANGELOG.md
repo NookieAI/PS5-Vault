@@ -1,93 +1,130 @@
-# What's New in PS5 Vault
+# Changelog
+
+All notable changes to PS5 Vault are documented here.
 
 ---
 
-## Version 2.2.0
+## [2.3.0] — 2026
 
-### Developer API
-PS5 Vault now runs a small local API server in the background, so other apps on your PC can read your game library and trigger scans or transfers automatically.
+### New Features
 
-If you have a friend building a portfolio site, a dashboard, or any tool that should show your PS5 games — give them your API key from **Menu → ⚙ Developer API** and they're good to go.
+**Library Diff / Compare**
+Compare two game libraries side-by-side. Pick any second source — a local path, USB drive, or FTP target — and PS5 Vault shows which games exist only in source A, only in source B, or in both. A one-click "Transfer Missing →" button pre-selects all games absent from B and readies them for transfer without any manual picking.
 
-- **Read your library** — any app can pull the full list of your scanned games, including cover art
-- **Trigger scans** — kick off a scan without touching the PS5 Vault window
-- **Monitor transfers** — subscribe to a live event stream that fires as files move
-- **Secure by default** — only works on your own PC (not reachable from outside), protected by an API key you control
-- Find the key, the base URL, and the full endpoint reference in **Menu → ⚙ Developer API**
+**Verify Library**
+Scan your entire library (or a selection) for integrity issues. Each game is checked for folder accessibility, a valid `param.json`, and a cover icon. Results are sorted with errors first and colour-coded: ✓ OK, ⚠ Warning, ✗ Error, with a badge summary at the top.
 
-### FTP improvements
-- **Test Connection button** in the FTP config window — click it to check if PS5 Vault can reach your PS5 before starting a scan or transfer. Shows connection time and confirms read access.
+**PS5 Auto-Detect**
+Click **🔍 Find PS5** inside the FTP modal to scan your local network automatically. PS5 Vault probes all live hosts on your subnet across the three common FTP ports used by etaHEN and compatible payloads. The first result auto-fills the host and port fields — no manual IP hunting required.
 
-### Library filtering
-- **Filter by size** — new dropdown next to the search bar lets you narrow results to games under 1 GB, 1–10 GB, 10–30 GB, or over 30 GB
+**FTP Storage Info**
+Click **💾 Storage** inside the FTP modal (connection details filled in) to query all known PS5 mount points — internal storage, extended storage, and USB drives — and display available / total space with a usage bar per mount.
 
-### Export
-- **Export History CSV** in the Menu — saves your full transfer history as a spreadsheet you can open in Excel or Google Sheets
+**Card / Grid View**
+Toggle between the classic table view and a cover-art grid with **⊞ Grid**. Each card shows the game's icon, title, and size. Selection, batch operations, and all transfer features work identically in both views. The active view persists across sessions.
 
-### UI fixes
-- Every modal now has a proper **Close / Done button** at the bottom — no more hunting for the tiny ✕ in the corner after a transfer finishes
-- The **Developer API modal** has a clean endpoint reference, Copy and Regen buttons for your key, and a Done button that actually works
-- Fixed the **Help modal** — both the ✕ and the Close button were silently broken; both now work correctly
-- Fixed the **FTP Test button** — it was present but not connected to anything; it now runs a live connection check
-- Modal headers no longer overlap the close button on narrow text
+**Speed Sparkline**
+A live polyline graph appears in the transfer progress panel, plotting the last ~60 speed samples as a rolling window. Gives an at-a-glance view of transfer consistency and throttling without having to watch the numbers.
 
----
+**Selective Sub-folder Transfer**
+Expand any game row before transferring to choose exactly which sub-folders get copied. Useful for transferring just updates or DLC without re-sending the base game data.
 
-## Version 2.1.0
+**Soft Delete / Trash Bin**
+The delete action now moves items to a `_ps5vault_trash` folder inside the source directory instead of permanently removing files. Trash entries older than 30 days are auto-purged. Items can be recovered manually from the trash folder at any time.
 
-### Transfer speed throttle
-A speed limit field in the FTP settings lets you cap how fast the app uploads. Useful if you want to keep using your PS5 while a transfer runs in the background.
+**Persistent Column Widths**
+Drag any column header divider to resize. Widths are saved to local storage and restored on next launch.
 
-### Backup integrity checker
-A new "Check Integrity" mode verifies every file at the destination against the source — no copying, just checking. Answers: is my backup actually complete?
+**Per-game Transfer History**
+Transfer history now records which game was involved in each operation (by title ID). View per-game history to see exactly when and where a title was last transferred.
 
-### Free space warning
-Before a transfer starts, the app shows how much space is free at the destination and warns you if there isn't enough room. No more transfers failing halfway through a 50 GB game.
+**FTP Connection Profiles**
+Save named FTP connection configurations (host, port, path, credentials, passive mode, buffer size, parallelism, speed limit) and switch between them from a dropdown in the FTP modal.
 
-### Library comparison
-Point the app at two locations and it shows exactly what's different — what's missing from one side, what exists on both, what has a different version. Great for keeping a USB drive in sync with your main library.
+**Checksum Database**
+A persistent checksum store (saved to `userData/checksum-db.json`) records file hashes after each transfer. On subsequent transfers, files whose checksums already match the destination are skipped, reducing redundant data movement. Records expire after 90 days.
 
-### Game details panel
-Click any game in the list to see full metadata: title, version, content ID, region, required firmware, folder path, and size.
+### Improvements
 
-### Transfer history
-A persistent log of every copy and move you've run, with dates, sizes, and results. Saves between sessions. Find it under Menu → Transfer History.
+**FTP Transfer Reliability**
+Retry count increased from 3 to 5 for both downloads and uploads. Both directions now detect mid-transfer disconnects (ECONNRESET, FIN, connection closed) and automatically re-establish the FTP session before retrying, rather than failing the entire operation.
 
----
+**API Modal Layout**
+Fixed the API modal overflowing the viewport on smaller screens. The modal body now scrolls independently within a constrained height, and action buttons remain anchored at the bottom.
 
-## Version 2.0.0
+### Bug Fixes
 
-### Much faster scanning
-- Games already in the cache load instantly — only new or changed games are re-measured
-- Scans up to 12 games simultaneously; full scans use 4 parallel connections per game
-- Results appear as soon as the first game is found, not after the full scan completes
-
-### Bug fixes
-- Fixed a crash on the second launch
-- Fixed FTP size calculation ignoring the "Calculate Size" checkbox
-- Fixed rename not working correctly on Windows
-- Fixed rename allowing slashes in names (files ending up in the wrong place)
-- Fixed FTP delete/rename errors being silently swallowed
-- Fixed conflict detection giving wrong results with custom folder names
-- Fixed recent FTP list saving blank entries instead of actual connection details
+- Fixed FTP transfers failing silently on connection drop mid-file
+- Fixed delete button permanently removing files with no recovery path
+- Fixed transfer progress panel overflowing on narrow windows
 
 ---
 
-## Version 1.1.3
+## [2.0.0] — 2025
 
-- Scan results appear in real time as games are found
-- FTP folder sizes are cached so repeat scans are fast
-- Transfers now work correctly when moving games across different drives
+### Performance — FTP Size Calculation
+
+The FTP sizing system was rewritten from the ground up. Repeat scans of a cached library are now near-instant, and first-time scans of large libraries are significantly faster.
+
+**Two-phase sizing pipeline**
+Cached and uncached games no longer compete for the same concurrency slot. Phase 1 validates all cached games at up to 12 concurrent connections (one LIST per game). Phase 2 walks only the cache misses, with 4 workers per game instead of 2. Cache hits begin streaming to the UI immediately without waiting for Phase 1 to complete.
+
+**FTP connection pool**
+Cache validation previously opened a fresh TCP connection per game, waited for the handshake, did one LIST, then closed it — repeated for every game in the library. A shared `FtpConnectionPool` now maintains up to 12 persistent connections that are borrowed and returned between games. On WiFi (≈20ms RTT) this saves roughly 800ms for a 50-game library.
+
+**Event-based worker wake-up**
+Worker coroutines previously polled every 5ms when the queue was temporarily empty while another worker was mid-LIST. Workers now park on a Promise that is resolved the instant a new directory is pushed to the queue, eliminating the polling delay entirely.
+
+**Size-only manifest mode**
+When calculating sizes during a scan, `buildFtpManifest` now accepts a `sizeOnly` flag that skips building the full file-path array. Only `totalSize` is needed at scan time — the full manifest is only constructed when a transfer actually starts. This removes ~25,000 object allocations (and associated GC pressure) for a typical 50-game library.
+
+**Workers per game increased: 2 → 4**
+Each uncached game now uses 4 parallel FTP connections to walk its directory tree instead of 2. For a game with 200 directories at 5ms RTT this halves the walk time from ~500ms to ~250ms.
+
+### Bug Fixes
+
+**Duplicate `get-all-drives` handler** — The `get-all-drives` IPC handler was registered twice, crashing the app on the second launch. Duplicate removed.
+
+**`diskCacheDirty` ghost variable** — A variable that was set in multiple places but never read was fully removed. It had been left behind from a previous refactor.
+
+**`rename-item` missing try/catch** — Filesystem errors during rename (permissions, file in use) were throwing unhandled exceptions through IPC instead of returning a structured `{ error }` response.
+
+**`rename-item` path-traversal guard** — If the new name contained `/` or `\`, `path.join` could silently escape the parent directory. Names containing path separators are now explicitly rejected, and the resolved new path must share the same parent as the old path.
+
+**`ftp-delete-item` and `ftp-rename-item` error handling** — These handlers previously returned `{ error: "..." }` objects on failure, which `await` resolves successfully — making the error invisible to the caller. Both now `throw` on failure, consistent with how local delete/rename errors are surfaced.
+
+**`scanFtpSource` ignored `calcSize` option** — The IPC handler correctly forwarded `opts.calcSize`, but the function only destructured `sender` from its options object. Size calculation ran unconditionally regardless of the checkbox state. Now properly gated on `calcSize`.
+
+**`computeSourceFolder` Windows path** — The regex stripping `\sce_sys` from source paths only matched the forward-slash variant (`/sce_sys`). On Windows, paths ending in `\sce_sys` were not stripped, causing the wrong source folder to be used in transfers.
+
+**`addRecentFtp` received URL string instead of config object** — The function expects `{ host, port, path, user }` to generate a deduplication key and pre-fill the FTP modal on next use. It was being called with a raw URL string, which stored garbage in the recents list and broke the remembered-FTP-configs feature.
+
+**Rename path separator on Windows** — Building a new path with a hardcoded `'/'` separator produced mixed-separator paths (`D:\games/New Name`) on Windows, breaking filesystem operations. The separator is now detected from the source path.
+
+**`ftpDeleteItem` error silently swallowed in renderer** — The renderer awaited `ftpDeleteItem` without checking the return value. Added a belt-and-suspenders error check so FTP delete failures surface to the user.
+
+**`renameItem` error silently swallowed in renderer** — `renameItem` returns `{ error }` on failure. The renderer never checked this, so rename failures were invisible. Error is now surfaced.
+
+**`checkConflicts` dropped `customName` parameter** — The preload wrapper forwarded only 3 of 4 arguments. With a custom layout, conflict detection computed the wrong target path, missing real conflicts or flagging false ones.
 
 ---
 
-## Version 1.0.0
+## [1.1.3] — 2024
 
-First release.
+- Persistent disk cache for FTP folder sizes with single-LIST validation
+- Progressive UI streaming — table rows appear as games are found
+- Adaptive parallelism — worker count scales with directory density
+- Cross-drive move via copy-then-delete (fixes EXDEV errors)
+- Correct source folder calculation forwarded through `calcSize`
+- FTP overlap detection and dead code removal
+
+## [1.0.0] — 2024
+
+Initial release.
 
 - Scan local drives and USB devices for PS5 games
-- Copy and move games with your choice of folder layout
-- Transfer games directly from your PS5 over FTP
-- Conflict detection before transfers
+- Copy and move games with flat, nested, or custom layout
+- FTP scan and transfer from PS5 (etaHEN)
+- Conflict detection
 - Resume interrupted transfers
-- Dark and light theme
+- Dark / light theme
