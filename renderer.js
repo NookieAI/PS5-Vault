@@ -46,7 +46,6 @@
   let ftpConfig = null;
   let maxSpeed = 0;
   let lastFile = '';
-  let completedFiles = [];
   let totalTransferred = 0;
 
   // ── Global operation lock ─────────────────────────────────────────────────
@@ -995,6 +994,7 @@
             if (rl) rl.innerHTML = '';
             TransferStats.reset();
             maxSpeed = 0;  // also reset via TransferStats.peakSpeed
+            lastFile = '';
             transferStartTime = Date.now();
             cancelOperation = false;
 
@@ -1117,6 +1117,7 @@
       if (rl) rl.innerHTML = '';
       TransferStats.reset();
       maxSpeed = 0;
+      lastFile = '';
       transferStartTime = Date.now();
       cancelOperation = false;
 
@@ -1660,7 +1661,7 @@
         setResultModalBusy(true);
         TransferStats.reset();
         maxSpeed = 0;
-        completedFiles = [];
+        lastFile = '';
         transferStartTime = Date.now();
         cancelOperation = false;
 
@@ -2624,6 +2625,15 @@
 
       updateSourceHistoryDatalist();
       updateDestHistoryDatalist();
+
+      // Attach show-all custom dropdowns to source and destination path inputs.
+      // Pass getter functions so options are always fresh when the dropdown opens.
+      if (typeof window.makeShowAllDropdown === 'function') {
+        const sourceInput = $('sourcePath');
+        const destInput   = $('destPath');
+        if (sourceInput) window.makeShowAllDropdown(sourceInput, getRecentSources);
+        if (destInput)   window.makeShowAllDropdown(destInput,   getRecentDests);
+      }
 
       const brandLogo = $('brandLogo');
       if (brandLogo) {
