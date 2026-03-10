@@ -59,7 +59,9 @@ window.Utils = {
    * @returns {boolean} True if ends with sce_sys.
    */
   pathEndsWithSceSys: function(p) {
-    return p && p.toLowerCase().endsWith('/sce_sys');
+    if (!p) return false;
+    const lp = p.toLowerCase();
+    return lp.endsWith('/sce_sys') || lp.endsWith('\\sce_sys');
   },
 
   /**

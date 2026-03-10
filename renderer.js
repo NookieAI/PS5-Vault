@@ -893,41 +893,24 @@
   }
 
   async function goClickHandler() {
-    let selected = getSelectedItemsAny();
-    if (!selected.length) {
+    const rawSelected = getSelectedItemsAny();
+    if (!rawSelected.length) {
       toast('No items selected');
       return;
     }
     try {
-      // FIX B5: Rebuild `selected` as shallow-cloned items with corrected paths.
-      // The old code created local `item` objects with path corrections but threw them away,
-      // and then mutated the originals' displayTitle permanently (B6).
-      const correctedItems = [];
-      const tbody = $('resultsBody');
-      const trs = Array.from(tbody.querySelectorAll('tr'));
-      trs.forEach((tr, idx) => {
-        if (tr.style.display === 'none') return;
-        const cb = tr.querySelector('input[type="checkbox"]');
-        if (cb && cb.checked) {
-          const orig = window.__ps5_lastRenderedItems[idx];
-          if (!orig) return;
-          // Shallow-clone so mutations below don't affect the displayed table items
-          const item = { ...orig };
-          // Apply correct source folder (strips trailing /sce_sys if present)
-          const correctPath = computeSourceFolder(item);
-          if (correctPath) {
-            item.folderPath = correctPath;
-            item.contentFolderPath = correctPath;
-            item.ppsaFolderPath = correctPath;
-          }
-          correctedItems.push(item);
+      // Shallow-clone each item and apply path corrections (strips trailing /sce_sys).
+      // Use getSelectedItemsAny() as the authoritative source so both table and card/grid views work.
+      const selected = rawSelected.map(orig => {
+        const item = { ...orig };
+        const correctPath = computeSourceFolder(item);
+        if (correctPath) {
+          item.folderPath = correctPath;
+          item.contentFolderPath = correctPath;
+          item.ppsaFolderPath = correctPath;
         }
+        return item;
       });
-      selected = correctedItems;
-      if (!selected.length) {
-        toast('No items selected');
-        return;
-      }
 
       // NOTE: displayTitle version-appending loop removed — it permanently mutated shared items
       // causing double-appended versions on repeated transfers.
