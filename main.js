@@ -611,7 +611,12 @@ async function copyFileStream(src, dst, progressCallback, cancelCheck) {
     rs.on('end', () => ws.end());
     rs.on('error', (err) => { ws.destroy(); reject(err); });
     ws.on('error', (err) => { rs.destroy(); reject(err); });
-    ws.on('finish', resolve);
+    ws.on('finish', () => {
+      // Emit go-file-complete so the caller's progressFn can accumulate
+      // totalBytesCopiedSoFar correctly (it only increments on this event type).
+      progressCallback?.({ type: 'go-file-complete', totalBytesCopied: bytesCopied });
+      resolve();
+    });
   });
 }
 
