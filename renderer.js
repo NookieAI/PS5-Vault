@@ -1,6 +1,11 @@
 (function () {
   'use strict';
 
+  // Ensure Utils is always in scope inside this IIFE regardless of load order.
+  // utils.js assigns to window.Utils; referencing it explicitly here avoids any
+  // potential scoping ambiguity (e.g. "Utils.cleanPath is not a function" errors).
+  const Utils = window.Utils;
+
   const LAST_SRC_KEY = 'ps5vault.lastSource';
   const LAST_DST_KEY = 'ps5vault.lastDest';
   const LAST_RESULTS_KEY = 'ps5vault.lastResults';
