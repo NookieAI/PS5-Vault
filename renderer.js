@@ -467,7 +467,8 @@
       };
       const layoutLabels = {
         'game-ppsa': 'Game / PPSA', 'game-only': 'Game only', 'ppsa-only': 'PPSA only',
-        'etahen': 'etaHEN', 'itemzflow': 'itemZFlow', 'dump_runner': 'Dump Runner', 'custom': 'Custom'
+        'etahen': 'etaHEN', 'itemzflow': 'itemZFlow', 'dump_runner': 'Dump Runner',
+        'custom': 'Custom', 'porkfolio': 'Porkfolio'
       };
       const chips = [
         ['Items', String(previewItems.length)],
@@ -775,6 +776,12 @@
     if (layout === 'dump_runner') return pathJoin(dest, 'homebrew', safeGame);
     if (layout === 'custom') return pathJoin(dest, safeGame);
     if (layout === 'game-ppsa') return pathJoin(dest, safeGame, finalPpsaName);
+    if (layout === 'porkfolio') {
+      const baseOnly = Utils.sanitizeName(it.displayTitle || it.dbTitle || it.folderName || it.ppsa || 'Unknown Game');
+      const porkVer  = it.contentVersion || it.version || '';
+      const porkName = porkVer ? `${baseOnly} (${porkVer}) ${finalPpsaName}` : `${baseOnly} ${finalPpsaName}`;
+      return pathJoin(dest, porkName);
+    }
     return pathJoin(dest, safeGame);
   }
 
