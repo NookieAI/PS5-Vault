@@ -2568,7 +2568,7 @@ async function doEnsureAndPopulate(event, opts) {
           event.sender?.send('scan-progress', { type: 'go-item', path: finalTarget, itemIndex: idx + 1, totalItems: items.length });
           await fs.promises.mkdir(finalTarget, { recursive: true });
           event.sender?.send('scan-progress', { type: 'go-file-complete', fileRel: 'Folder created', totalBytesCopied: 0, totalBytes: 0 });
-          results.push({ item: safeGameName, target: finalTarget, created: true, source: srcFolder, safeGameName });
+          results.push({ item: safeGameName, target: finalTarget, created: true, source: srcFolder, safeGameName, totalSize: itemTotalBytes });
         } else if (action === 'copy' || action === 'move') {
           const originalSrcFolder = srcFolder; // Store original for FTP delete
           let tempDir = null;
@@ -2601,7 +2601,7 @@ async function doEnsureAndPopulate(event, opts) {
                   const remoteDst = remotePath;
                   await client.rename(remoteSrc, remoteDst);
                   renameOk = true;
-                  results.push({ item: safeGameName, target: finalTarget, moved: true, source: srcFolder, safeGameName });
+                  results.push({ item: safeGameName, target: finalTarget, moved: true, source: srcFolder, safeGameName, totalSize: itemTotalBytes });
                 } catch (e) {
                   console.warn('[FTP] Same-server rename failed, falling back to download+upload:', e.message);
                 } finally {
@@ -2622,7 +2622,7 @@ async function doEnsureAndPopulate(event, opts) {
                     if (info.totalBytes && !itemTotalBytes) itemTotalBytes = info.totalBytes;
                     progressFn(info);
                   }, cancelCheck);
-                  results.push({ item: safeGameName, target: finalTarget, moved: true, source: originalSrcFolder, safeGameName });
+                  results.push({ item: safeGameName, target: finalTarget, moved: true, source: originalSrcFolder, safeGameName, totalSize: itemTotalBytes });
                   // Delete original from FTP source
                   const delClient = new ftp.Client();
                   applyFtpPassive(delClient, ftpConfig);
@@ -2649,7 +2649,7 @@ async function doEnsureAndPopulate(event, opts) {
                   if (info.totalBytes && !itemTotalBytes) itemTotalBytes = info.totalBytes;
                   progressFn(info);
                 }, cancelCheck);
-                results.push({ item: safeGameName, target: finalTarget, moved: action === 'move', uploaded: action !== 'move', source: originalSrcFolder, safeGameName });
+                results.push({ item: safeGameName, target: finalTarget, moved: action === 'move', uploaded: action !== 'move', source: originalSrcFolder, safeGameName, totalSize: itemTotalBytes });
                 if (action === 'move' && !ftpConfig) {
                   // Source was local — delete it now that upload succeeded.
                   await removePathRecursive(originalSrcFolder);
@@ -2682,19 +2682,19 @@ async function doEnsureAndPopulate(event, opts) {
               } finally {
                 delClient.close();
               }
-              results.push({ item: safeGameName, target: finalTarget, moved: true, source: srcFolder, safeGameName });
+              results.push({ item: safeGameName, target: finalTarget, moved: true, source: srcFolder, safeGameName, totalSize: itemTotalBytes });
             } else {
-              results.push({ item: safeGameName, target: finalTarget, copied: true, source: srcFolder, safeGameName });
+              results.push({ item: safeGameName, target: finalTarget, copied: true, source: srcFolder, safeGameName, totalSize: itemTotalBytes });
             }
           } else {
             // Local copy/move
             progressFn({ type: 'go-file-progress', totalBytesCopied: 0, totalBytes: itemTotalBytes });
             if (action === 'copy') {
               await copyFolderContentsSafely(srcFolder, finalTarget, { progress: progressFn, cancelCheck, totalBytes: itemTotalBytes });
-              results.push({ item: safeGameName, target: finalTarget, copied: true, source: srcFolder, safeGameName });
+              results.push({ item: safeGameName, target: finalTarget, copied: true, source: srcFolder, safeGameName, totalSize: itemTotalBytes });
             } else {
               await moveFolderContentsSafely(srcFolder, finalTarget, { progress: progressFn, cancelCheck, overwriteMode, totalBytes: itemTotalBytes });
-              results.push({ item: safeGameName, target: finalTarget, moved: true, source: srcFolder, safeGameName });
+              results.push({ item: safeGameName, target: finalTarget, moved: true, source: srcFolder, safeGameName, totalSize: itemTotalBytes });
             }
           }
         } else {
