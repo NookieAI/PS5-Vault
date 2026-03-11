@@ -6,6 +6,8 @@
 //   - Fires an "input" event after setting value via option click.
 //   - Positioned to document.body via getBoundingClientRect(); repositions on resize/scroll.
 //   - Removes the input's "list" attribute to prevent native datalist conflicts.
+//   - Supports ArrowUp/ArrowDown/Enter keyboard navigation within the dropdown list.
+//   - Shows a "No recent paths" placeholder when the history is empty.
 (function () {
   'use strict';
 
@@ -33,6 +35,20 @@
       dropdownEl.style.width = rect.width + 'px';
     }
 
+    function getFocusedItem() {
+      return dropdownEl ? dropdownEl.querySelector('li:focus') : null;
+    }
+
+    function selectItem(li) {
+      if (!li || li.dataset.placeholder) return;
+      inputEl.value = li.textContent;
+      inputEl.dispatchEvent(new Event('input', { bubbles: true }));
+      closeDropdown();
+      // Trigger blur so addRecentSource / addRecentDest persists the selected value.
+      inputEl.focus();
+      setTimeout(() => inputEl.blur(), 0);
+    }
+
     function showDropdown() {
       closeDropdown();
       const allOptions = getOptions();
@@ -40,8 +56,6 @@
       const visible = query
         ? allOptions.filter(o => String(o).toLowerCase().includes(query))
         : allOptions;
-
-      if (visible.length === 0) return;
 
       dropdownEl = document.createElement('ul');
       dropdownEl.style.cssText = [
@@ -61,32 +75,69 @@
         'min-width:100%',
       ].join(';');
 
-      for (const val of visible) {
+      if (visible.length === 0) {
+        // Show an informational placeholder instead of closing, so the user
+        // gets visible feedback when no history exists yet.
         const li = document.createElement('li');
-        li.textContent = val;
+        li.textContent = 'No recent paths';
+        li.dataset.placeholder = '1';
         li.setAttribute('tabindex', '-1');
         li.style.cssText = [
           'padding:7px 12px',
-          'cursor:pointer',
-          'border-bottom:1px solid rgba(255,255,255,0.04)',
+          'cursor:default',
+          'color:rgba(255,255,255,0.35)',
+          'font-style:italic',
           'list-style:none',
         ].join(';');
-        li.addEventListener('mouseenter', () => {
-          li.style.background = 'rgba(59,130,246,0.15)';
-          li.style.color = 'var(--accent-2,#60a5fa)';
-        });
-        li.addEventListener('mouseleave', () => {
-          li.style.background = '';
-          li.style.color = '';
-        });
-        li.addEventListener('mousedown', (e) => {
-          e.preventDefault(); // keep input focused so blur fires after we set value
-          inputEl.value = val;
-          inputEl.dispatchEvent(new Event('input', { bubbles: true }));
-          closeDropdown();
-          inputEl.focus();
-        });
         dropdownEl.appendChild(li);
+      } else {
+        for (const val of visible) {
+          const li = document.createElement('li');
+          li.textContent = val;
+          li.setAttribute('tabindex', '-1');
+          li.style.cssText = [
+            'padding:7px 12px',
+            'cursor:pointer',
+            'border-bottom:1px solid rgba(255,255,255,0.04)',
+            'list-style:none',
+          ].join(';');
+          li.addEventListener('mouseenter', () => {
+            li.style.background = 'rgba(59,130,246,0.15)';
+            li.style.color = 'var(--accent-2,#60a5fa)';
+          });
+          li.addEventListener('mouseleave', () => {
+            li.style.background = '';
+            li.style.color = '';
+          });
+          li.addEventListener('mousedown', (e) => {
+            e.preventDefault(); // keep input focused so blur fires after we set value
+            selectItem(li);
+          });
+          // Keyboard: Enter selects the focused item
+          li.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              selectItem(li);
+            } else if (e.key === 'ArrowDown') {
+              e.preventDefault();
+              const next = li.nextElementSibling;
+              if (next) next.focus();
+            } else if (e.key === 'ArrowUp') {
+              e.preventDefault();
+              const prev = li.previousElementSibling;
+              if (prev) {
+                prev.focus();
+              } else {
+                // Reached the top of the list — return focus to the input
+                inputEl.focus();
+              }
+            } else if (e.key === 'Escape' || e.key === 'Tab') {
+              closeDropdown();
+              inputEl.focus();
+            }
+          });
+          dropdownEl.appendChild(li);
+        }
       }
 
       document.body.appendChild(dropdownEl);
@@ -118,8 +169,14 @@
       if (e.key === 'Escape' || e.key === 'Tab') { closeDropdown(); return; }
       if (e.key === 'ArrowDown' && dropdownEl) {
         e.preventDefault();
-        const first = dropdownEl.querySelector('li');
+        const first = dropdownEl.querySelector('li:not([data-placeholder])');
         if (first) first.focus();
+      }
+      // ArrowUp on input while dropdown is open: focus the last item
+      if (e.key === 'ArrowUp' && dropdownEl) {
+        e.preventDefault();
+        const items = dropdownEl.querySelectorAll('li:not([data-placeholder])');
+        if (items.length) items[items.length - 1].focus();
       }
     });
 
