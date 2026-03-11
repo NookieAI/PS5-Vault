@@ -779,8 +779,9 @@ async function copyFolderContentsSafely(srcDir, finalTarget, options = {}) {
         // File-level resume: skip if destination already exists with the same size
         const dstStat = await fs.promises.stat(dstPath).catch(() => null);
         if (dstStat && dstStat.size === size) {
-          // Already fully copied — emit complete so progress stays accurate
-          progress?.({ type: 'go-file-complete', fileRel: ent.name, totalBytesCopied: size, totalBytes });
+          // Already fully copied — emit complete with 0 new bytes so the accumulator
+          // doesn't double-count bytes that were written in a previous run.
+          progress?.({ type: 'go-file-complete', fileRel: ent.name, totalBytesCopied: 0, totalBytes });
           continue;
         }
         if (skipVerify) {
