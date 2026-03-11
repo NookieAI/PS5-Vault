@@ -12,7 +12,7 @@ window.Utils = {
     // Only strip characters that are truly invalid on common filesystems (FAT32/NTFS/ext4):
     // < > : " / \ | ? * and control characters 0x00–0x1F.
     // Preserve: ! ' ™ and other characters that legitimately appear in game titles.
-    return String(name).replace(/[<>:"/\\|?*\x00-\x1F]/g, '').trim().slice(0, 200) || 'Unknown';
+    return String(name).replace(/[<>:"/\\|?*\x00-\x1F]/g, '').replace(/  +/g, ' ').trim().slice(0, 200) || 'Unknown';
   },
 
   /**
