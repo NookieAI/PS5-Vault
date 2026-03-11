@@ -8,6 +8,7 @@
 //   - Removes the input's "list" attribute to prevent native datalist conflicts.
 //   - Supports ArrowUp/ArrowDown/Enter keyboard navigation within the dropdown list.
 //   - Shows a "No recent paths" placeholder when the history is empty.
+//   - Injects a ▾ arrow button at the right edge of the input to show the full unfiltered list.
 (function () {
   'use strict';
 
@@ -21,6 +22,32 @@
     inputEl.removeAttribute('list');
 
     let dropdownEl = null;
+
+    // --- Wrap the input in a position:relative container and inject the arrow button ---
+    const wrapper = document.createElement('span');
+    wrapper.className = 'dd-wrap';
+
+    // Preserve the input's original layout sizing on the wrapper.
+    // Only transfer properties that are explicitly set as inline styles to avoid
+    // copying browser-default computed values onto the wrapper.
+    if (inputEl.style.width)    { wrapper.style.width    = inputEl.style.width;    inputEl.style.width    = ''; }
+    if (inputEl.style.flex)     { wrapper.style.flex     = inputEl.style.flex;     inputEl.style.flex     = ''; }
+    if (inputEl.style.minWidth) { wrapper.style.minWidth = inputEl.style.minWidth; inputEl.style.minWidth = ''; }
+    // Remove any pre-existing padding-right on the input; the CSS rule adds it back.
+    inputEl.style.paddingRight = '';
+
+    const parent = inputEl.parentNode;
+    parent.insertBefore(wrapper, inputEl);
+    wrapper.appendChild(inputEl);
+
+    const arrowBtn = document.createElement('button');
+    arrowBtn.type = 'button';
+    arrowBtn.className = 'dropdown-arrow-btn';
+    arrowBtn.textContent = '▾';
+    arrowBtn.setAttribute('tabindex', '-1');
+    arrowBtn.setAttribute('aria-label', 'Show all recent options');
+    wrapper.appendChild(arrowBtn);
+    // --- End wrapper/button injection ---
 
     function getOptions() {
       const raw = typeof optionsSource === 'function' ? optionsSource() : (optionsSource || []);
@@ -44,13 +71,13 @@
       inputEl.focus();
     }
 
-    function showDropdown() {
+    function showDropdown(forceShowAll) {
       closeDropdown();
       const allOptions = getOptions();
       const query = inputEl.value.toLowerCase();
-      const visible = query
-        ? allOptions.filter(o => String(o).toLowerCase().includes(query))
-        : allOptions;
+      const visible = (forceShowAll || !query)
+        ? allOptions
+        : allOptions.filter(o => String(o).toLowerCase().includes(query));
 
       dropdownEl = document.createElement('ul');
       dropdownEl.style.cssText = [
@@ -159,7 +186,11 @@
 
     function onOutsideMousedown(e) {
       if (!dropdownEl) return;
-      if (!inputEl.contains(e.target) && !dropdownEl.contains(e.target)) {
+      if (
+        !inputEl.contains(e.target) &&
+        !dropdownEl.contains(e.target) &&
+        e.target !== arrowBtn
+      ) {
         closeDropdown();
       }
     }
@@ -167,6 +198,17 @@
     function onRepositionEvent() {
       if (dropdownEl) positionDropdown();
     }
+
+    // Arrow button: toggle the full unfiltered list.
+    arrowBtn.addEventListener('mousedown', (e) => {
+      e.preventDefault(); // prevent input blur
+      if (dropdownEl) {
+        closeDropdown();
+      } else {
+        inputEl.focus();
+        showDropdown(true); // forceShowAll=true — ignore current input value
+      }
+    });
 
     inputEl.addEventListener('focus', () => showDropdown());
     inputEl.addEventListener('input', () => showDropdown());
