@@ -71,12 +71,9 @@
       return Promise.resolve(null);
     }
 
-    // Default path by port — 1337 = etaHEN internal, 2121 = ftpsrv (serves /data root)
+    // Default path by port — returns root so users can browse themselves
     function defaultPathForPort(port) {
-      const p = String(port);
-      if (p === '1337') return '/data/etaHEN/games';
-      if (p === '2121') return '/data/etaHEN/games';
-      return '/data/etaHEN/games';
+      return '/';
     }
 
     // Parse initialUrl if provided
@@ -126,7 +123,7 @@
     // When port changes and path is still a default, update path suggestion to match port
     portInput.addEventListener('change', () => {
       const currentPath = pathInput.value.trim();
-      const suggestedPaths = ['/data/etaHEN/games', '/mnt/ext1/etaHEN/games', '/'];
+      const suggestedPaths = ['/'];
       if (!currentPath || suggestedPaths.includes(currentPath)) {
         pathInput.value = defaultPathForPort(portInput.value.trim());
       }
