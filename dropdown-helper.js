@@ -30,9 +30,10 @@
     function positionDropdown() {
       if (!dropdownEl) return;
       const rect = inputEl.getBoundingClientRect();
-      dropdownEl.style.left  = (rect.left  + window.scrollX) + 'px';
-      dropdownEl.style.top   = (rect.bottom + window.scrollY) + 'px';
-      dropdownEl.style.width = rect.width + 'px';
+      dropdownEl.style.left     = (rect.left  + window.scrollX) + 'px';
+      dropdownEl.style.top      = (rect.bottom + window.scrollY) + 'px';
+      dropdownEl.style.width    = rect.width + 'px';
+      dropdownEl.style.maxWidth = rect.width + 'px';
     }
 
     function getFocusedItem() {
@@ -72,7 +73,9 @@
         'z-index:99999',
         'max-height:200px',
         'overflow-y:auto',
-        'min-width:100%',
+        'overflow-x:hidden',
+        'box-sizing:border-box',
+        'max-width:100%',
       ].join(';');
 
       if (visible.length === 0) {
@@ -88,18 +91,27 @@
           'color:rgba(255,255,255,0.35)',
           'font-style:italic',
           'list-style:none',
+          'overflow:hidden',
+          'text-overflow:ellipsis',
+          'white-space:nowrap',
+          'max-width:100%',
         ].join(';');
         dropdownEl.appendChild(li);
       } else {
         for (const val of visible) {
           const li = document.createElement('li');
           li.textContent = val;
+          li.title = val;
           li.setAttribute('tabindex', '-1');
           li.style.cssText = [
             'padding:7px 12px',
             'cursor:pointer',
             'border-bottom:1px solid rgba(255,255,255,0.04)',
             'list-style:none',
+            'overflow:hidden',
+            'text-overflow:ellipsis',
+            'white-space:nowrap',
+            'max-width:100%',
           ].join(';');
           li.addEventListener('mouseenter', () => {
             li.style.background = 'rgba(59,130,246,0.15)';
