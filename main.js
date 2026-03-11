@@ -2584,6 +2584,7 @@ async function doEnsureAndPopulate(event, opts) {
         else if (layout === 'etahen') finalTarget = pathJoin(dest, 'etaHEN', 'games', safeGameWithVer);
         else if (layout === 'itemzflow') finalTarget = pathJoin(dest, 'games', safeGameWithVer);
         else if (layout === 'dump_runner') finalTarget = pathJoin(dest, 'homebrew', safeGameWithVer);
+        else if (layout === 'porkfolio') finalTarget = pathJoin(dest, `${safeGameWithVer} ${finalPpsaName}`);
         else if (layout === 'custom') finalTarget = pathJoin(dest, safeGameWithVer);  // Just the custom folder name
         else finalTarget = pathJoin(dest, safeGameWithVer, finalPpsaName);  // game-ppsa creates GameName (ver)/PPSAName
         // Overlap check: skip entirely when either end is FTP (path.resolve corrupts ftp:// URLs)
@@ -2931,6 +2932,7 @@ ipcMain.handle('check-conflicts', async (event, items, dest, layout, customName)
       else if (layout === 'etahen') finalTarget = pathJoin(dest, 'etaHEN', 'games', safeGameWithVer);
       else if (layout === 'itemzflow') finalTarget = pathJoin(dest, 'games', safeGameWithVer);
       else if (layout === 'dump_runner') finalTarget = pathJoin(dest, 'homebrew', safeGameWithVer);
+      else if (layout === 'porkfolio') finalTarget = pathJoin(dest, `${safeGameWithVer} ${finalPpsaName}`);
       else if (layout === 'custom') finalTarget = pathJoin(dest, safeGameWithVer);
       else finalTarget = pathJoin(dest, safeGameWithVer, finalPpsaName);
 
