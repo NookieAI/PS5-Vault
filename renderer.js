@@ -2992,6 +2992,22 @@
           }
         });
       }
+      const btnSourceDropdown = $('btnSourceDropdown');
+      if (btnSourceDropdown) {
+        btnSourceDropdown.addEventListener('mousedown', (e) => {
+          e.preventDefault();
+          const inp = $('sourcePath');
+          if (inp) inp.focus();
+        });
+      }
+      const btnDestDropdown = $('btnDestDropdown');
+      if (btnDestDropdown) {
+        btnDestDropdown.addEventListener('mousedown', (e) => {
+          e.preventDefault();
+          const inp = $('destPath');
+          if (inp) inp.focus();
+        });
+      }
       const btnScan = $('btnScan');
       if (btnScan) {
         btnScan.addEventListener('click', async () => {
