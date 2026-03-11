@@ -581,6 +581,14 @@
       backdrop.setAttribute('aria-hidden', 'false');
       input.focus();
 
+      if (typeof window.makeShowAllDropdown === 'function') {
+        window.makeShowAllDropdown(input, [
+          '{name} - Backup',
+          '{name} (copy)',
+          '{name} - Archive',
+        ]);
+      }
+
       const updateInput = () => {
         const preset = presetSelect.value;
         if (preset === 'default') {
@@ -698,6 +706,15 @@
       proceedBtn.addEventListener('click', onProceed);
       cancelBtn.addEventListener('click', onCancel);
       backdropEl.style.display = 'flex';
+
+      if (typeof window.makeShowAllDropdown === 'function') {
+        window.makeShowAllDropdown(patternInput, [
+          '{name} - Backup',
+          '{name} (copy)',
+          '{name} - Archive',
+          '{name} v2',
+        ]);
+      }
     });
   }
   function setupDragDrop() {
@@ -2605,6 +2622,14 @@
 
     backdrop.style.display = 'flex';
     backdrop.setAttribute('aria-hidden', 'false');
+
+    const diffSourceBEl = $('diffSourceB');
+    if (diffSourceBEl && typeof window.makeShowAllDropdown === 'function') {
+      window.makeShowAllDropdown(diffSourceBEl, () => {
+        const combined = [...getRecentSources(), ...getRecentDests()];
+        return [...new Set(combined)];
+      });
+    }
   }
 
   // ── Sub-folder selective transfer ─────────────────────────────────────────
