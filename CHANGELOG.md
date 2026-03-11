@@ -4,6 +4,41 @@ All notable changes to PS5 Vault are documented here.
 
 ---
 
+## [2.4.0] — 2026
+
+### New Features
+
+**Copy (fast)**
+New transfer action that skips SHA-256 hash verification entirely. Ideal for same-drive transfers where re-reading every byte is unnecessary and speed matters more than checksum confirmation.
+
+**File-level Resume**
+Interrupted transfers now skip files already fully present at the destination (matching size). Only missing or partial files are re-copied, so a crashed mid-transfer can be restarted without re-sending everything.
+
+**Free-Space Pre-check**
+Before starting any local copy, PS5 Vault verifies the destination has sufficient free space (with a 512 MB safety buffer). An error is shown immediately if there is not enough room — no more discovering halfway through a transfer that the drive is full.
+
+**Show-All Dropdown**
+All recent paths and FTP configs appear instantly when clicking any path input field — no typing required. Items are filtered by substring as you type. Full keyboard navigation: Arrow keys move the selection, Enter commits, Escape dismisses, Tab moves focus. The dropdown is positioned relative to `document.body` so it is never clipped inside a scroll container.
+
+**Porkfolio Layout**
+New destination layout that produces `{dest}/{Game Name} ({version}) {PPSAID}/` — the folder naming format expected by the Porkfolio backporting workflow.
+
+### Improvements
+
+- Dropdown items now use `text-overflow: ellipsis` and `white-space: nowrap` so very long paths do not break the dropdown layout
+- `maxWidth` is capped to the associated input element's width to prevent dropdowns from overflowing the viewport on narrow windows
+- `selectItem` commits the selected value immediately without a `blur()` timeout — focus remains with the input and the value is available instantly
+- `positionDropdown` sets both `width` and `maxWidth` from `getBoundingClientRect` so the dropdown always matches the input precisely
+
+### Bug Fixes
+
+- Fixed dropdown appearing wider than its associated input on narrow windows
+- Fixed `getFocusedItem` helper being declared but never called — dead code removed
+- Fixed transfer progress stuck at 0% in some local-to-local copy scenarios when `totalSize` was 0 at transfer start; now falls back to a parallel stat walk with a `go-counting` progress event
+- Fixed `addRecentFtp` being called with a raw URL string instead of a config object in some code paths
+
+---
+
 ## [2.3.0] — 2026
 
 ### New Features

@@ -4,42 +4,35 @@
   // Help modal content for PS5 Vault
   const helpContent = `
 <h3>Getting Started</h3>
-<p>PS5 Vault helps you organize and transfer PS5 game backups between local drives and FTP servers (e.g., your PS5 running etaHEN or ftpsrv). Scan a source folder or FTP path, select games, choose a destination and layout, then hit <strong>GO</strong>.</p>
-
-<h3>What's New in v2.4</h3>
 <ul>
-  <li><strong>Copy (fast)</strong>: New action that skips SHA-256 hash verification — ideal for same-drive transfers where re-reading every byte is unnecessary.</li>
-  <li><strong>File-level Resume</strong>: Interrupted transfers now skip files already fully present at the destination (matching size), so only missing or partial files are re-copied.</li>
-  <li><strong>Free-Space Pre-check</strong>: Before starting a local copy, PS5 Vault verifies the destination has enough free space (with a 512 MB buffer) and shows an error if not.</li>
-  <li><strong>Enhanced Game Integrity Scan</strong>: Verify Library now also detects empty game folders and folders containing zero-byte files (sign of a corrupt or partial copy).</li>
-  <li><strong>Destination Capacity Badge</strong>: After each transfer, a toast shows how much free space remains and an estimate of how many more games fit.</li>
+  <li>Download the portable <code>.exe</code> from Releases — no installation needed.</li>
+  <li>Enter a Source path (local folder, drive letter, or PS5 IP/FTP URL) → click <strong>SCAN</strong>.</li>
+  <li>Tick games → pick a Destination and Layout → click <strong>GO</strong>.</li>
+  <li><kbd>F1</kbd> opens this help at any time.</li>
 </ul>
 
-<h3>What's New in v2.3</h3>
+<h3>What's New (v2.4)</h3>
 <ul>
-  <li><strong>Show-All Dropdown</strong>: All recent paths and FTP configs appear instantly when you click any path field — no typing required.</li>
+  <li><strong>Copy (fast)</strong>: Skips SHA-256 hash verification — ideal for same-drive transfers where re-reading every byte is unnecessary.</li>
+  <li><strong>File-level Resume</strong>: Interrupted transfers now skip files already fully present at the destination (matching size), so only missing or partial files are re-copied.</li>
+  <li><strong>Free-Space Pre-check</strong>: Before starting a local copy, PS5 Vault verifies the destination has enough free space (with a 512 MB buffer) and shows an error if not.</li>
+  <li><strong>Show-All Dropdown</strong>: All recent paths and FTP configs appear instantly when clicking any path field — no typing required. Items are filtered by substring as you type, with full keyboard navigation (Arrow keys, Enter, Escape, Tab).</li>
   <li><strong>Porkfolio Layout</strong>: New folder naming format <code>Game Name (version) PPSAID</code> for Porkfolio backporting.</li>
-  <li><strong>Scan All Drives</strong>: Scan every connected local drive in one click.</li>
-  <li><strong>FTP ↔ FTP Transfers</strong>: Transfer directly between two FTP servers.</li>
-  <li><strong>Auto-Detect PS5</strong>: Finds your PS5 on the local network automatically.</li>
-  <li><strong>Verify Library</strong>: Integrity check using stored checksums.</li>
-  <li><strong>Per-game Transfer History</strong>: Full audit log of every operation.</li>
-  <li><strong>Resume Interrupted Transfers</strong>: Crashed mid-copy? PS5 Vault can resume.</li>
 </ul>
 
 <h3>Scanning Games</h3>
 <ul>
-  <li><strong>Local Scan</strong>: Enter a folder path (e.g., <code>D:\\Games</code>) or click <strong>Browse</strong>, then click <strong>SCAN</strong>.</li>
+  <li><strong>Local Scan</strong>: Enter a folder path (e.g., <code>D:\Games</code>) or click Browse, then click <strong>SCAN</strong>.</li>
   <li><strong>FTP Scan</strong>: Enter an IP address (e.g., <code>192.168.1.100</code>) — the FTP config modal opens automatically.</li>
-  <li><strong>Scan All Drives</strong>: Scans every connected drive simultaneously. Useful for multi-drive setups.</li>
+  <li><strong>Scan All Drives</strong>: Scans every connected drive simultaneously.</li>
   <li><strong>Calculate Size</strong>: Enable for accurate sizes; disable for faster scans on large libraries.</li>
-  <li><strong>Verify Library</strong>: Re-scans and compares each game's files against the stored checksum database to find corrupted copies.</li>
+  <li><strong>Verify Library</strong>: Re-scans and compares each game's files against the stored checksum database.</li>
 </ul>
 
 <h3>Transferring Games</h3>
 <ul>
-  <li><strong>Selecting Games</strong>: Use checkboxes per row, or the header checkbox to select all visible. <kbd>Ctrl+A</kbd> also selects all.</li>
-  <li><strong>Destination Types</strong>: Local folder path, or FTP URL / IP for your PS5.</li>
+  <li><strong>Selecting Games</strong>: Per-row checkboxes, header checkbox to select all, <kbd>Ctrl+A</kbd>.</li>
+  <li><strong>Destination Types</strong>: Local folder path or FTP URL/IP for your PS5.</li>
   <li><strong>Layout Options</strong>:
     <ul>
       <li><strong>etaHEN default</strong> — <code>{dest}/etaHEN/games/{game}/</code></li>
@@ -48,74 +41,76 @@
       <li><strong>Game / PPSA</strong> — <code>{dest}/{game}/{PPSA}/</code></li>
       <li><strong>Game only</strong> — <code>{dest}/{game}/</code></li>
       <li><strong>PPSA only</strong> — <code>{dest}/{PPSA}/</code></li>
-      <li><strong>Porkfolio</strong> — <code>{dest}/{game} ({version}) {PPSAID}/</code> — for Porkfolio backporting</li>
+      <li><strong>Porkfolio</strong> — <code>{dest}/{game} ({version}) {PPSAID}/</code></li>
       <li><strong>Custom</strong> — enter a custom folder name in the rename modal</li>
     </ul>
   </li>
-  <li><strong>Actions</strong>: <em>Copy (verified)</em> (SHA-256 hash check after each file), <em>Copy (fast)</em> (stream copy without hash verification — faster for same-drive transfers), <em>Move</em> (deletes source after verified copy), <em>Create Folder</em> (structure only).</li>
-  <li><strong>Conflict Resolution</strong>: When a target already exists, choose <em>Skip</em>, <em>Overwrite</em>, or <em>Rename</em> (auto-numbered).</li>
-  <li><strong>Progress Panel</strong>: Live speed (sliding-window), ETA, elapsed time, transferred bytes, per-file name, and a sparkline speed graph.</li>
+  <li><strong>Actions</strong>: Copy (verified), Copy (fast), Move, Create folder only.</li>
+  <li><strong>Conflict Resolution</strong>: Skip, Overwrite, or Rename (auto-numbered) when target exists.</li>
+  <li><strong>Progress Panel</strong>: Live speed (sliding-window average), ETA, elapsed time, transferred bytes, per-file name, sparkline speed graph.</li>
 </ul>
 
 <h3>FTP Configuration</h3>
 <ul>
   <li><strong>Host</strong>: IP address of your PS5 (e.g., <code>192.168.1.100</code>).</li>
-  <li><strong>Port</strong>: Common PS5 ports — <code>1337</code> (etaHEN built-in FTP), <code>2121</code> (ftpsrv). Default: 2121.</li>
-  <li><strong>Path</strong>: Remote path to scan or transfer to (e.g., <code>/data/etaHEN/games</code>).</li>
+  <li><strong>Port</strong>: <code>2121</code> (ftpsrv), <code>1337</code> (etaHEN built-in), <code>1338</code>.</li>
+  <li><strong>Path</strong>: Remote path (e.g., <code>/data/etaHEN/games</code>).</li>
   <li><strong>User / Pass</strong>: Leave blank or use <code>anonymous</code> for most PS5 FTP servers.</li>
-  <li><strong>Passive Mode</strong>: Enable when behind a NAT/firewall (recommended).</li>
-  <li><strong>Buffer Size</strong>: Chunk size for FTP reads/writes (KB). Higher = faster on good networks.</li>
+  <li><strong>Passive Mode</strong>: Enable when behind NAT/firewall (recommended).</li>
+  <li><strong>Buffer Size</strong>: Chunk size for FTP reads/writes in KB; higher = faster on good networks.</li>
   <li><strong>Parallel</strong>: Number of simultaneous FTP file transfers (1–10).</li>
   <li><strong>Speed Limit</strong>: Cap transfer speed in KB/s (0 = unlimited).</li>
-  <li><strong>Test</strong>: Verify the connection before proceeding.</li>
+  <li><strong>Test</strong>: Verify connection before proceeding.</li>
   <li><strong>FTP Storage Info</strong>: Shows free/used space on the remote server.</li>
   <li><strong>Auto-Detect (Find PS5)</strong>: Scans the local network for a PS5 FTP server automatically.</li>
 </ul>
 
 <h3>Library Features</h3>
 <ul>
-  <li><strong>Library Diff / Compare</strong>: Compare two libraries to find games present in one but not the other.</li>
-  <li><strong>Verify Library</strong>: Integrity check — re-hashes files against the checksum database.</li>
-  <li><strong>Card / Grid View</strong>: Toggle between table and card view with cover art.</li>
-  <li><strong>Per-game Transfer History</strong>: See every copy, move, or upload ever performed per game.</li>
-  <li><strong>Checksum Database</strong>: PS5 Vault stores SHA-256 hashes of every file it copies for later verification.</li>
+  <li><strong>Card / Grid View</strong>: Toggle between table and cover-art grid with ⊞ Grid button; persists across sessions.</li>
+  <li><strong>Library Diff / Compare</strong>: Compare two game libraries side-by-side — one-click "Transfer Missing →" pre-selects absent games.</li>
+  <li><strong>Verify Library</strong>: Integrity check — folder accessible, valid <code>param.json</code>, cover icon present; results sorted errors-first with colour-coded badges.</li>
+  <li><strong>Per-game Transfer History</strong>: Audit log per title ID for every operation.</li>
+  <li><strong>Transfer History</strong> (Menu): Persistent log of every copy/move with dates, sizes, results.</li>
+  <li><strong>Export History CSV</strong> (Menu): Save history as a spreadsheet.</li>
+  <li><strong>Export / Import JSON</strong> (Menu): Back up or restore full scan results and settings.</li>
+  <li><strong>Persistent Column Widths</strong>: Drag column headers to resize; saved to localStorage.</li>
+  <li><strong>Checksum Database</strong>: Persistent store (<code>userData/checksum-db.json</code>); files whose checksums already match destination are skipped; records expire after 90 days.</li>
+  <li><strong>Selective Sub-folder Transfer</strong>: Expand a game row before transferring to choose exactly which sub-folders get copied.</li>
 </ul>
 
 <h3>Game Management</h3>
 <ul>
-  <li><strong>Rename (Single)</strong>: Select one game and click <strong>Rename</strong>, or right-click → Rename.</li>
-  <li><strong>Batch Rename</strong>: Select multiple games and click <strong>Rename</strong> to rename them all at once.</li>
-  <li><strong>Soft Delete / Trash</strong>: Deleted games go to the built-in trash bin and can be restored.</li>
-  <li><strong>Right-click Context Menu</strong>: Quick access to Rename, Delete, Transfer History, and more.</li>
+  <li>Delete or rename games (local or on PS5 over FTP).</li>
+  <li>Batch rename using a pattern like <code>{name} - Backup</code>.</li>
+  <li>Click any game to see full metadata: content ID, version, SDK version, region, required firmware, folder path.</li>
+  <li>Click a folder path to open it in Windows Explorer.</li>
+  <li><strong>Soft Delete / Trash Bin</strong>: Delete moves items to <code>_ps5vault_trash</code> inside the source directory; auto-purged after 30 days.</li>
 </ul>
 
-<h3>Settings &amp; Persistence</h3>
+<h3>Developer API</h3>
 <ul>
-  <li><strong>Theme</strong>: Click the logo to toggle dark/light mode.</li>
-  <li><strong>Column Widths</strong>: Drag column headers to resize; saved automatically.</li>
-  <li><strong>Export / Import</strong>: Export your library list and settings to JSON; import to restore.</li>
-  <li><strong>FTP Connection Profiles</strong>: Up to 5 recent FTP configs are remembered and shown in the dropdown.</li>
-  <li><strong>API Server</strong>: Enable the local REST API for automation and third-party integrations.</li>
+  <li>Runs on <code>http://127.0.0.1:3731/api/v1</code> (localhost only).</li>
+  <li>Auth: <code>X-API-Key: &lt;your key&gt;</code> on every request.</li>
+  <li>Find key under <strong>Menu → ⚙ Developer API</strong>.</li>
+  <li>Endpoints: <code>GET /library</code>, <code>GET /library/:ppsa</code>, <code>GET /library/:ppsa/icon</code>, <code>POST /scan</code>, <code>GET /scan/status</code>, <code>POST /transfer</code>, <code>GET /transfer/status</code>, <code>GET /events</code> (SSE), <code>GET /status</code>.</li>
 </ul>
 
 <h3>Keyboard Shortcuts</h3>
 <ul>
-  <li><kbd>Ctrl+A</kbd> — Select all visible games</li>
-  <li><kbd>Ctrl+R</kbd> — Re-scan (same source as last scan)</li>
-  <li><kbd>F1</kbd> — Open this help</li>
-  <li><kbd>↑</kbd> / <kbd>↓</kbd> — Navigate the game list</li>
-  <li><kbd>Escape</kbd> — Close any open modal or dropdown</li>
+  <li><kbd>Ctrl+A</kbd> — Select all</li>
+  <li><kbd>Ctrl+R</kbd> — Rescan</li>
+  <li><kbd>F1</kbd> — Open help</li>
+  <li><kbd>Esc</kbd> — Close modal</li>
 </ul>
 
 <h3>Troubleshooting</h3>
 <ul>
-  <li><strong>Scan Fails</strong>: Check the path exists and you have read permissions. For FTP, verify host/port/credentials.</li>
-  <li><strong>FTP ECONNREFUSED</strong>: Wrong port or PS5 FTP server not running. Try port 1337 (etaHEN) or 2121 (ftpsrv).</li>
-  <li><strong>FTP Passive Mode</strong>: Enable passive mode if active mode times out behind NAT.</li>
-  <li><strong>Slow Scans</strong>: Uncheck <em>Calculate Size</em> — size calculation can take minutes on large libraries.</li>
-  <li><strong>No Games Found</strong>: Ensure the source contains valid PPSA folders each with a <code>param.sfo</code> file.</li>
-  <li><strong>Transfer Errors</strong>: Check disk space on the destination and write permissions on the target folder.</li>
-  <li><strong>Progress Stuck at Preparing…</strong>: Game size is being calculated. This may take up to a minute for large titles.</li>
+  <li><strong>No games found</strong>: Ensure source contains valid PPSA folders each with a <code>param.sfo</code> file.</li>
+  <li><strong>Transfer errors</strong>: Check disk space and write permissions on destination.</li>
+  <li><strong>Progress stuck at Preparing…</strong>: Game size is being calculated; may take up to a minute for large titles.</li>
+  <li><strong>FTP scan returns 0 games</strong>: Verify FTP payload is running and path points to a folder containing PPSA directories.</li>
+  <li><strong>0% progress on copy</strong>: If using Copy (verified) across drives ensure destination is writable; try Copy (fast) to rule out hash-check hang.</li>
 </ul>
 
 <h3 style="margin-top:20px;letter-spacing:0.02em;">✦ Credits</h3>
