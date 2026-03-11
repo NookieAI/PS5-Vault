@@ -15,13 +15,39 @@
   // Delay before closing on blur so a mousedown on an option fires before the list closes.
   const BLUR_DELAY_MS = 150;
 
+  // Bug fix 1 & 2: Module-level WeakSet tracks which inputs have been initialised.
+  // Using a WeakSet allows proper garbage collection when elements are removed from the DOM.
+  const attachedInputs = new WeakSet();
+
+  // Bug fix 1: Register global listeners once at the module level.
+  // Each call to makeShowAllDropdown pushes its handler callbacks here.
+  const allInstances = [];
+
+  document.addEventListener('mousedown', (e) => {
+    for (const inst of allInstances) inst.onOutsideMousedown(e);
+  });
+  window.addEventListener('resize', () => {
+    for (const inst of allInstances) inst.onRepositionEvent();
+  });
+  window.addEventListener('scroll', () => {
+    for (const inst of allInstances) inst.onRepositionEvent();
+  }, true);
+
   function makeShowAllDropdown(inputEl, optionsSource) {
     if (!inputEl) return;
 
     // Strip the native datalist association — the custom dropdown takes over completely.
     inputEl.removeAttribute('list');
 
+    // Bug fix 2: Prevent duplicate listeners when called again on the same element.
+    if (attachedInputs.has(inputEl)) return;
+    attachedInputs.add(inputEl);
+
     let dropdownEl = null;
+
+    // Bug fix 5: Suppress the next focus event when focus is restored programmatically
+    // (e.g., after selecting an item or pressing Escape on a list item).
+    let suppressNextFocus = false;
 
     // --- Wrap the input in a position:relative container and inject the arrow button ---
     const wrapper = document.createElement('span');
@@ -65,9 +91,12 @@
 
     function selectItem(li) {
       if (!li || li.dataset.placeholder) return;
-      inputEl.value = li.textContent;
+      // Bug fix 3: Use the stored original value instead of textContent (which may
+      // have whitespace normalised by the browser).
+      inputEl.value = li.dataset.value ?? li.textContent;
       inputEl.dispatchEvent(new Event('input', { bubbles: true }));
       closeDropdown();
+      suppressNextFocus = true; // Bug fix 5: don't re-open dropdown on programmatic focus
       inputEl.focus();
     }
 
@@ -122,6 +151,7 @@
         for (const val of visible) {
           const li = document.createElement('li');
           li.textContent = val;
+          li.dataset.value = val; // Bug fix 3: preserve the original value string
           li.title = val;
           li.setAttribute('tabindex', '-1');
           li.style.cssText = [
@@ -166,7 +196,13 @@
               }
             } else if (e.key === 'Escape' || e.key === 'Tab') {
               closeDropdown();
-              inputEl.focus();
+              // Bug fix 4: Tab moves focus naturally — don't fight it by calling inputEl.focus().
+              // Bug fix 5: Set suppressNextFocus before restoring focus on Escape so the
+              //            focus event handler doesn't immediately reopen the dropdown.
+              if (e.key === 'Escape') {
+                suppressNextFocus = true;
+                inputEl.focus();
+              }
             }
           });
           dropdownEl.appendChild(li);
@@ -185,7 +221,7 @@
     }
 
     function onOutsideMousedown(e) {
-      if (!dropdownEl) return;
+      if (!dropdownEl || !inputEl.isConnected) return;
       if (
         !inputEl.contains(e.target) &&
         !dropdownEl.contains(e.target) &&
@@ -196,8 +232,13 @@
     }
 
     function onRepositionEvent() {
-      if (dropdownEl) positionDropdown();
+      if (dropdownEl && inputEl.isConnected) positionDropdown();
     }
+
+    // Bug fix 1: Register this instance's handlers in the module-level array so the
+    // single set of global listeners (document mousedown, window resize/scroll) can
+    // dispatch to every registered dropdown without stacking duplicate global handlers.
+    allInstances.push({ onOutsideMousedown, onRepositionEvent });
 
     // Arrow button: toggle the full unfiltered list.
     arrowBtn.addEventListener('mousedown', (e) => {
@@ -210,7 +251,14 @@
       }
     });
 
-    inputEl.addEventListener('focus', () => showDropdown());
+    inputEl.addEventListener('focus', () => {
+      // Bug fix 5: Skip reopening when focus was restored programmatically.
+      if (suppressNextFocus) {
+        suppressNextFocus = false;
+        return;
+      }
+      showDropdown();
+    });
     inputEl.addEventListener('input', () => showDropdown());
     inputEl.addEventListener('blur', () => setTimeout(() => closeDropdown(), BLUR_DELAY_MS));
     inputEl.addEventListener('keydown', (e) => {
@@ -227,10 +275,6 @@
         if (items.length) items[items.length - 1].focus();
       }
     });
-
-    document.addEventListener('mousedown', onOutsideMousedown);
-    window.addEventListener('resize', onRepositionEvent);
-    window.addEventListener('scroll', onRepositionEvent, true);
   }
 
   window.makeShowAllDropdown = makeShowAllDropdown;
