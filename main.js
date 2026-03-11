@@ -45,7 +45,10 @@ let apiTransferProg   = {};
 // ── Core helpers ─────────────────────────────────────────────────────────────
 function sanitize(name) {
   if (!name) return 'Unknown';
-  return String(name).replace(/[<>:"/\|?*\x00-\x1F!'™@#$%^&[\]{}=+;,`~]/g, '').trim().slice(0, 200) || 'Unknown';
+  // Only strip characters that are truly invalid on common filesystems (FAT32/NTFS/ext4):
+  // < > : " / \ | ? * and control characters 0x00–0x1F.
+  // Preserve: ! ' ™ and other characters that legitimately appear in game titles.
+  return String(name).replace(/[<>:"/\|?*\x00-\x1F]/g, '').trim().slice(0, 200) || 'Unknown';
 }
 
 function deriveSafeGameName(item, parsed) {
@@ -809,7 +812,12 @@ async function copyFolderContentsSafely(srcDir, finalTarget, options = {}) {
           try {
             await copyDirRecursive(srcPath, dstPath);
           } catch (e) {
+            // Re-throw Cancelled so the outer handler can mark the transfer as cancelled.
+            // For other errors (e.g. EPERM on system subdirs), log and re-throw so the
+            // game-level result is marked as an error rather than falsely reporting success.
+            if (e?.message === 'Cancelled') throw e;
             console.warn('[Transfer] copyDirRecursive failed for', srcPath, ':', e?.message || String(e));
+            throw e;
           }
         }
       }

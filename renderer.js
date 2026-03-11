@@ -112,7 +112,7 @@
     const recents = getRecentSources();
     const filtered = recents.filter(p => p !== path);
     filtered.unshift(path);
-    const limited = filtered.slice(0, 5);
+    const limited = filtered.slice(0, 10);
     try {
       localStorage.setItem(RECENT_SOURCES_KEY, JSON.stringify(limited));
     } catch (_) {}
@@ -124,7 +124,7 @@
     const recents = getRecentDests();
     const filtered = recents.filter(p => p !== path);
     filtered.unshift(path);
-    const limited = filtered.slice(0, 5);
+    const limited = filtered.slice(0, 10);
     try {
       localStorage.setItem(RECENT_DESTS_KEY, JSON.stringify(limited));
     } catch (_) {}
@@ -1835,6 +1835,14 @@
       showScanUI(false);
       showNotification('Transfer complete', 'PS5 Vault operation finished.');
       localStorage.removeItem(TRANSFER_STATE_KEY);
+      // Persist source and destination to recent history on every successful transfer
+      // so paths used programmatically (resume, FTP scan) are always saved.
+      try {
+        const srcEl = $('sourcePath');
+        const dstEl = $('destPath');
+        if (srcEl && srcEl.value.trim()) addRecentSource(srcEl.value.trim());
+        if (dstEl && dstEl.value.trim()) addRecentDest(dstEl.value.trim());
+      } catch (_) {}
       // Log to transfer history
       try {
         const src = $('sourcePath') ? $('sourcePath').value.trim() : '';
@@ -2677,11 +2685,20 @@
 
       // Attach show-all custom dropdowns to source and destination path inputs.
       // Pass getter functions so options are always fresh when the dropdown opens.
-      if (typeof window.makeShowAllDropdown === 'function') {
-        const sourceInput = $('sourcePath');
-        const destInput   = $('destPath');
-        if (sourceInput) window.makeShowAllDropdown(sourceInput, getRecentSources);
-        if (destInput)   window.makeShowAllDropdown(destInput,   getRecentDests);
+      // Retry once after a short delay in case dropdown-helper.js loads after renderer.js.
+      function attachDropdowns() {
+        if (typeof window.makeShowAllDropdown === 'function') {
+          const sourceInput = $('sourcePath');
+          const destInput   = $('destPath');
+          if (sourceInput) window.makeShowAllDropdown(sourceInput, getRecentSources);
+          if (destInput)   window.makeShowAllDropdown(destInput,   getRecentDests);
+          return true;
+        }
+        return false;
+      }
+      if (!attachDropdowns()) {
+        // dropdown-helper.js may not yet have executed — retry after a tick
+        setTimeout(attachDropdowns, 200);
       }
 
       const brandLogo = $('brandLogo');
