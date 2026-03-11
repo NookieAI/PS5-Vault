@@ -5,6 +5,9 @@
   // utils.js assigns to window.Utils; referencing it explicitly here avoids any
   // potential scoping ambiguity (e.g. "Utils.cleanPath is not a function" errors).
   const Utils = window.Utils;
+  if (!Utils || typeof Utils.cleanPath !== 'function') {
+    console.error('[renderer] window.Utils not ready — ensure utils.js loads before renderer.js');
+  }
 
   const LAST_SRC_KEY = 'ps5vault.lastSource';
   const LAST_DST_KEY = 'ps5vault.lastDest';
@@ -47,6 +50,9 @@
   let maxSpeed = 0;
   let lastFile = '';
   let totalTransferred = 0;
+  // Monotonically increasing grand-total copied bytes — prevents the progress bar
+  // from dipping when doEnsureAndPopulate starts a new item and emits totalBytesCopied:0.
+  let lastGrandCopied = 0;
 
   // ── Global operation lock ─────────────────────────────────────────────────
   // Any destructive or long-running operation sets appBusy=true, which disables
@@ -1684,6 +1690,7 @@
         TransferStats.reset();
         maxSpeed = 0;
         lastFile = '';
+        lastGrandCopied = 0;
         transferStartTime = Date.now();
         cancelOperation = false;
 
@@ -1735,9 +1742,13 @@
       // across item boundaries — unlike d.totalBytesCopied which resets to 0
       // at the start of each game and causes the sliding window to show 0 MB/s
       // for several seconds at every item boundary.
+      // Clamp grandCopied to at least lastGrandCopied so it never dips when a
+      // new item starts with totalBytesCopied:0 (which sets grandTotalCopied back
+      // to totalTransferred alone, briefly losing the in-flight bytes).
       const isMulti       = d.totalItems > 1;
       const grandTotal    = d.grandTotalBytes  || 0;
-      const grandCopied   = d.grandTotalCopied || d.totalBytesCopied || 0;
+      const grandCopied   = Math.max(lastGrandCopied, d.grandTotalCopied || d.totalBytesCopied || 0);
+      lastGrandCopied     = grandCopied;
       const speedInput    = isMulti && grandCopied > 0 ? grandCopied : (d.totalBytesCopied || 0);
       const etaTotal      = isMulti && grandTotal > 0  ? grandTotal  : (d.totalBytes || 0);
 
@@ -1819,6 +1830,7 @@
 
     if (d.type === 'go-complete') {
       if (elapsedTimer) { clearInterval(elapsedTimer); elapsedTimer = null; }
+      lastGrandCopied = 0;
       setResultModalBusy(false);
       showScanUI(false);
       showNotification('Transfer complete', 'PS5 Vault operation finished.');
