@@ -53,6 +53,7 @@ contextBridge.exposeInMainWorld('ppsaApi', {
   // ── IPC event listeners ─────────────────────────────────────────────────
   onScanProgress:           (cb) => ipcRenderer.on('scan-progress',           (_, d) => cb(d)),
   offScanProgress:          ()   => ipcRenderer.removeAllListeners('scan-progress'),
+  onOperationComplete:      (cb) => ipcRenderer.on('operation-complete',      (_, d) => cb(d)),
   onUpdateAvailable:        (cb) => ipcRenderer.on('update-available',        (_, d) => cb(d)),
   onUpdateDownloadProgress: (cb) => ipcRenderer.on('update-download-progress',(_, d) => cb(d)),
   onAppVersion:             (cb) => ipcRenderer.on('app-version',             (_, v) => cb(v)),

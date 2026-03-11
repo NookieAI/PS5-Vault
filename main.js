@@ -800,10 +800,18 @@ async function copyFolderContentsSafely(srcDir, finalTarget, options = {}) {
         }
         progress?.({ type: 'go-file-complete', fileRel: ent.name, totalBytesCopied: size, totalBytes });
       } else if (!ent.isFile() && !isSkippableDir(ent.name)) {
-          if (await isDirEntry(ent, srcPath, null).catch(() => false)) {
+        const fallbackIsDir = ent.isDirectory();
+        const isDir = typeof isDirEntry === 'function'
+          ? await isDirEntry(ent, srcPath, null).catch(() => fallbackIsDir)
+          : fallbackIsDir;
+        if (isDir) {
+          try {
             await copyDirRecursive(srcPath, dstPath);
+          } catch (e) {
+            console.warn('[Transfer] copyDirRecursive failed for', srcPath, ':', e?.message || String(e));
           }
         }
+      }
     }
   }
 
@@ -2800,7 +2808,7 @@ async function doEnsureAndPopulate(event, opts) {
       }
     }
 
-    event.sender?.send('scan-progress', { type: 'go-complete', totalBytesCopied: totalTransferred, grandTotalBytes: _grandTotalBytes, grandTotalCopied: totalTransferred });
+    event.sender?.send('scan-progress', { type: 'go-complete', totalBytesCopied: totalTransferred, grandTotalBytes: _grandTotalBytes, grandTotalCopied: totalTransferred, resultsCount: results.length });
     event.sender?.send('operation-complete', { success: true, resultsCount: results.length });
   } catch (e) {
     event.sender?.send('operation-complete', { success: false, error: String(e?.message || e) });
