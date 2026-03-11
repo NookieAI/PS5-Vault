@@ -1165,6 +1165,12 @@
       color: var(--muted);
     }
 
+    /* Themed scrollbars */
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--card-border-hover); border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: var(--muted); }
+
   </style>
 
 
@@ -1277,7 +1283,7 @@
               <option value="etahen" selected>etaHEN default</option>
               <option value="itemzflow">itemZFlow default</option>
               <option value="dump_runner">Dump Runner default</option>
-              <option value="porkfolio">Porkfolio</option>
+              <option value="porkfolio">Porkfolio (default)</option>
               <option value="custom">Custom</option>
             </select>
           </div>
