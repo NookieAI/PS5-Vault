@@ -33,6 +33,7 @@
       "ftp.js",
       "utils.js",
       "datalist-init.js",
+      "dropdown-helper.js",
       "help.js",
       "index.html",
       "ui-overrides.css",
