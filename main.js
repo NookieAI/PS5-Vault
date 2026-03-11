@@ -630,6 +630,16 @@ async function copyFileStream(src, dst, progressCallback, cancelCheck) {
   });
 }
 
+/**
+ * Copies a single file from srcPath to dstPath with SHA-256 hash verification.
+ * Retries up to maxAttempts times on hash mismatch or I/O error.
+ * @param {string} srcPath - Absolute path to the source file.
+ * @param {string} dstPath - Absolute path to the destination file.
+ * @param {Function} progressCallback - Called with byte-progress updates.
+ * @param {Function} cancelCheck - Returns true if the operation should be cancelled.
+ * @param {number} [maxAttempts] - Maximum retry attempts (default: RETRY_ATTEMPTS).
+ * @returns {Promise<void>}
+ */
 async function copyAndVerifyFile(srcPath, dstPath, progressCallback, cancelCheck, maxAttempts = RETRY_ATTEMPTS) {
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     if (cancelCheck()) throw new Error('Cancelled');
@@ -1912,6 +1922,17 @@ function applyFtpPassive(client, ftpConfig) {
   }
 }
 
+/**
+ * Downloads an entire remote FTP folder to a local directory.
+ * Builds a file manifest in parallel, then downloads files sequentially
+ * with live progress reporting.
+ * @param {object} ftpConfig - FTP connection config (host, port, user, pass, etc.).
+ * @param {string} remotePath - Remote FTP path to download.
+ * @param {string} localPath - Local directory to download files into.
+ * @param {Function} progressCallback - Called with progress update objects.
+ * @param {Function} cancelCheck - Returns true if the operation should be cancelled.
+ * @returns {Promise<void>}
+ */
 async function downloadFtpFolder(ftpConfig, remotePath, localPath, progressCallback, cancelCheck) {
   // Build the manifest in parallel first — this replaces the serial getFtpFolderSize walk
   // AND the recursive walk during actual download (two traversals → one).
@@ -2040,6 +2061,17 @@ class ThrottledStream extends Transform {
 }
 
 // Add FTP upload function
+/**
+ * Uploads a local directory tree to a remote FTP path.
+ * Enumerates all files with stats, then uploads them with optional speed limiting
+ * and parallel connection support.
+ * @param {object} ftpConfig - FTP connection config (host, port, user, pass, etc.).
+ * @param {string} localPath - Local directory to upload.
+ * @param {string} remotePath - Destination remote FTP path.
+ * @param {Function} progressCallback - Called with progress update objects.
+ * @param {Function} cancelCheck - Returns true if the operation should be cancelled.
+ * @returns {Promise<void>}
+ */
 async function uploadFtpFolder(ftpConfig, localPath, remotePath, progressCallback, cancelCheck) {
   const client = new ftp.Client(120000); // 2 min idle timeout — PS5 FTP can be slow on large files
   client.ftp.verbose = false;
@@ -3084,28 +3116,27 @@ ipcMain.handle('ps5-discover', async (_event, timeoutMs = 3000) => {
   const net = require('net');
   const ifaces = os.networkInterfaces();
   const subnets = new Set();
-  const gatewayIps = new Set(); // typically .1 on each subnet
 
   for (const ifaceList of Object.values(ifaces)) {
     for (const addr of (ifaceList || [])) {
       if (addr.family === 'IPv4' && !addr.internal) {
         const base = addr.address.split('.').slice(0, 3).join('.');
         subnets.add(base);
-        gatewayIps.add(base + '.1');   // router is almost always .1
-        gatewayIps.add(base + '.254'); // some ISP routers use .254
       }
     }
   }
 
   const PS5_PORTS = [2121, 1337, 1338];
   const tcpHits = [];  // [{ip, port}] — raw TCP open
-  const perProbeTimeout = Math.max(150, Math.floor(timeoutMs / 15));
+  // Use a generous per-probe timeout so PS5s on Wi-Fi or busy networks respond in time.
+  // Dividing by 6 gives ~1000 ms with the 6000 ms call from the renderer.
+  const perProbeTimeout = Math.max(500, Math.floor(timeoutMs / 6));
 
-  for (const subnet of Array.from(subnets).slice(0, 2)) {
+  for (const subnet of Array.from(subnets)) {
     const probes = [];
     for (let n = 1; n <= 254; n++) {
       const ip = `${subnet}.${n}`;
-      if (gatewayIps.has(ip)) continue; // skip gateway IPs entirely
+      // Don't skip any host IPs — a PS5 could theoretically have any address in the subnet.
       for (const port of PS5_PORTS) {
         probes.push(new Promise(resolve => {
           const sock = new net.Socket();
@@ -3142,7 +3173,7 @@ ipcMain.handle('ps5-discover', async (_event, timeoutMs = 3000) => {
         sock.destroy();
         resolve(ok);
       };
-      sock.setTimeout(2000);
+      sock.setTimeout(3000);
       sock.connect(port, ip, () => { /* wait for banner */ });
       sock.on('data', chunk => {
         buf += chunk.toString('ascii');

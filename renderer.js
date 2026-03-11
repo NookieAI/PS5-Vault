@@ -32,6 +32,29 @@
     } catch (_) {}
   }
 
+  /**
+   * Strips the password from an FTP URL before storing it in history.
+   * e.g. ftp://user:PASS@host:port/path → ftp://user@host:port/path
+   * Non-FTP strings are returned unchanged.
+   * @param {string} url
+   * @returns {string}
+   */
+  function sanitizeFtpUrl(url) {
+    if (!url || !url.startsWith('ftp://')) return url;
+    try {
+      const u = new URL(url);
+      if (u.password) {
+        u.password = '';
+      }
+      // URL.toString() leaves a trailing colon when password is cleared (ftp://user:@host).
+      // Remove it so the result is ftp://user@host:port/path.
+      return u.toString().replace(/:@/, '@');
+    } catch (_) {
+      // Malformed URL — strip credentials with a simple regex fallback
+      return url.replace(/^(ftp:\/\/[^:@]*):([^@]*)@/, '$1@');
+    }
+  }
+
   const $ = id => document.getElementById(id);
   const log = (...a) => console.log('[renderer]', ...a);
   const err = (...a) => console.error('[renderer]', ...a);
@@ -1198,6 +1221,11 @@
     });
   }
 
+  /**
+   * Populates the transfer result list panel with a summary of completed operations.
+   * Tallies moved/copied/uploaded/created/skipped/error counts and renders per-game rows.
+   * @param {{results: Array<object>}} res - Result object from the ensure-and-populate IPC handler.
+   */
   function updateListSummary(res) {
     const rl = $('resultList');
     if (!rl || !res || !Array.isArray(res.results)) return;
@@ -1572,7 +1600,7 @@
 
   function toast(msg) {
     const t = $('toast');
-    if (!t) return;
+    if (!t) { console.warn('[toast]', msg); return; }
     t.textContent = msg;
     t.style.display = 'block';
     setTimeout(() => { t.style.display = 'none'; }, 3000);
@@ -1591,6 +1619,12 @@
   // Elapsed timer for the in-progress display
   let elapsedTimer = null;
 
+  /**
+   * Handles all progress and completion messages from the main process IPC channel.
+   * Routes scan progress, game-found events, file progress, and transfer completion
+   * to the appropriate UI update handlers.
+   * @param {object} d - Progress message object with a `type` discriminator field.
+   */
   function onProgressMessage(d) {
     if (!d || !d.type) return;
 
@@ -1856,8 +1890,8 @@
         const histDurationMs = transferStartTime ? Date.now() - transferStartTime : 0;
         addTransferHistoryEntry({
           date: new Date().toISOString(),
-          source: src,
-          dest: dst,
+          source: sanitizeFtpUrl(src),
+          dest: sanitizeFtpUrl(dst),
           action: actionVal,
           items: itemCount,
           totalBytes: d.grandTotalBytes || d.totalBytesCopied || totalTransferred || 0,
@@ -3112,7 +3146,7 @@
           ftpDiscoverBtn.disabled = true;
           ftpDiscoverBtn.textContent = '🔍 Scanning…';
           try {
-            const results = await window.ppsaApi.ps5Discover(4000);
+            const results = await window.ppsaApi.ps5Discover(6000);
             if (!results || !results.length) {
               toast('No PS5 found — make sure your FTP payload is running and PS5 is on the same network');
             } else {
@@ -3339,7 +3373,7 @@
           results.innerHTML = '';
           setStatus('Scanning network…');
           try {
-            const found = await window.ppsaApi.ps5Discover(4000);
+            const found = await window.ppsaApi.ps5Discover(6000);
             results.innerHTML = '';
             if (!found || !found.length) {
               setStatus('No PS5 found — make sure your FTP payload is running');
