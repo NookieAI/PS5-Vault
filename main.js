@@ -1410,6 +1410,14 @@ async function scanFtpRecursive(client, remotePath, items, depth, onGameFound) {
           } catch (_) {}
         }
       }
+      // Last-resort fallback: if the folder name starts with PPSA and no metadata
+      // could be downloaded (e.g. drakmor/ftpsrv blocks file access), include the
+      // folder as a game using the PPSA ID as the content identifier so it still
+      // appears in the library and can be transferred.
+      // Range {4,6} matches the same width as extractPpsaKey() for consistency.
+      if (!data && /^PPSA\d{4,6}/i.test(entry.name)) {
+        data = { contentId: entry.name.toUpperCase() };
+      }
       if (data) {
         await buildAndEmit(data, entryPath, null, entry.name);
         handledPaths.add(entryPath);
