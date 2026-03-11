@@ -3451,7 +3451,8 @@
             const found = await window.ppsaApi.ps5Discover(6000);
             results.innerHTML = '';
             if (!found || !found.length) {
-              setStatus('No PS5 found — make sure your FTP payload is running');
+              toast('No PS5 found — make sure your FTP payload is running');
+              setStatus('');
             } else {
               // Merge with existing, dedupe by IP
               for (const f of found) {
@@ -3462,7 +3463,8 @@
             }
           } catch (e) {
             results.innerHTML = '';
-            setStatus('Scan failed: ' + e.message, true);
+            toast('Scan failed: ' + e.message);
+            setStatus('');
           } finally {
             setScanning(false);
           }
