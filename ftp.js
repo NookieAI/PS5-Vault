@@ -44,6 +44,13 @@
     return recents.length > 0 ? recents[0] : null;
   }
 
+  /**
+   * Opens the FTP configuration modal and returns the user-confirmed config object.
+   * If initialUrl is provided, pre-fills the form fields from the parsed URL.
+   * Resolves with the FTP config object on confirm, or null if cancelled.
+   * @param {string} [initialUrl] - Optional FTP URL to pre-fill (e.g. from PS5 auto-detect).
+   * @returns {Promise<object|null>}
+   */
   async function openFtpModal(initialUrl) {
     const backdrop = document.getElementById('ftpModalBackdrop');
     const hostInput = document.getElementById('ftpHost');
