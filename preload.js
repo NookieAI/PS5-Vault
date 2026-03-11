@@ -43,6 +43,9 @@ contextBridge.exposeInMainWorld('ppsaApi', {
   getApiStatus:     ()            => ipcRenderer.invoke('get-api-status'),
   regenerateApiKey: ()            => ipcRenderer.invoke('regenerate-api-key'),
 
+  // ── Local disk ──────────────────────────────────────────────────────────
+  getLocalFreeSpace: (p)          => ipcRenderer.invoke('get-local-free-space', p),
+
   // ── Auto-updater ────────────────────────────────────────────────────────
   checkForUpdatesManual:      ()           => ipcRenderer.invoke('check-for-updates-manual'),
   downloadAndInstallUpdate:   (url)        => ipcRenderer.invoke('download-and-install-update', url),
