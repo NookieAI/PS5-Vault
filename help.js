@@ -6,6 +6,15 @@
 <h3>Getting Started</h3>
 <p>PS5 Vault helps you organize and transfer PS5 game backups between local drives and FTP servers (e.g., your PS5 running etaHEN or ftpsrv). Scan a source folder or FTP path, select games, choose a destination and layout, then hit <strong>GO</strong>.</p>
 
+<h3>What's New in v2.4</h3>
+<ul>
+  <li><strong>Copy (fast)</strong>: New action that skips SHA-256 hash verification — ideal for same-drive transfers where re-reading every byte is unnecessary.</li>
+  <li><strong>File-level Resume</strong>: Interrupted transfers now skip files already fully present at the destination (matching size), so only missing or partial files are re-copied.</li>
+  <li><strong>Free-Space Pre-check</strong>: Before starting a local copy, PS5 Vault verifies the destination has enough free space (with a 512 MB buffer) and shows an error if not.</li>
+  <li><strong>Enhanced Game Integrity Scan</strong>: Verify Library now also detects empty game folders and folders containing zero-byte files (sign of a corrupt or partial copy).</li>
+  <li><strong>Destination Capacity Badge</strong>: After each transfer, a toast shows how much free space remains and an estimate of how many more games fit.</li>
+</ul>
+
 <h3>What's New in v2.3</h3>
 <ul>
   <li><strong>Show-All Dropdown</strong>: All recent paths and FTP configs appear instantly when you click any path field — no typing required.</li>
@@ -43,7 +52,7 @@
       <li><strong>Custom</strong> — enter a custom folder name in the rename modal</li>
     </ul>
   </li>
-  <li><strong>Actions</strong>: <em>Copy</em> (keeps source), <em>Move</em> (deletes source after verified copy), <em>Create Folder</em> (structure only).</li>
+  <li><strong>Actions</strong>: <em>Copy (verified)</em> (SHA-256 hash check after each file), <em>Copy (fast)</em> (stream copy without hash verification — faster for same-drive transfers), <em>Move</em> (deletes source after verified copy), <em>Create Folder</em> (structure only).</li>
   <li><strong>Conflict Resolution</strong>: When a target already exists, choose <em>Skip</em>, <em>Overwrite</em>, or <em>Rename</em> (auto-numbered).</li>
   <li><strong>Progress Panel</strong>: Live speed (sliding-window), ETA, elapsed time, transferred bytes, per-file name, and a sparkline speed graph.</li>
 </ul>

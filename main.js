@@ -10,6 +10,7 @@ const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
 const { Writable, Transform } = require('stream');
+const { execFile } = require('child_process');
 
 // Add FTP support
 const ftp = require('basic-ftp');
@@ -22,6 +23,12 @@ const LOCAL_READDIR_TIMEOUT_MS = 10000; // Local drives: 10s — secondary NVMe 
 const MAX_FILE_SIZE_BYTES = 200 * 1024 * 1024 * 1024; // 200GB limit for sanity
 const RETRY_ATTEMPTS = 3;
 const RETRY_DELAY_MS = 100;
+// 512 MB safety buffer for free-space pre-check: accounts for filesystem overhead,
+// metadata, and in-progress writes so we don't fill the drive completely.
+const DISK_SPACE_SAFETY_BUFFER_BYTES = 512 * 1024 * 1024;
+// Max files to inspect when checking for zero-byte corruption — balances thoroughness
+// against scan time on large game directories (some PS5 games have thousands of files).
+const MAX_FILES_TO_CHECK_FOR_CORRUPTION = 500;
 
 const VERSION   = require('./package.json').version;
 const apiServer = require('./api-server');
@@ -699,6 +706,45 @@ async function isSameDevice(srcPath, destParentPath) {
   }
 }
 
+// ── Free space helper ──────────────────────────────────────────────────────────
+// Returns available bytes on the drive containing dirPath.
+// Uses fs.promises.statfs (Node 19+) with fallbacks for older runtimes.
+async function getLocalFreeSpace(dirPath) {
+  if (!dirPath || typeof dirPath !== 'string') throw new Error('Invalid path');
+  // Validate path is absolute and not an FTP URL
+  if (dirPath.startsWith('ftp://')) throw new Error('FTP paths not supported');
+  try {
+    // Node 19+ native statfs — fastest path
+    const stats = await fs.promises.statfs(dirPath);
+    return stats.bavail * stats.bsize;
+  } catch (_) {
+    // Fallback: platform-specific CLI tools
+    return new Promise((resolve, reject) => {
+      if (process.platform === 'win32') {
+        // Extract drive letter (e.g. "C:") from path
+        const drive = path.parse(dirPath).root.replace(/[\/\\]$/, '') || 'C:';
+        execFile('wmic', ['logicaldisk', 'where', `DeviceID="${drive}"`, 'get', 'FreeSpace', '/value'], { timeout: 10000 }, (err, stdout) => {
+          if (err) return reject(err);
+          const m = stdout.match(/FreeSpace=(\d+)/);
+          if (m) resolve(parseInt(m[1], 10));
+          else reject(new Error('Could not parse wmic output'));
+        });
+      } else {
+        execFile('df', ['-k', dirPath], { timeout: 10000 }, (err, stdout) => {
+          if (err) return reject(err);
+          const lines = stdout.trim().split('\n');
+          if (lines.length < 2) return reject(new Error('Could not parse df output'));
+          const parts = lines[1].trim().split(/\s+/);
+          // df -k: columns are Filesystem, 1K-blocks, Used, Available, ...
+          const availKb = parseInt(parts[3], 10);
+          if (isNaN(availKb)) return reject(new Error('Could not parse df available'));
+          resolve(availKb * 1024);
+        });
+      }
+    });
+  }
+}
+
 async function renameFileSameDevice(srcPath, dstPath, overwriteMode) {
   const exists = await fs.promises.stat(dstPath).catch(() => false);
   let finalDst = dstPath;
@@ -716,6 +762,7 @@ async function copyFolderContentsSafely(srcDir, finalTarget, options = {}) {
   const progress = options.progress;
   const cancelCheck = options.cancelCheck || (() => false);
   const totalBytes = options.totalBytes || 0;
+  const skipVerify = options.skipVerify === true;
 
   // Copy src directly to finalTarget — no temp dir, no double-copy.
   // progress events use proper objects so the UI bar updates correctly.
@@ -727,13 +774,30 @@ async function copyFolderContentsSafely(srcDir, finalTarget, options = {}) {
       const srcPath = path.join(src, ent.name);
       const dstPath = path.join(dst, ent.name);
       if (ent.isFile()) {
-        const size = (await fs.promises.stat(srcPath).catch(() => ({ size: 0 }))).size || 0;
-        // Pass a proper progress object so progressFn can track bytes
-        await copyAndVerifyFile(
-          srcPath, dstPath,
-          (info) => progress?.({ type: 'go-file-progress', fileRel: ent.name, totalBytesCopied: info?.totalBytesCopied || 0, totalBytes }),
-          cancelCheck
-        );
+        const srcStat = await fs.promises.stat(srcPath).catch(() => ({ size: 0 }));
+        const size = srcStat.size || 0;
+        // File-level resume: skip if destination already exists with the same size
+        const dstStat = await fs.promises.stat(dstPath).catch(() => null);
+        if (dstStat && dstStat.size === size) {
+          // Already fully copied — emit complete so progress stays accurate
+          progress?.({ type: 'go-file-complete', fileRel: ent.name, totalBytesCopied: size, totalBytes });
+          continue;
+        }
+        if (skipVerify) {
+          // Fast copy: stream without SHA-256 verification
+          await copyFileStream(
+            srcPath, dstPath,
+            (info) => progress?.({ type: 'go-file-progress', fileRel: ent.name, totalBytesCopied: info?.totalBytesCopied || 0, totalBytes }),
+            cancelCheck
+          );
+        } else {
+          // Pass a proper progress object so progressFn can track bytes
+          await copyAndVerifyFile(
+            srcPath, dstPath,
+            (info) => progress?.({ type: 'go-file-progress', fileRel: ent.name, totalBytesCopied: info?.totalBytesCopied || 0, totalBytes }),
+            cancelCheck
+          );
+        }
         progress?.({ type: 'go-file-complete', fileRel: ent.name, totalBytesCopied: size, totalBytes });
       } else if (!ent.isFile() && !isSkippableDir(ent.name)) {
           if (await isDirEntry(ent, srcPath, null).catch(() => false)) {
@@ -2349,6 +2413,23 @@ async function doEnsureAndPopulate(event, opts) {
   // Pre-compute once so progressFn doesn't call .reduce() on every IPC event
   const _grandTotalBytes = items.reduce((s, x) => s + (x.totalSize || 0), 0);
   try {
+    // ── Free-space pre-check (local-to-local only) ──────────────────────────
+    if (!ftpConfig && !ftpDestConfig && (action === 'copy' || action === 'copy-fast') && _grandTotalBytes > 0) {
+      try {
+        await fs.promises.mkdir(dest, { recursive: true });
+        const freeBytes = await getLocalFreeSpace(dest);
+        if (freeBytes < _grandTotalBytes + DISK_SPACE_SAFETY_BUFFER_BYTES) {
+          const needGB = ((_grandTotalBytes + DISK_SPACE_SAFETY_BUFFER_BYTES) / (1024 ** 3)).toFixed(2);
+          const freeGB = (freeBytes / (1024 ** 3)).toFixed(2);
+          const msg = `Not enough disk space: need ${needGB} GB, only ${freeGB} GB free`;
+          event.sender?.send('scan-progress', { type: 'go-error', message: msg });
+          throw new Error(msg);
+        }
+      } catch (e) {
+        if (e.message.includes('Not enough disk space')) throw e;
+        console.warn('[Transfer] Free-space check failed (non-fatal):', e.message);
+      }
+    }
     for (let idx = 0; idx < items.length; idx++) {
       if (controller.signal.aborted) break;
       const cancelCheck = () => controller.signal.aborted;
@@ -2576,7 +2657,7 @@ async function doEnsureAndPopulate(event, opts) {
           await fs.promises.mkdir(finalTarget, { recursive: true });
           event.sender?.send('scan-progress', { type: 'go-file-complete', fileRel: 'Folder created', totalBytesCopied: 0, totalBytes: 0 });
           results.push({ item: safeGameName, target: finalTarget, created: true, source: srcFolder, safeGameName, totalSize: itemTotalBytes });
-        } else if (action === 'copy' || action === 'move') {
+        } else if (action === 'copy' || action === 'copy-fast' || action === 'move') {
           const originalSrcFolder = srcFolder; // Store original for FTP delete
           let tempDir = null;
 
@@ -2696,8 +2777,8 @@ async function doEnsureAndPopulate(event, opts) {
           } else {
             // Local copy/move
             progressFn({ type: 'go-file-progress', totalBytesCopied: 0, totalBytes: itemTotalBytes });
-            if (action === 'copy') {
-              await copyFolderContentsSafely(srcFolder, finalTarget, { progress: progressFn, cancelCheck, totalBytes: itemTotalBytes });
+            if (action === 'copy' || action === 'copy-fast') {
+              await copyFolderContentsSafely(srcFolder, finalTarget, { progress: progressFn, cancelCheck, totalBytes: itemTotalBytes, skipVerify: action === 'copy-fast' });
               results.push({ item: safeGameName, target: finalTarget, copied: true, source: srcFolder, safeGameName, totalSize: itemTotalBytes });
             } else {
               await moveFolderContentsSafely(srcFolder, finalTarget, { progress: progressFn, cancelCheck, overwriteMode, totalBytes: itemTotalBytes });
@@ -3433,11 +3514,51 @@ ipcMain.handle('verify-library', async (event, items, ftpConfig) => {
             if (!st.isDirectory()) { status = 'error'; detail = 'Not a directory'; }
           } catch (e) { status = 'error'; detail = e.message; }
         }
+        // Check for empty folder
+        if (status === 'ok' || status === 'warn') {
+          try {
+            const topEntries = await fs.promises.readdir(gamePath);
+            if (topEntries.length === 0) {
+              status = 'error'; detail = 'Empty game folder';
+            } else {
+              // Check for zero-byte files (recursive, up to MAX_FILES_TO_CHECK_FOR_CORRUPTION)
+              let fileCount = 0;
+              let hasZeroByte = false;
+              async function scanForZeroBytesRecursively(dir) {
+                if (fileCount >= MAX_FILES_TO_CHECK_FOR_CORRUPTION || hasZeroByte) return;
+                const ents = await fs.promises.readdir(dir, { withFileTypes: true }).catch(() => []);
+                for (const ent of ents) {
+                  if (fileCount >= MAX_FILES_TO_CHECK_FOR_CORRUPTION || hasZeroByte) break;
+                  const full = path.join(dir, ent.name);
+                  if (ent.isFile()) {
+                    fileCount++;
+                    const st = await fs.promises.stat(full).catch(() => null);
+                    if (st && st.size === 0) { hasZeroByte = true; }
+                  } else if (ent.isDirectory()) {
+                    await scanForZeroBytesRecursively(full);
+                  }
+                }
+              }
+              await scanForZeroBytesRecursively(gamePath);
+              if (hasZeroByte) {
+                status = 'warn'; detail = 'Contains zero-byte file(s) - possible corrupt/partial copy';
+              }
+            }
+          } catch (_) {}
+        }
       } catch (e) { status = 'error'; detail = e.message; }
       results.push({ ppsa: item.ppsa, title: item.displayTitle || item.folderName, path: gamePath, status, detail });
     }
   }
   return results;
+});
+
+// ── Local free space ──────────────────────────────────────────────────────────
+ipcMain.handle('get-local-free-space', async (_event, dirPath) => {
+  if (!dirPath || typeof dirPath !== 'string' || dirPath.startsWith('ftp://')) {
+    throw new Error('Invalid path');
+  }
+  return getLocalFreeSpace(dirPath);
 });
 
 // ── List Game Sub-folders ─────────────────────────────────────────────────────
