@@ -462,7 +462,7 @@
     if (metaEl) {
       metaEl.innerHTML = '';
       const actionLabels = {
-        'copy': 'Copy (verified)', 'move': 'Move', 'folder-only': 'Create folder'
+        'copy': 'Copy (verified)', 'copy-fast': 'Copy (fast)', 'move': 'Move', 'folder-only': 'Create folder'
       };
       const layoutLabels = {
         'game-ppsa': 'Game / PPSA', 'game-only': 'Game only', 'ppsa-only': 'PPSA only',
@@ -1059,6 +1059,7 @@
           if (!res) throw new Error('No response');
           if (res.error) throw new Error(res.error);
           updateListSummary(res);
+          updateDestCapacityBadge();
 
         };
 
@@ -1180,7 +1181,10 @@
     window.ppsaApi.resumeTransfer(resumeOpts).then(res => {
       localStorage.removeItem(TRANSFER_STATE_KEY);
       resumeState = null;
-      if (res && Array.isArray(res.results)) updateListSummary(res);
+      if (res && Array.isArray(res.results)) {
+        updateListSummary(res);
+        updateDestCapacityBadge();
+      }
     }).catch(e => {
       toast('Resume failed: ' + (e.message || String(e)));
       setResultModalBusy(false);
@@ -1281,6 +1285,24 @@
         badgesEl.appendChild(b);
       }
     }
+  }
+
+  async function updateDestCapacityBadge() {
+    try {
+      const destEl = $('destPath');
+      if (!destEl) return;
+      const dest = destEl.value.trim();
+      if (!dest || /^(\d+\.\d+\.\d+\.\d+(:\d+)?|ftp:\/\/)/.test(dest)) return;
+      const freeBytes = await window.ppsaApi.getLocalFreeSpace(dest);
+      if (!freeBytes || freeBytes <= 0) return;
+      const items = window.__ps5_lastRenderedItems || [];
+      const sized = items.filter(it => (it.totalSize || 0) > 0);
+      const avgGameSize = sized.length > 0 ? sized.reduce((s, it) => s + it.totalSize, 0) / sized.length : 0;
+      const freeGB = (freeBytes / (1024 ** 3)).toFixed(1);
+      const fitsCount = avgGameSize > 0 ? Math.floor(freeBytes / avgGameSize) : '?';
+      const fitsLabel = typeof fitsCount === 'number' ? `~${fitsCount} more game${fitsCount !== 1 ? 's' : ''}` : '~? more games';
+      toast(`Destination: ${freeGB} GB free — fits ${fitsLabel}`);
+    } catch (_) {}
   }
 
 
@@ -1862,6 +1884,11 @@
       const label = $('currentScanLabel');
       const raw = d.folder || d.path || '';
       if (label) label.textContent = Utils.pathEndsWithSceSys(raw) ? '' : (Utils.normalizeDisplayPath(raw) || '');
+      return;
+    }
+
+    if (d.type === 'go-error') {
+      toast(d.message || 'Transfer error');
       return;
     }
   }
