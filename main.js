@@ -737,9 +737,9 @@ async function removePathRecursive(p) {
   // Normalise to absolute so relative paths can't bypass checks.
   const abs = path.resolve(p);
 
-  // Refuse paths that are too shallow (need at least 3 segments deep).
+  // Refuse paths that are too shallow (need at least 2 segments deep).
   const segments = abs.split(path.sep).filter(Boolean);
-  if (segments.length < 3) {
+  if (segments.length < 2) {
     console.error('[removePathRecursive] REFUSED — path too shallow:', abs);
     throw new Error('Refusing to delete shallow path: ' + abs);
   }
