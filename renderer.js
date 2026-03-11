@@ -76,6 +76,8 @@
 
   let isFtpScan = false;
   let ftpConfig = null;
+  let lastScannedSource = null;
+  let lastScannedFtpConfig = null;
   let maxSpeed = 0;
   let lastFile = '';
   let totalTransferred = 0;
@@ -933,15 +935,19 @@
   }
 
   async function refreshResultsAfterOperation() {
-    const src = $('sourcePath') && $('sourcePath').value ? $('sourcePath').value.trim() : '';
+    const src = lastScannedSource || ($('sourcePath') && $('sourcePath').value ? $('sourcePath').value.trim() : '');
     if (!src) return;
+    const cfg = lastScannedFtpConfig;
     try {
       showPersistentToast('Refreshing results...');
-      const res = await window.ppsaApi.scanSource(src);
+      const res = await window.ppsaApi.scanSource(src, cfg ? { ftpConfig: cfg } : undefined);
       const arr = Array.isArray(res) ? res : (Array.isArray(res?.items) ? res.items : []);
       renderResults(arr);
       // Restore FTP scan state so subsequent delete/rename correctly uses ftpDeleteItem/ftpRenameItem
-      if (src.startsWith('ftp://') || /^\d+\.\d+\.\d+\.\d+/.test(src)) {
+      if (cfg) {
+        isFtpScan = true;
+        ftpConfig = cfg;
+      } else if (src.startsWith('ftp://') || /^\d+\.\d+\.\d+\.\d+/.test(src)) {
         isFtpScan = true;
       }
       hidePersistentToast();
@@ -3055,6 +3061,8 @@
             $('resultsBody').innerHTML = '';
             const res = await window.ppsaApi.scanSource(actualSrc, isFtpScan && ftpConfig ? { ftpConfig } : undefined);
             const arr = Array.isArray(res) ? res : (Array.isArray(res?.items) ? res.items : []);
+            lastScannedSource = actualSrc;
+            lastScannedFtpConfig = isFtpScan ? ftpConfig : null;
             if (arr.length > 0) {
               const duration = Math.round((Date.now() - scanStartTime) / 1000);
               renderResults(arr, duration);
@@ -3091,6 +3099,8 @@
             $('resultsBody').innerHTML = '';
             const res = await window.ppsaApi.scanSource(src);
             const arr = Array.isArray(res) ? res : (Array.isArray(res?.items) ? res.items : []);
+            lastScannedSource = src;
+            lastScannedFtpConfig = null;
             if (arr.length > 0) {
               const duration = Math.round((Date.now() - scanStartTime) / 1000);
               renderResults(arr, duration);
@@ -3163,16 +3173,7 @@
             }
             hidePersistentToast();
             toast(`Moved ${selected.length} item(s) to trash`);
-            const src = $('sourcePath').value.trim();
-            if (src) {
-              showPersistentToast('Refreshing results...');
-              const res = await window.ppsaApi.scanSource(src);
-              const arr = Array.isArray(res) ? res : (Array.isArray(res?.items) ? res.items : []);
-              renderResults(arr);
-              if (src.startsWith('ftp://') || /^\d+\.\d+\.\d+\.\d+/.test(src)) isFtpScan = true;
-              hidePersistentToast();
-              toast('Results refreshed');
-            }
+            await refreshResultsAfterOperation();
           } catch (e) {
             hidePersistentToast();
             toast('Delete failed: ' + (e.message || 'Unknown error'));
@@ -3419,6 +3420,8 @@
                   }
                   throw new Error(res.error);
                 }
+                lastScannedSource = actualSrc;
+                lastScannedFtpConfig = config;
                 const duration = Math.round((Date.now() - scanStartTime) / 1000);
                 renderResults(arr, duration);
               } catch (e) {
@@ -3497,16 +3500,7 @@
             }
             hidePersistentToast();
             toast('Renamed successfully');
-            const src = $('sourcePath').value.trim();
-            if (src) {
-              showPersistentToast('Refreshing results...');
-              const res = await window.ppsaApi.scanSource(src);
-              const arr = Array.isArray(res) ? res : (Array.isArray(res?.items) ? res.items : []);
-              renderResults(arr);
-              if (src.startsWith('ftp://') || /^\d+\.\d+\.\d+\.\d+/.test(src)) isFtpScan = true;
-              hidePersistentToast();
-              toast('Results refreshed');
-            }
+            await refreshResultsAfterOperation();
           } catch (e) {
             hidePersistentToast();
             toast('Rename failed: ' + (e.message || 'Unknown error'));
