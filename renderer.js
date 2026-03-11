@@ -4,8 +4,14 @@
   // Ensure Utils is always in scope inside this IIFE regardless of load order.
   // utils.js assigns to window.Utils; referencing it explicitly here avoids any
   // potential scoping ambiguity (e.g. "Utils.cleanPath is not a function" errors).
-  const Utils = window.Utils;
-  if (!Utils || typeof Utils.cleanPath !== 'function') {
+  const Utils = window.Utils || {
+    sanitizeName: (n) => (n ? String(n).replace(/[<>:"/\\|?*\x00-\x1F]/g, '').replace(/  +/g, ' ').trim().slice(0, 200) : '') || 'Unknown',
+    escapeHtml: (s) => String(s || '').replace(/[&<>"']/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m])),
+    normalizeDisplayPath: (p) => String(p || ''),
+    pathEndsWithSceSys: () => false,
+    cleanPath: (p) => String(p || ''),
+  };
+  if (!window.Utils || typeof window.Utils.cleanPath !== 'function') {
     console.error('[renderer] window.Utils not ready — ensure utils.js loads before renderer.js');
   }
 
@@ -1802,7 +1808,14 @@
       const bar = $('resultProgressBar');
       if (bar) {
         bar.style.transition = 'width 0.15s linear';
-        bar.style.width = (hasGrand || hasItem) ? `${barPct.toFixed(2)}%` : '0%';
+        if (hasGrand || hasItem) {
+          bar.style.width = `${barPct.toFixed(2)}%`;
+        } else if (grandCopied > 0 || (d.totalBytesCopied || 0) > 0) {
+          // Size unknown but transfer is active — show minimum width so user sees activity
+          bar.style.width = '2%';
+        } else {
+          bar.style.width = '0%';
+        }
       }
 
       // ── Stat chips ───────────────────────────────────────────────────────
@@ -3355,7 +3368,16 @@
                 $('resultsBody').innerHTML = '';
                 const res = await window.ppsaApi.scanSource(actualSrc, { ftpConfig: config });
                 const arr = Array.isArray(res) ? res : (Array.isArray(res?.results) ? res.results : (Array.isArray(res?.items) ? res.items : []));
-                if (!arr.length && (!res || res.error)) throw new Error(res?.error || 'Scan failed');
+                // 5xx FTP errors (e.g., 550 No such file) mean the path doesn't exist on this server.
+                // Treat as "0 games found" rather than a fatal error so the UI degrades gracefully.
+                if (res && res.error && !arr.length) {
+                if (/^5\d\d(?:\s|$)/.test(String(res.error))) {
+                    toast('No games found on this PS5 — ensure your FTP payload is running and games are installed');
+                    renderResults([], Math.round((Date.now() - scanStartTime) / 1000));
+                    return;
+                  }
+                  throw new Error(res.error);
+                }
                 const duration = Math.round((Date.now() - scanStartTime) / 1000);
                 renderResults(arr, duration);
               } catch (e) {
