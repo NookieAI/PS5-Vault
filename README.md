@@ -38,7 +38,9 @@ Press **F1** at any time to open the built-in help.
 - Filter your results by name or by size (under 1 GB, 1–10 GB, 10–30 GB, over 30 GB)
 
 ### Transfers
-- **Copy** (with hash verification), **Move**, or **Create folder only** (dry run)
+- **Copy** (with hash verification), **Copy (fast)** (no hash verification — faster for same-drive transfers), **Move**, or **Create folder only** (dry run)
+- **File-level Resume**: skips files already fully present at the destination, so interrupted transfers pick up where they left off
+- **Free-Space Pre-check**: destination free space is verified (512 MB buffer) before any local copy starts
 - Choose from **eight** destination layouts:
 
   | Layout | Example result |
@@ -55,13 +57,13 @@ Press **F1** at any time to open the built-in help.
 - Transfer directly from PC to PS5 over FTP, or from PS5 back to PC
 - Live progress bar, speed, ETA, and per-file status during transfers
 - **Conflict resolution** — choose to skip, rename, or overwrite when a game already exists at the destination
-- Resume interrupted transfers where they left off
 
 ### Game management
 - Delete or rename games (local or on your PS5 over FTP)
 - Batch rename using a pattern like `{name} - Backup`
 - Click any game to see full metadata: content ID, version, SDK version, region, required firmware, folder path
 - Click a folder path to open it in Windows Explorer
+- **Soft Delete / Trash Bin**: deleted games move to `_ps5vault_trash` inside the source directory and are auto-purged after 30 days
 
 ### History and export
 - **Transfer History** (Menu) — persistent log of every copy and move with dates, sizes, and results
@@ -73,6 +75,18 @@ Press **F1** at any time to open the built-in help.
 - Speed limit option — cap upload speed so your PS5 stays usable while a transfer runs
 - Passive mode toggle for networks with strict firewalls
 - Recent FTP connections saved and autocompleted
+- **Show-All Dropdown**: click any path or host field to instantly see all recent paths and FTP configs — no typing required
+
+### Library features
+- **Card / Grid View**: toggle between the table and a cover-art grid with ⊞ Grid; persists across sessions
+- **Library Diff / Compare**: compare two game libraries side-by-side; one-click "Transfer Missing →" pre-selects games absent from the second library
+- **Verify Library**: integrity check — folder accessible, valid `param.json`, cover icon present; results sorted errors-first with colour-coded badges
+- **Checksum Database**: persistent SHA-256 store (`userData/checksum-db.json`); files already matching the destination are skipped; records expire after 90 days
+- **Selective Sub-folder Transfer**: expand a game row before transferring to choose exactly which sub-folders are copied
+- **Persistent Column Widths**: drag column headers to resize; widths saved to localStorage
+- **Per-game Transfer History**: audit log per title ID for every copy, move, or upload
+- **FTP Connection Profiles**: save and switch between named FTP configurations
+- **Speed Sparkline**: live polyline graph of the last ~60 speed samples in the transfer progress panel
 
 ### Developer API
 PS5 Vault runs a local REST API so other apps on your PC can read your library or trigger scans and transfers programmatically.
@@ -136,4 +150,4 @@ npm run build:all
 
 ---
 
-Made with ❤️ by Nookie · v2.2.0
+Made with ❤️ by Nookie · v2.4.0
