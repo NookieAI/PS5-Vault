@@ -3312,11 +3312,25 @@
             chip.addEventListener('click', async () => {
               if (appBusy) { toast('Wait for current operation to finish'); return; }
 
-              // Open FTP modal pre-filled with discovered host:port
+              // Auto-connect using default FTP settings — no modal
               try {
-                const ftpUrl = 'ftp://' + ps5.ip + ':' + ps5.port;
-                const config = await window.FtpApi.openFtpModal(ftpUrl);
-                if (!config) return;
+                // Default game path by port: 1337 = etaHEN internal, 2121 = etaHEN external
+                const defaultPath = ps5.port === 1337 ? '/data/etaHEN/games'
+                                  : ps5.port === 2121 ? '/mnt/ext1/etaHEN/games'
+                                  : '/';
+                const config = {
+                  host: ps5.ip,
+                  port: ps5.port,
+                  path: defaultPath,
+                  user: 'anonymous',
+                  pass: '',
+                  passive: true,
+                  bufferSize: 65536, // 64 KB
+                  parallel: 1,
+                  speedLimitKbps: 0
+                };
+
+                toast('Connecting to PS5 at ' + ps5.ip + ':' + ps5.port + '…');
 
                 ftpConfig = config;
                 isFtpScan = true;
