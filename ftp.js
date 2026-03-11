@@ -121,13 +121,14 @@
     }
 
     // When port changes and path is still a default, update path suggestion to match port
-    portInput.addEventListener('change', () => {
+    const onPortChange = () => {
       const currentPath = pathInput.value.trim();
       const suggestedPaths = ['/'];
       if (!currentPath || suggestedPaths.includes(currentPath)) {
         pathInput.value = defaultPathForPort(portInput.value.trim());
       }
-    });
+    };
+    portInput.addEventListener('change', onPortChange);
 
     backdrop.style.display = 'flex';
     backdrop.setAttribute('aria-hidden', 'false');
@@ -148,6 +149,7 @@
       const cleanup = () => {
         backdrop.style.display = 'none';
         backdrop.setAttribute('aria-hidden', 'true');
+        portInput.removeEventListener('change', onPortChange);
         proceedBtn.removeEventListener('click', onProceed);
         cancelBtn.removeEventListener('click', onCancel);
         backdrop.removeEventListener('click', onBackdropClick);
