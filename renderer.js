@@ -132,6 +132,7 @@
 
   function addRecentSource(path) {
     if (!path) return;
+    path = sanitizeFtpUrl(path); // strip password from ftp:// URLs
     const recents = getRecentSources();
     const filtered = recents.filter(p => p !== path);
     filtered.unshift(path);
@@ -144,6 +145,7 @@
 
   function addRecentDest(path) {
     if (!path) return;
+    path = sanitizeFtpUrl(path); // strip password from ftp:// URLs
     const recents = getRecentDests();
     const filtered = recents.filter(p => p !== path);
     filtered.unshift(path);
@@ -160,7 +162,7 @@
     const key = `${config.host}:${config.port}:${config.path}:${config.user}`;
     const filtered = recents.filter(c => `${c.host}:${c.port}:${c.path}:${c.user}` !== key);
     filtered.unshift(config);
-    const limited = filtered.slice(0, 5);
+    const limited = filtered.slice(0, 10);
     try {
       localStorage.setItem('ps5vault.recentFtp', JSON.stringify(limited));
     } catch (_) {}
@@ -2745,8 +2747,8 @@
               localStorage.removeItem('ps5vault.recentFtp');
               localStorage.removeItem(LAST_SRC_KEY);
               localStorage.removeItem(LAST_DST_KEY);
-              $('sourcePath').value = '';
-              $('destPath').value = '';
+              if ($('sourcePath')) $('sourcePath').value = '';
+              if ($('destPath')) $('destPath').value = '';
               updateSourceHistoryDatalist();
               updateDestHistoryDatalist();
                     toast('Recent paths and fields cleared');
@@ -3314,14 +3316,10 @@
 
               // Auto-connect using default FTP settings — no modal
               try {
-                // Default game path by port: 1337 = etaHEN internal, 2121 = etaHEN external
-                const defaultPath = ps5.port === 1337 ? '/data/etaHEN/games'
-                                  : ps5.port === 2121 ? '/mnt/ext1/etaHEN/games'
-                                  : '/';
                 const config = {
                   host: ps5.ip,
                   port: ps5.port,
-                  path: defaultPath,
+                  path: '/',
                   user: 'anonymous',
                   pass: '',
                   passive: true,
