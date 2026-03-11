@@ -1059,7 +1059,7 @@
           if (!res) throw new Error('No response');
           if (res.error) throw new Error(res.error);
           updateListSummary(res);
-          updateDestCapacityBadge();
+          if (typeof updateDestCapacityBadge === 'function') updateDestCapacityBadge();
 
         };
 
@@ -1183,7 +1183,7 @@
       resumeState = null;
       if (res && Array.isArray(res.results)) {
         updateListSummary(res);
-        updateDestCapacityBadge();
+        if (typeof updateDestCapacityBadge === 'function') updateDestCapacityBadge();
       }
     }).catch(e => {
       toast('Resume failed: ' + (e.message || String(e)));
@@ -1829,9 +1829,10 @@
         const dst = $('destPath') ? $('destPath').value.trim() : '';
         const actionEl = $('action');
         const actionVal = actionEl ? actionEl.value : '';
-        // Count checked rows
-        const checkedRows = document.querySelectorAll('#resultsBody tr input[type="checkbox"]:checked');
-        const itemCount = checkedRows ? checkedRows.length : 0;
+        // Use resultsCount from the go-complete event for accurate item count.
+        // Counting checked DOM checkboxes is unreliable — after a resume the DOM
+        // may have been refreshed and no rows are checked.
+        const itemCount = d.resultsCount != null ? d.resultsCount : 0;
         const histDurationMs = transferStartTime ? Date.now() - transferStartTime : 0;
         addTransferHistoryEntry({
           date: new Date().toISOString(),
@@ -1888,6 +1889,15 @@
     }
 
     if (d.type === 'go-error') {
+      if (elapsedTimer) { clearInterval(elapsedTimer); elapsedTimer = null; }
+      setResultModalBusy(false);
+      setAppBusy(false);
+      const progressPanel = $('resultProgressPanel');
+      const summaryPanel  = $('resultSummaryPanel');
+      const titleEl       = $('resultTitleText');
+      if (progressPanel) progressPanel.style.display = 'none';
+      if (summaryPanel)  summaryPanel.style.display  = 'flex';
+      if (titleEl)       titleEl.textContent         = 'Transfer failed';
       toast(d.message || 'Transfer error');
       return;
     }
@@ -2696,6 +2706,19 @@
       // IPC events that fire during the async resumeTransfer() call below.
       if (window.ppsaApi && typeof window.ppsaApi.onScanProgress === 'function') {
         window.ppsaApi.onScanProgress(onProgressMessage);
+      }
+
+      // Handle operation-complete with success:false (IPC errors, network drops,
+      // crashes) so the modal and UI are never permanently locked after a failure.
+      if (window.ppsaApi && typeof window.ppsaApi.onOperationComplete === 'function') {
+        window.ppsaApi.onOperationComplete((d) => {
+          if (d && !d.success) {
+            if (elapsedTimer) { clearInterval(elapsedTimer); elapsedTimer = null; }
+            setResultModalBusy(false);
+            setAppBusy(false);
+            toast('Operation failed: ' + (d.error || 'Unknown error'));
+          }
+        });
       }
 
       resumeState = JSON.parse(localStorage.getItem(TRANSFER_STATE_KEY) || 'null');
