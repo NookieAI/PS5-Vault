@@ -644,10 +644,37 @@ async function copyAndVerifyFile(srcPath, dstPath, progressCallback, cancelCheck
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     if (cancelCheck()) throw new Error('Cancelled');
     try {
+      // ── Checksum-DB skip: if dst exists and src hash is cached & matches dst size, skip copy ──
+      const srcStat = await fs.promises.stat(srcPath).catch(() => null);
+      if (srcStat) {
+        const cacheKey = crypto.createHash('sha1').update(srcPath + ':' + srcStat.size + ':' + srcStat.mtimeMs).digest('hex');
+        const cached = checksumDb[cacheKey];
+        if (cached) {
+          const dstStat = await fs.promises.stat(dstPath).catch(() => null);
+          if (dstStat && dstStat.size === srcStat.size) {
+            // Destination exists with the same size and we have a verified hash — skip re-copy
+            progressCallback?.({ type: 'go-file-complete', totalBytesCopied: srcStat.size });
+            return;
+          }
+        }
+      }
+
       await copyFileStream(srcPath, dstPath, progressCallback, cancelCheck);
-      const [hSrc, hDst] = await Promise.all([hashFile(srcPath), hashFile(dstPath)]);
+      // Create an AbortController that fires if cancelCheck() becomes true.
+      const ac = new AbortController();
+      if (cancelCheck()) ac.abort();
+      const [hSrc, hDst] = await Promise.all([
+        hashFile(srcPath, ac.signal),
+        hashFile(dstPath, ac.signal),
+      ]);
       if (hSrc === hDst) {
         try { const fd = await fs.promises.open(dstPath, 'r+'); await fd.sync(); await fd.close(); } catch (_) {}
+        // ── Cache the verified hash so future transfers can skip this file ──
+        if (srcStat) {
+          const cacheKey = crypto.createHash('sha1').update(srcPath + ':' + srcStat.size + ':' + srcStat.mtimeMs).digest('hex');
+          checksumDb[cacheKey] = { hash: hSrc, size: srcStat.size, cachedAt: Date.now() };
+          scheduleChecksumSave();
+        }
         return;
       }
       await fs.promises.unlink(dstPath).catch(_ => {});
@@ -792,10 +819,19 @@ async function copyFolderContentsSafely(srcDir, finalTarget, options = {}) {
         // File-level resume: skip if destination already exists with the same size
         const dstStat = await fs.promises.stat(dstPath).catch(() => null);
         if (dstStat && dstStat.size === size) {
-          // Already fully copied — emit complete with 0 new bytes so the accumulator
-          // doesn't double-count bytes that were written in a previous run.
-          progress?.({ type: 'go-file-complete', fileRel: ent.name, totalBytesCopied: 0, totalBytes });
-          continue;
+          // Check checksum DB — if we have a verified entry for this src, trust it
+          let skipConfirmed = true; // size match is good enough for skipVerify mode
+          if (!skipVerify && typeof srcStat.mtimeMs === 'number') {
+            const ck = crypto.createHash('sha1').update(srcPath + ':' + srcStat.size + ':' + srcStat.mtimeMs).digest('hex');
+            // Only skip if checksum DB confirms this file (or fall back to size-only)
+            skipConfirmed = !!checksumDb[ck];
+          }
+          if (skipConfirmed) {
+            // Already fully copied — emit complete with 0 new bytes so the accumulator
+            // doesn't double-count bytes that were written in a previous run.
+            progress?.({ type: 'go-file-complete', fileRel: ent.name, totalBytesCopied: 0, totalBytes });
+            continue;
+          }
         }
         if (skipVerify) {
           // Fast copy: stream without SHA-256 verification
@@ -2828,7 +2864,7 @@ async function doEnsureAndPopulate(event, opts) {
             progressFn({ type: 'go-file-progress', totalBytesCopied: 0, totalBytes: itemTotalBytes });
             if (action === 'copy' || action === 'copy-fast') {
               await copyFolderContentsSafely(srcFolder, finalTarget, { progress: progressFn, cancelCheck, totalBytes: itemTotalBytes, skipVerify: action === 'copy-fast' });
-              results.push({ item: safeGameName, target: finalTarget, copied: true, source: srcFolder, safeGameName, totalSize: itemTotalBytes });
+              results.push({ item: safeGameName, target: finalTarget, copied: true, fast: action === 'copy-fast', source: srcFolder, safeGameName, totalSize: itemTotalBytes });
             } else {
               await moveFolderContentsSafely(srcFolder, finalTarget, { progress: progressFn, cancelCheck, overwriteMode, totalBytes: itemTotalBytes });
               results.push({ item: safeGameName, target: finalTarget, moved: true, source: srcFolder, safeGameName, totalSize: itemTotalBytes });

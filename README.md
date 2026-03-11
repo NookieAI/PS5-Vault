@@ -39,7 +39,7 @@ Press **F1** at any time to open the built-in help.
 
 ### Transfers
 - **Copy** (with hash verification), **Move**, or **Create folder only** (dry run)
-- Choose from seven destination layouts:
+- Choose from **eight** destination layouts:
 
   | Layout | Example result |
   |--------|---------------|
@@ -49,6 +49,7 @@ Press **F1** at any time to open the built-in help.
   | Game / PPSA | `dest/GameName/PPSA12345/` |
   | Game only | `dest/GameName/` |
   | PPSA only | `dest/PPSA12345/` |
+  | Porkfolio | `dest/GameName (ver) PPSA12345/` |
   | Custom | `dest/YourName/` |
 
 - Transfer directly from PC to PS5 over FTP, or from PS5 back to PC

@@ -1250,7 +1250,7 @@
       } else if (r.moved) {
         badgeClass = 'result-badge--ok'; badgeText = 'Moved';
       } else if (r.copied) {
-        badgeClass = 'result-badge--ok'; badgeText = 'Copied';
+        badgeClass = 'result-badge--ok'; badgeText = r.fast ? 'Copied (fast)' : 'Copied';
       } else if (r.uploaded) {
         badgeClass = 'result-badge--ok'; badgeText = 'Uploaded';
       } else if (r.created) {
