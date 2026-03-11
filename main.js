@@ -337,6 +337,51 @@ function extractPpsaKey(value) {
 }
 
 /**
+ * Parses a PS5 param.sfo binary file and returns a param.json-compatible object.
+ * Used as a fallback when param.json is absent (e.g., some ftpsrv game dumps).
+ * @param {Buffer} buf - Raw binary content of param.sfo.
+ * @returns {object|null} Parsed fields or null if the buffer is not a valid SFO.
+ */
+function parseSfo(buf) {
+  // Minimum valid SFO: 4 magic + 4 version + 4 key_table_offset + 4 data_table_offset + 4 num_entries = 20 bytes
+  if (!Buffer.isBuffer(buf) || buf.length < 20) return null;
+  // Magic: \x00PSF
+  if (buf[0] !== 0x00 || buf[1] !== 0x50 || buf[2] !== 0x53 || buf[3] !== 0x46) return null;
+  try {
+    const keyTableStart  = buf.readUInt32LE(8);
+    const dataTableStart = buf.readUInt32LE(12);
+    const numEntries     = buf.readUInt32LE(16);
+    const result = {};
+    for (let i = 0; i < numEntries; i++) {
+      const base       = 20 + i * 16;
+      if (base + 16 > buf.length) break;
+      const keyOff     = buf.readUInt16LE(base);
+      const dataLen    = buf.readUInt32LE(base + 8);
+      const dataOff    = buf.readUInt32LE(base + 12);
+      // Read null-terminated key string
+      let keyEnd = keyTableStart + keyOff;
+      while (keyEnd < buf.length && buf[keyEnd] !== 0) keyEnd++;
+      const key = buf.slice(keyTableStart + keyOff, keyEnd).toString('ascii');
+      // Read value (strip trailing null bytes for strings)
+      const valStart = dataTableStart + dataOff;
+      const val = buf.slice(valStart, Math.min(valStart + dataLen, buf.length));
+      result[key] = val.toString('utf8').replace(/\0+$/, '');
+    }
+    if (!result.TITLE && !result.TITLE_ID && !result.CONTENT_ID) return null;
+    // Map SFO keys to param.json-compatible fields
+    return {
+      contentId:      result.CONTENT_ID || result.TITLE_ID || null,
+      titleId:        result.TITLE_ID   || null,
+      contentVersion: result.APP_VER    || result.VERSION || null,
+      localizedParameters: result.TITLE ? { en: { titleName: result.TITLE } } : undefined,
+    };
+  } catch (_) {
+    return null;
+  }
+}
+
+
+/**
  * Normalizes SKU string.
  * @param {string} s - SKU string.
  * @returns {string|null} Normalized SKU.
@@ -1355,6 +1400,16 @@ async function scanFtpRecursive(client, remotePath, items, depth, onGameFound) {
           break;
         } catch (_) {}
       }
+      // Fallback: try param.sfo (binary format used when param.json is absent)
+      if (!data) {
+        for (const sfoLoc of ['sce_sys/param.sfo', 'param.sfo']) {
+          try {
+            const buf = await downloadToBuffer(path.posix.join(entryPath, sfoLoc));
+            data = parseSfo(buf);
+            if (data) break;
+          } catch (_) {}
+        }
+      }
       if (data) {
         await buildAndEmit(data, entryPath, null, entry.name);
         handledPaths.add(entryPath);
@@ -1383,6 +1438,16 @@ async function scanFtpRecursive(client, remotePath, items, depth, onGameFound) {
               innerData = JSON.parse(buf.toString('utf8'));
               break;
             } catch (_) {}
+          }
+          // Fallback: try param.sfo one level deeper
+          if (!innerData) {
+            for (const sfoLoc of ['sce_sys/param.sfo', 'param.sfo']) {
+              try {
+                const buf = await downloadToBuffer(path.posix.join(subPath, sfoLoc));
+                innerData = parseSfo(buf);
+                if (innerData) break;
+              } catch (_) {}
+            }
           }
           if (innerData) {
             await buildAndEmit(innerData, subPath, entryPath, entry.name);
@@ -1516,12 +1581,24 @@ async function scanFtpSource(ftpUrl, scanOpts = {}) {
         }
       }
     } else {
+      // Specific path requested — cd into it before scanning.
+      // Wrap both cd attempts so a 550 "No such file" doesn't propagate to the
+      // outer catch and abort the entire scan.
+      let cdOk = false;
       try {
         await client.cd(remotePath);
-      } catch (e) {
-        await client.cd('"' + remotePath + '"');
+        cdOk = true;
+      } catch (_) {
+        try {
+          await client.cd('"' + remotePath + '"');
+          cdOk = true;
+        } catch (e) {
+          console.warn('[FTP] Cannot cd to:', remotePath, e.message);
+        }
       }
-      await scanFtpRecursive(client, remotePath, items, 0, onGameFound);
+      if (cdOk) {
+        await scanFtpRecursive(client, remotePath, items, 0, onGameFound);
+      }
     }
 
     console.log('[FTP] Scan complete, found items:', items.length);
