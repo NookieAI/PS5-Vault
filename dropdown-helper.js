@@ -36,10 +36,6 @@
       dropdownEl.style.maxWidth = rect.width + 'px';
     }
 
-    function getFocusedItem() {
-      return dropdownEl ? dropdownEl.querySelector('li:focus') : null;
-    }
-
     function selectItem(li) {
       if (!li || li.dataset.placeholder) return;
       inputEl.value = li.textContent;
