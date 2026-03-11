@@ -104,8 +104,8 @@
         userInput.value = lastConfig.user || 'anonymous';
         passInput.value = lastConfig.pass || '';
         passiveCheckbox.checked = lastConfig.passive !== false; // Default to true
-        bufferInput.value = lastConfig.bufferSize ? Math.round(lastConfig.bufferSize / 1024) : 64;
-        parallelInput.value = lastConfig.parallel || '1';
+        bufferInput.value = lastConfig.bufferSize ? Math.round(lastConfig.bufferSize / 1024) : 256;
+        parallelInput.value = lastConfig.parallel || '3';
         if (speedLimitInput) speedLimitInput.value = lastConfig.speedLimitKbps || '0';
       } else {
         hostInput.value = '';
@@ -114,8 +114,8 @@
         userInput.value = 'anonymous';
         passInput.value = '';
         passiveCheckbox.checked = true; // Default passive mode
-        bufferInput.value = '64';
-        parallelInput.value = '1';
+        bufferInput.value = '256';
+        parallelInput.value = '3';
         if (speedLimitInput) speedLimitInput.value = '0';
       }
     }
@@ -192,8 +192,8 @@
           user: userInput.value.trim(),
           pass: passInput.value.trim(),
           passive: passiveCheckbox.checked, // Passive mode
-          bufferSize: (parseInt(bufferInput.value.trim()) || 64) * 1024,  // field is KB → store bytes
-          parallel: parseInt(parallelInput.value.trim()) || 1,
+          bufferSize: (parseInt(bufferInput.value.trim()) || 256) * 1024,  // field is KB → store bytes
+          parallel: parseInt(parallelInput.value.trim()) || 3,
           speedLimitKbps: parseInt(speedLimitInput?.value?.trim()) || 0
         };
 
