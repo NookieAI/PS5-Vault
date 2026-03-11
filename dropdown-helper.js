@@ -45,9 +45,7 @@
       inputEl.value = li.textContent;
       inputEl.dispatchEvent(new Event('input', { bubbles: true }));
       closeDropdown();
-      // Trigger blur so addRecentSource / addRecentDest persists the selected value.
       inputEl.focus();
-      setTimeout(() => inputEl.blur(), 0);
     }
 
     function showDropdown() {
