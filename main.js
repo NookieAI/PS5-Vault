@@ -3232,7 +3232,7 @@ ipcMain.handle('ftp-test-connection', async (_event, config) => {
 });
 
 // ── PS5 Auto-Discover ─────────────────────────────────────────────────────────
-// Scans the local subnet(s) for open PS5 FTP ports (1337, 2121, 1338).
+// Scans the local subnet(s) for open PS5 FTP ports (2121, 1337, 1338).
 // TCP-probes all hosts in parallel, then does a lightweight FTP banner check
 // on each hit to rule out routers/NAS boxes that happen to have those ports open.
 ipcMain.handle('ps5-discover', async (_event, timeoutMs = 3000) => {
@@ -3282,9 +3282,21 @@ ipcMain.handle('ps5-discover', async (_event, timeoutMs = 3000) => {
 
   if (!tcpHits.length) return [];
 
+  // Deduplicate TCP hits by IP using port priority (2121 > 1337 > 1338) before
+  // FTP verification so only the preferred port per PS5 is verified — not
+  // whichever TCP probe happened to resolve first.
+  const portPriority = { 2121: 0, 1337: 1, 1338: 2 };
+  const byIpTcp = {};
+  for (const h of tcpHits) {
+    if (!byIpTcp[h.ip] || (portPriority[h.port] ?? 9) < (portPriority[byIpTcp[h.ip].port] ?? 9)) {
+      byIpTcp[h.ip] = h;
+    }
+  }
+  const dedupedHits = Object.values(byIpTcp);
+
   // ── FTP banner verification ───────────────────────────────────────────────
-  // For each TCP hit, open a raw socket and read the 220 banner to confirm
-  // it's actually an FTP server (not a router service).
+  // For each deduplicated hit, open a raw socket and read the 220 banner to
+  // confirm it's actually an FTP server (not a router service).
   // PS5 payloads (ftpsrv, etaHEN, ftpsrc) always send a 220 greeting.
   async function verifyFtp(ip, port) {
     return new Promise(resolve => {
@@ -3310,20 +3322,12 @@ ipcMain.handle('ps5-discover', async (_event, timeoutMs = 3000) => {
     });
   }
 
-  // Verify all hits in parallel
+  // Verify deduplicated hits in parallel (one preferred port per IP)
   const verified = await Promise.all(
-    tcpHits.map(async h => ({ ...h, ok: await verifyFtp(h.ip, h.port) }))
+    dedupedHits.map(async h => ({ ...h, ok: await verifyFtp(h.ip, h.port) }))
   );
 
-  // Deduplicate by IP, prefer lower port numbers (1337 > 2121 > 1338 for PS5)
-  const portPriority = { 2121: 0, 1337: 1, 1338: 2 };
-  const byIp = {};
-  for (const h of verified.filter(h => h.ok)) {
-    if (!byIp[h.ip] || (portPriority[h.port] ?? 9) < (portPriority[byIp[h.ip].port] ?? 9)) {
-      byIp[h.ip] = h;
-    }
-  }
-  return Object.values(byIp).map(({ ip, port }) => ({ ip, port }));
+  return verified.filter(h => h.ok).map(({ ip, port }) => ({ ip, port }));
 });
 
 // ── FTP Storage Info ──────────────────────────────────────────────────────────
