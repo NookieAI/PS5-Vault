@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <title>PS5 Vault</title>
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' file: data:;">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' file: data:;">
   <link rel="stylesheet" href="ui-overrides.css">
   <style>
     :root {
@@ -1012,6 +1012,13 @@
       padding: 4px 0 16px;
       width: 100%;
       box-sizing: border-box;
+      /* Scrollable within the .results flex container */
+      align-content: start;
+    }
+    #cardGrid {
+      overflow-y: auto;
+      flex: 1 1 auto;
+      min-height: 0;
     }
     .card-item {
       background: var(--surface);
@@ -1315,7 +1322,7 @@
           <div style="width:1px;height:18px;background:rgba(255,255,255,0.1);flex-shrink:0;"></div>
           <button type="button" id="btnToggleView" class="btn" style="padding:4px 9px;font-size:12px;flex-shrink:0;" title="Toggle table / card view">⊞ Grid</button>
           <button type="button" id="btnRenameSelected" class="btn" style="padding:4px 9px;font-size:12px;opacity:0.7;flex-shrink:0;" title="Rename selected game">Rename</button>
-          <button type="button" id="btnDeleteSelected" class="btn" style="padding:4px 9px;font-size:12px;opacity:0.7;flex-shrink:0;" title="Move selected games to trash">Delete</button>
+          <button type="button" id="btnDeleteSelected" class="btn" style="padding:4px 9px;font-size:12px;opacity:0.7;flex-shrink:0;" title="Permanently delete selected games">Delete</button>
           <!-- hidden buttons still wired up for menu/keyboard actions -->
           <button type="button" id="btnVerifyLibrary" style="display:none;"></button>
           <button type="button" id="btnDiffSources" style="display:none;"></button>
@@ -1338,7 +1345,7 @@
             </tbody>
           </table>
         </div>
-        <div id="cardGrid" class="card-grid" style="display:none;padding:12px 0;"></div>
+        <div id="cardGrid" class="card-grid" style="display:none;padding:12px 0;overflow-y:auto;flex:1 1 auto;min-height:0;"></div>
       </div>
     </div>
   </div>
@@ -1473,17 +1480,49 @@
 
   <!-- Rename modal -->
   <div id="renameModalBackdrop" class="modal-backdrop" aria-hidden="true">
-    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="renameTitle">
-      <div class="modal-header"><h4 id="renameTitle">Rename Selected Item</h4></div>
-      <div class="modal-body">
-        <div style="margin-bottom:8px;">
-          <label style="color:var(--muted);font-size:12px;font-weight:600;margin-bottom:4px;display:block;">Name Preset</label>
-          <select id="renamePreset">
-            <option value="default">Default</option>
-            <option value="custom">Custom Name</option>
-          </select>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="renameTitle" style="max-width:480px;">
+      <div class="modal-header">
+        <h4 id="renameTitle" style="margin:0;font-size:14px;font-weight:600;">Rename Game Folder</h4>
+        <button type="button" id="renameCancelX" class="close-btn" title="Close">✕</button>
+      </div>
+      <div class="modal-body" style="padding-top:10px;">
+        <!-- Current folder info -->
+        <div id="renameCurrentInfo" style="background:rgba(255,255,255,0.03);border:1px solid var(--card-border);border-radius:6px;padding:8px 10px;margin-bottom:12px;display:none;">
+          <div style="font-size:10.5px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.05em;margin-bottom:3px;">Current folder name</div>
+          <div id="renameCurrentFolder" style="font-size:12.5px;color:var(--muted-2);font-family:ui-monospace,monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"></div>
         </div>
-        <input id="renameNameInput" type="text" placeholder="New folder name" style="width:100%;padding:8px;border:1px solid var(--card-border);background:var(--select-bg);color:var(--title);border-radius:4px;" />
+        <!-- Format preset -->
+        <div style="margin-bottom:10px;">
+          <label style="color:var(--muted);font-size:11px;font-weight:600;margin-bottom:5px;display:block;text-transform:uppercase;letter-spacing:.05em;">Format</label>
+          <div id="renamePresetGrid" style="display:grid;grid-template-columns:1fr 1fr;gap:6px;">
+            <button type="button" class="rename-preset-btn rename-preset-active" data-preset="default"
+              style="padding:8px 10px;border-radius:6px;border:1px solid var(--accent);background:rgba(59,130,246,.1);color:var(--title);font-size:12px;font-weight:600;text-align:left;cursor:pointer;transition:all .15s;">
+              <div style="font-size:10px;color:var(--accent);font-weight:700;text-transform:uppercase;letter-spacing:.04em;margin-bottom:2px;">Default ✓</div>
+              <div style="font-size:11.5px;color:var(--muted-2);">Game Name (version)</div>
+            </button>
+            <button type="button" class="rename-preset-btn" data-preset="nameonly"
+              style="padding:8px 10px;border-radius:6px;border:1px solid var(--card-border);background:var(--surface-2);color:var(--title);font-size:12px;font-weight:600;text-align:left;cursor:pointer;transition:all .15s;">
+              <div style="font-size:10px;color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:.04em;margin-bottom:2px;">Name only</div>
+              <div style="font-size:11.5px;color:var(--muted-2);">Game Name</div>
+            </button>
+            <button type="button" class="rename-preset-btn" data-preset="ppsa"
+              style="padding:8px 10px;border-radius:6px;border:1px solid var(--card-border);background:var(--surface-2);color:var(--title);font-size:12px;font-weight:600;text-align:left;cursor:pointer;transition:all .15s;">
+              <div style="font-size:10px;color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:.04em;margin-bottom:2px;">PPSA ID</div>
+              <div style="font-size:11.5px;color:var(--muted-2);">PPSA00000</div>
+            </button>
+            <button type="button" class="rename-preset-btn" data-preset="custom"
+              style="padding:8px 10px;border-radius:6px;border:1px solid var(--card-border);background:var(--surface-2);color:var(--title);font-size:12px;font-weight:600;text-align:left;cursor:pointer;transition:all .15s;">
+              <div style="font-size:10px;color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:.04em;margin-bottom:2px;">Custom</div>
+              <div style="font-size:11.5px;color:var(--muted-2);">Type anything</div>
+            </button>
+          </div>
+        </div>
+        <!-- Result preview / custom input -->
+        <div>
+          <label style="color:var(--muted);font-size:11px;font-weight:600;margin-bottom:5px;display:block;text-transform:uppercase;letter-spacing:.05em;">New folder name</label>
+          <input id="renameNameInput" type="text" placeholder="New folder name"
+            style="width:100%;padding:8px 10px;border:1px solid var(--card-border);background:var(--select-bg);color:var(--title);border-radius:6px;font-size:13px;font-family:inherit;outline:none;transition:border-color .15s,box-shadow .15s;" />
+        </div>
       </div>
       <div class="modal-actions">
         <button type="button" id="renameCancel" class="btn">Cancel</button>
@@ -1766,12 +1805,12 @@
 
   <!-- ── FTP Storage Info Modal ──────────────────────────────────────────────── -->
   <div id="ftpStorageModalBackdrop" class="modal-backdrop" aria-hidden="true">
-    <div class="modal" role="dialog" aria-modal="true" style="max-width:460px;">
+    <div class="modal" role="dialog" aria-modal="true" style="max-width:520px;">
       <div class="modal-header" style="padding-bottom:8px;">
         <h4 style="margin:0;font-size:14px;font-weight:600;">PS5 Storage</h4>
         <button type="button" id="ftpStorageCloseX" class="close-btn" title="Close">✕</button>
       </div>
-      <div class="modal-body" id="ftpStorageBody" style="padding:4px 0 8px"></div>
+      <div class="modal-body modal-body--scroll" id="ftpStorageBody" style="padding:4px 0 8px;max-height:420px;"></div>
       <div class="modal-actions">
         <button type="button" id="ftpStorageClose" class="btn">Close</button>
       </div>
