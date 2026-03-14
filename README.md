@@ -63,7 +63,6 @@ Press **F1** at any time to open the built-in help.
 - Batch rename using a pattern like `{name} - Backup`
 - Click any game to see full metadata: content ID, version, SDK version, region, required firmware, folder path
 - Click a folder path to open it in Windows Explorer
-- **Soft Delete / Trash Bin**: deleted games move to `_ps5vault_trash` inside the source directory and are auto-purged after 30 days
 
 ### History and export
 - **Transfer History** (Menu) — persistent log of every copy and move with dates, sizes, and results
