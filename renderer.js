@@ -4,16 +4,42 @@
   // Ensure Utils is always in scope inside this IIFE regardless of load order.
   // utils.js assigns to window.Utils; referencing it explicitly here avoids any
   // potential scoping ambiguity (e.g. "Utils.cleanPath is not a function" errors).
-  const Utils = window.Utils || {
+  // Full fallback implementation — used when utils.js hasn't loaded at all.
+  const _utilsFallback = {
     sanitizeName: (n) => (n ? String(n).replace(/[<>:"/\\|?*\x00-\x1F]/g, '').replace(/  +/g, ' ').trim().slice(0, 200) : '') || 'Unknown',
     escapeHtml: (s) => String(s || '').replace(/[&<>"']/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m])),
     normalizeDisplayPath: (p) => String(p || ''),
-    pathEndsWithSceSys: () => false,
-    cleanPath: (p) => String(p || ''),
+    pathEndsWithSceSys: (p) => { if (!p) return false; const lp = p.toLowerCase(); return lp.endsWith('/sce_sys') || lp.endsWith('\\sce_sys'); },
+    cleanPath: (p) => {
+      if (!p) return '';
+      if (p.startsWith('ftp://')) {
+        const parts = p.split('://');
+        if (parts.length === 2) {
+          const proto = parts[0] + '://';
+          let rest = parts[1].replace(/\/+/g, '/');
+          try { rest = decodeURIComponent(rest); } catch (_) {}
+          return _utilsFallback.escapeHtml(proto + rest);
+        }
+      }
+      let cleaned = p.replace(/\/+/g, '/');
+      try { cleaned = decodeURIComponent(cleaned); } catch (_) {}
+      return _utilsFallback.escapeHtml(cleaned);
+    },
   };
-  if (!window.Utils || typeof window.Utils.cleanPath !== 'function') {
-    console.error('[renderer] window.Utils not ready — ensure utils.js loads before renderer.js');
+
+  // If window.Utils exists but is an older version missing some methods (e.g. cleanPath
+  // was added in a later release), polyfill the missing methods in place so every call
+  // site always has a complete Utils object regardless of which app version is installed.
+  if (window.Utils) {
+    for (const [key, fn] of Object.entries(_utilsFallback)) {
+      if (typeof window.Utils[key] !== 'function') {
+        window.Utils[key] = fn;
+        console.warn('[renderer] Polyfilled missing Utils.' + key + ' — update utils.js to resolve');
+      }
+    }
   }
+
+  const Utils = window.Utils || _utilsFallback;
 
   const LAST_SRC_KEY = 'ps5vault.lastSource';
   const LAST_DST_KEY = 'ps5vault.lastDest';
@@ -556,82 +582,116 @@
     backdrop.setAttribute('aria-hidden', 'false');
   }
 
-  function openRenameModal(currentName) {
+  function openRenameModal(itemOrName) {
+    // itemOrName: either a game item object (rename mode) or a string/null (custom layout mode).
+    // In rename mode we show 4 format presets based on the item's metadata.
+    // In custom-layout mode (called from goClickHandler) we just show a plain text input.
     return new Promise((resolve) => {
-      const backdrop = $('renameModalBackdrop');
-      const presetSelect = $('renamePreset');
-      const input = $('renameNameInput');
-      const proceedBtn = $('renameProceed');
-      const cancelBtn = $('renameCancel');
+      const backdrop    = $('renameModalBackdrop');
+      const input       = $('renameNameInput');
+      const proceedBtn  = $('renameProceed');
+      const cancelBtn   = $('renameCancel');
+      const cancelXBtn  = $('renameCancelX');
+      const titleEl     = $('renameTitle');
+      const currentInfo = $('renameCurrentInfo');
+      const currentFld  = $('renameCurrentFolder');
+      const presetGrid  = $('renamePresetGrid');
 
-      if (!backdrop || !presetSelect || !input || !proceedBtn || !cancelBtn) {
-        resolve(null);
-        return;
+      if (!backdrop || !input || !proceedBtn || !cancelBtn) { resolve(null); return; }
+
+      // ── Determine mode ────────────────────────────────────────────────────
+      const isItemMode = itemOrName && typeof itemOrName === 'object';
+      const item = isItemMode ? itemOrName : null;
+
+      // ── Compute preset values from item metadata ──────────────────────────
+      const rawVer   = item?.contentVersion || item?.version || item?.paramParsed?.contentVersion || '';
+      const verSuffix = rawVer ? ` (${rawVer.trim()})` : '';
+      const titleStr  = (item?.displayTitle || item?.folderName || '').trim();
+      const ppsa      = item?.ppsa || '';
+      // The standard etaHEN folder name: "Game Name (01.000.000)"
+      const defaultName = titleStr ? titleStr + verSuffix : (ppsa || 'Game');
+      const nameOnly    = titleStr || ppsa || 'Game';
+      const ppsaName    = ppsa || titleStr || 'PPSA00000';
+
+      // Current folder name (for display only — NOT used as input)
+      const folderName = (item?.ppsaFolderPath || item?.folderPath || '').split(/[/\\]/).pop() || '';
+
+      // Preset map: preset id → computed value
+      const presetValues = {
+        default:  defaultName,
+        nameonly: nameOnly,
+        ppsa:     ppsaName,
+        custom:   '',
+      };
+      let activePreset = 'default';
+
+      // ── Show current folder name ──────────────────────────────────────────
+      if (currentInfo && currentFld) {
+        if (isItemMode && folderName) {
+          currentFld.textContent = folderName;
+          currentInfo.style.display = 'block';
+        } else {
+          currentInfo.style.display = 'none';
+        }
       }
 
-      function cleanGameName(name) {
-        return name.replace(/^games/, '').trim();
+      // ── Modal title ───────────────────────────────────────────────────────
+      if (titleEl) titleEl.textContent = isItemMode ? 'Rename Game Folder' : 'Custom Layout Name';
+
+      // ── Preset buttons ────────────────────────────────────────────────────
+      if (presetGrid) {
+        presetGrid.style.display = isItemMode ? 'grid' : 'none';
+        const btns = presetGrid.querySelectorAll('.rename-preset-btn');
+        const activatePreset = (id) => {
+          activePreset = id;
+          btns.forEach(b => {
+            const active = b.dataset.preset === id;
+            b.style.borderColor = active ? 'var(--accent)' : 'var(--card-border)';
+            b.style.background  = active ? 'rgba(59,130,246,.1)' : 'var(--surface-2)';
+            const label = b.querySelector('div:first-child');
+            if (label) label.style.color = active ? 'var(--accent)' : 'var(--muted)';
+          });
+          if (id === 'custom') {
+            input.disabled = false;
+            input.value = '';
+            input.focus();
+          } else {
+            input.disabled = false; // always editable so user can tweak
+            input.value = presetValues[id] || '';
+          }
+        };
+        btns.forEach(b => b.addEventListener('click', () => activatePreset(b.dataset.preset)));
+        activatePreset('default');
+      } else if (!isItemMode) {
+        // Custom layout mode: just clear the input
+        input.disabled = false;
+        input.value = typeof itemOrName === 'string' ? itemOrName : '';
       }
 
-      currentName = cleanGameName(currentName || '');
-
-      input.value = currentName;
-      presetSelect.value = 'default';
-      input.disabled = true;
-
+      // ── Input focus and select-all ────────────────────────────────────────
       backdrop.style.display = 'flex';
       backdrop.setAttribute('aria-hidden', 'false');
-      input.focus();
+      requestAnimationFrame(() => { input.focus(); input.select(); });
 
-      if (typeof window.makeShowAllDropdown === 'function') {
-        window.makeShowAllDropdown(input, [
-          '{name} - Backup',
-          '{name} (copy)',
-          '{name} - Archive',
-        ]);
-      }
-
-      const updateInput = () => {
-        const preset = presetSelect.value;
-        if (preset === 'default') {
-          input.disabled = true;
-          input.value = currentName;
-        } else {
-          input.disabled = false;
-          input.value = '';
-        }
-      };
-
-      presetSelect.addEventListener('change', updateInput);
-
+      // ── Cleanup & handlers ────────────────────────────────────────────────
       const cleanup = () => {
         backdrop.style.display = 'none';
         backdrop.setAttribute('aria-hidden', 'true');
-        presetSelect.removeEventListener('change', updateInput);
+        if (presetGrid) presetGrid.querySelectorAll('.rename-preset-btn').forEach(b => b.replaceWith(b.cloneNode(true)));
         proceedBtn.removeEventListener('click', onProceed);
         cancelBtn.removeEventListener('click', onCancel);
+        if (cancelXBtn) cancelXBtn.removeEventListener('click', onCancel);
         input.removeEventListener('keydown', onKeydown);
       };
-
-      const onProceed = () => {
-        const value = input.value.trim();
-        cleanup();
-        resolve(value);
-      };
-
-      const onCancel = () => {
-        cleanup();
-        resolve(null);
-      };
-
-      const onKeydown = (e) => {
-        if (e.key === 'Enter') onProceed();
-        else if (e.key === 'Escape') onCancel();
-      };
+      const onProceed = () => { const v = input.value.trim(); cleanup(); resolve(v || null); };
+      const onCancel  = () => { cleanup(); resolve(null); };
+      const onKeydown = (e) => { if (e.key === 'Enter') onProceed(); else if (e.key === 'Escape') onCancel(); };
 
       proceedBtn.addEventListener('click', onProceed);
       cancelBtn.addEventListener('click', onCancel);
+      if (cancelXBtn) cancelXBtn.addEventListener('click', onCancel);
       input.addEventListener('keydown', onKeydown);
+      backdrop.addEventListener('click', e => { if (e.target === backdrop) onCancel(); }, { once: true });
     });
   }
 
@@ -959,15 +1019,17 @@
   }
 
   async function goClickHandler() {
+    if (appBusy) { toast('Please wait for the current operation to finish.'); return; }
     const rawSelected = getSelectedItemsAny();
     if (!rawSelected.length) {
       toast('No items selected');
       return;
     }
+    setAppBusy(true);
     try {
       // Shallow-clone each item and apply path corrections (strips trailing /sce_sys).
       // Use getSelectedItemsAny() as the authoritative source so both table and card/grid views work.
-      const selected = rawSelected.map(orig => {
+      let selected = rawSelected.map(orig => {
         const item = { ...orig };
         const correctPath = computeSourceFolder(item);
         if (correctPath) {
@@ -1151,6 +1213,7 @@
       err('ensureAndPopulate error', e);
       toast('Operation failed: ' + (e.message || String(e)));
       setResultModalBusy(false); // only clear busy on error — success path is handled by go-complete
+      setAppBusy(false);
     }
   }
 
@@ -1232,6 +1295,7 @@
       }
     }
     setResultModalBusy(true);
+    setAppBusy(true);
 
     // Force overwrite on resume: cancelled transfers leave a partial target folder.
     // Using 'rename' (default) would copy alongside the partial as "(1)" — wrong.
@@ -1248,6 +1312,7 @@
     }).catch(e => {
       toast('Resume failed: ' + (e.message || String(e)));
       setResultModalBusy(false);
+      setAppBusy(false);
       if (elapsedTimer) { clearInterval(elapsedTimer); elapsedTimer = null; }
     });
   }
@@ -1637,6 +1702,9 @@
     setTimeout(() => { t.style.display = 'none'; }, 3000);
   }
 
+  // Expose toast globally so ftp.js and other modules can call it
+  window.toast = toast;
+
   function showNotification(title, body) {
     if (Notification.permission === 'granted') {
       new Notification(title, { body });
@@ -1915,6 +1983,26 @@
         if (srcEl && srcEl.value.trim()) addRecentSource(srcEl.value.trim());
         if (dstEl && dstEl.value.trim()) addRecentDest(dstEl.value.trim());
       } catch (_) {}
+      // Log per-game transfer history
+      try {
+        if (window.GameHistory && window.GameHistory.record) {
+          const dst = $('destPath') ? $('destPath').value.trim() : '';
+          const actionVal = $('action') ? $('action').value : '';
+          const items = window.__ps5_lastRenderedItems || [];
+          items.filter(it => {
+            const cb = document.querySelector(`#resultsBody tr input[type="checkbox"]`);
+            return true; // record all — last-transferred games are what the user just moved
+          });
+          // Record for any item that was in the last transfer (resultsCount from event)
+          // Use transferState which was saved before the operation
+          if (typeof transferState === 'object' && Array.isArray(transferState.items)) {
+            for (const item of transferState.items) {
+              window.GameHistory.record(item, dst, actionVal);
+            }
+          }
+        }
+      } catch (_) {}
+
       // Log to transfer history
       try {
         const src = $('sourcePath') ? $('sourcePath').value.trim() : '';
@@ -1970,6 +2058,7 @@
       if (actionsRow)    actionsRow.style.display    = 'none';
       if ($('currentScanLabel')) $('currentScanLabel').textContent = '';
       transferStartTime = 0;
+      setAppBusy(false);
       return;
     }
 
@@ -2425,8 +2514,8 @@
     `;
 
     const close = () => { backdrop.style.display = 'none'; backdrop.setAttribute('aria-hidden', 'true'); };
-    $('statsClose').onclick = close;
-    $('statsCloseX').onclick = close;
+    const statsClose = $('statsClose'); if (statsClose) statsClose.onclick = close;
+    const statsCloseX = $('statsCloseX'); if (statsCloseX) statsCloseX.onclick = close;
     backdrop.onclick = e => { if (e.target === backdrop) close(); };
     backdrop.style.display = 'flex';
     backdrop.setAttribute('aria-hidden', 'false');
@@ -2574,12 +2663,10 @@
             if (fn && setFolderB.has(fn)) return false;
             return true;
           });
+          const _setAKeys = new Set(srcAItems.map(x => x.ppsa || x.contentId).filter(Boolean));
           const onlyInB = itemsB.filter(i => {
             const key = i.ppsa || i.contentId;
-            if (key) {
-              const setA = new Set(srcAItems.map(x => x.ppsa || x.contentId).filter(Boolean));
-              if (setA.has(key)) return false;
-            }
+            if (key && _setAKeys.has(key)) return false;
             return true;
           });
           const inBoth = srcAItems.filter(i => !onlyInA.includes(i));
@@ -2942,13 +3029,19 @@
       document.addEventListener('keydown', e => {
         if (e.ctrlKey && e.key === 'a') {
           e.preventDefault();
-          // FIX B7: was selecting ALL rows including hidden (search-filtered) ones
-          Array.from($('resultsBody').querySelectorAll('input[type="checkbox"]'))
-            .filter(cb => cb.closest('tr').style.display !== 'none')
-            .forEach(cb => {
-              cb.checked = true;
-              cb.closest('tr')?.classList.add('row-selected');
+          if (viewMode === 'card') {
+            document.querySelectorAll('#cardGrid .card-item').forEach(c => {
+              const chk = c.querySelector('.card-chk');
+              if (chk) { chk.checked = true; updateCardSelected(c, true); }
             });
+          } else {
+            Array.from($('resultsBody').querySelectorAll('input[type="checkbox"]'))
+              .filter(cb => cb.closest('tr').style.display !== 'none')
+              .forEach(cb => {
+                cb.checked = true;
+                cb.closest('tr')?.classList.add('row-selected');
+              });
+          }
           updateHeaderCheckboxState();
         } else if (e.ctrlKey && e.key === 'r') {
           e.preventDefault();
@@ -3155,24 +3248,24 @@
           if (appBusy) { toast('Please wait for the current operation to finish.'); return; }
           const selected = getSelectedItemsAny();
           if (!selected.length) { toast('No items selected'); return; }
-          const confirmed = await confirm(`Move ${selected.length} selected item(s) to trash? You can recover them from the _ps5vault_trash folder.`);
+          const confirmed = await confirm(
+            `Permanently delete ${selected.length} selected game${selected.length !== 1 ? 's' : ''}?\n\n` +
+            `This will remove the files from disk and cannot be undone.`
+          );
           if (!confirmed) return;
           try {
-            setAppBusy(true, `Trashing ${selected.length} item(s)…`);
-            showPersistentToast('Moving to trash...');
+            setAppBusy(true, `Deleting ${selected.length} game${selected.length !== 1 ? 's' : ''}…`);
+            showPersistentToast(`Deleting ${selected.length} game${selected.length !== 1 ? 's' : ''}…`);
             for (const item of selected) {
               if (isFtpScan && ftpConfig) {
                 const pathToDelete = item.ppsaFolderPath || item.folderPath;
-                const delRes = await window.ppsaApi.ftpDeleteItem(ftpConfig, pathToDelete);
-                if (delRes && delRes.error) throw new Error(delRes.error);
+                await window.ppsaApi.ftpDeleteItem(ftpConfig, pathToDelete);
               } else {
-                // Use soft-delete / trash
-                const trashRes = await window.ppsaApi.trashItem(item);
-                if (trashRes && trashRes.error) throw new Error(trashRes.error);
+                await window.ppsaApi.deleteItem(item);
               }
             }
             hidePersistentToast();
-            toast(`Moved ${selected.length} item(s) to trash`);
+            toast(`Deleted ${selected.length} game${selected.length !== 1 ? 's' : ''} permanently`);
             await refreshResultsAfterOperation();
           } catch (e) {
             hidePersistentToast();
@@ -3482,8 +3575,7 @@
           const selected = getSelectedItemsAny();
           if (!selected.length) { toast('No items selected'); return; }
           const item = selected[0];
-          const currentName = item.displayTitle || '';
-          const newName = await openRenameModal(currentName);
+          const newName = await openRenameModal(item); // pass full item for version-aware presets
           if (!newName || !newName.trim()) return;
           const sanitizedName = Utils.sanitizeName(newName.trim());
           const oldPath = item.ppsaFolderPath;
@@ -3561,6 +3653,48 @@
         const idx = parseInt(tr.dataset.index || '-1', 10);
         const item = window.__ps5_lastRenderedItems && window.__ps5_lastRenderedItems[idx];
         if (item) openGameDetailModal(item);
+      });
+
+      // Right-click on a game row for context actions
+      $('resultsBody').addEventListener('contextmenu', async (e) => {
+        const tr = e.target.closest('tr');
+        if (!tr || !tr.dataset.index) return;
+        e.preventDefault();
+        const idx = parseInt(tr.dataset.index, 10);
+        const item = window.__ps5_lastRenderedItems && window.__ps5_lastRenderedItems[idx];
+        if (!item) return;
+        // Simple context menu
+        const existing = document.getElementById('rowContextMenu');
+        if (existing) existing.remove();
+        const menu = document.createElement('div');
+        menu.id = 'rowContextMenu';
+        menu.style.cssText = [
+          'position:fixed', `left:${e.clientX}px`, `top:${e.clientY}px`,
+          'background:var(--surface-2)', 'border:1px solid var(--card-border-hover)',
+          'border-radius:var(--radius)', 'padding:4px 0', 'z-index:99999',
+          'box-shadow:0 8px 24px rgba(0,0,0,0.5)', 'min-width:180px', 'font-size:12.5px'
+        ].join(';');
+        const menuItems = [
+          ['📋 View details', () => openGameDetailModal(item)],
+          ['📁 Pick sub-folders…', async () => {
+            const subs = await openSubfolderPicker(item);
+            if (subs && subs.length) {
+              toast(`${subs.length} sub-folder(s) selected — adjust destination then click GO`);
+            }
+          }],
+        ];
+        for (const [label, fn] of menuItems) {
+          const mi = document.createElement('div');
+          mi.style.cssText = 'padding:7px 14px;cursor:pointer;color:var(--title);transition:background 0.1s;';
+          mi.textContent = label;
+          mi.addEventListener('mouseenter', () => { mi.style.background = 'rgba(59,130,246,0.15)'; });
+          mi.addEventListener('mouseleave', () => { mi.style.background = ''; });
+          mi.addEventListener('click', () => { menu.remove(); fn(); });
+          menu.appendChild(mi);
+        }
+        document.body.appendChild(menu);
+        const dismiss = (ev) => { if (!menu.contains(ev.target)) { menu.remove(); document.removeEventListener('mousedown', dismiss); } };
+        setTimeout(() => document.addEventListener('mousedown', dismiss), 0);
       });
 
       const topMenu = $('topMenu');

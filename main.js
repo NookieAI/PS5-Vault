@@ -17,6 +17,16 @@ const ftp = require('basic-ftp');
 const os = require('os');
 
 const MAX_SCAN_DEPTH = 12;
+// Maximum concurrent dlClient connections during FTP scan.
+// PS5 FTP daemons (etaHEN/ftpsrv) support 3–4 simultaneous connections total.
+// The scan client occupies 1 slot, leaving at most 2–3 for downloads.
+// Setting this to 1 means at most 2 total (scan + 1 download) — safest for
+// PS5 stability. Increasing to 2 speeds things up slightly but risks crashes
+// on daemons that hard-limit at 3 connections.
+const MAX_FTP_SCAN_DL_CONNECTIONS = 1;
+// Delay in ms between sequential dlClient connection attempts during scan.
+// Gives the PS5's FTP daemon time to fully release a socket before we connect again.
+const FTP_SCAN_INTER_OP_DELAY_MS = 200;
 const SCAN_CONCURRENCY        = 64;    // Reduced from 128 — less aggressive on secondary drives
 const DIR_READDIR_TIMEOUT_MS  = 8000;  // Network paths: 8s per readdir
 const LOCAL_READDIR_TIMEOUT_MS = 10000; // Local drives: 10s — secondary NVMe can stall mid-walk
@@ -66,18 +76,30 @@ function deriveSafeGameName(item, parsed) {
 // Platform-aware path joining:
 // - FTP destinations (ftp://...) always use POSIX forward slashes
 // - Local/UNC/network destinations use OS-native path.join (backslash on Windows, slash on Linux/Mac)
+// On Windows, paths > 260 chars fail unless prefixed with \\?\
+// (Win32 extended-length path). Common with OneDrive ("OneDrive - Company Name")
+// and Dropbox where sync folders add many path segments.
+function toExtendedPath(p) {
+  if (process.platform !== 'win32') return p;
+  if (!p || typeof p !== 'string') return p;
+  if (p.startsWith('\\\\?\\') || p.startsWith('//?/')) return p; // already prefixed
+  if (p.startsWith('ftp://')) return p; // FTP paths are not filesystem paths
+  if (p.length <= 248) return p; // short enough — no prefix needed
+  const norm = p.replace(/\//g, '\\');
+  if (/^[A-Za-z]:\\/.test(norm)) return '\\\\?\\' + norm;
+  if (norm.startsWith('\\\\')) return '\\\\?\\UNC\\' + norm.slice(2);
+  return p;
+}
+
 function pathJoin(base, ...rest) {
   const allParts = [base, ...rest].filter(Boolean);
   if (base && base.startsWith('ftp://')) {
-    // Strip trailing slashes from base before joining to prevent double-slashes.
-    // e.g. "ftp://host:2121/" + "etaHEN" would give "ftp://host:2121//etaHEN" without this.
     const cleanBase = base.replace(/\/+$/, '');
     const segments  = rest.filter(Boolean);
     const joined    = [cleanBase, ...segments].join('/');
-    // Collapse any accidental double-slashes AFTER the protocol prefix
     return joined.replace(/([^:])\/\/+/g, '$1/');
   }
-  return path.join(...allParts);
+  return toExtendedPath(path.join(...allParts));
 }
 
 
@@ -634,7 +656,7 @@ async function hashFile(filePath, signal) {
   return new Promise((resolve, reject) => {
     if (signal?.aborted) return reject(new Error('Aborted'));
     const hash = crypto.createHash('sha256');
-    const rs = fs.createReadStream(filePath, { highWaterMark: 4 * 1024 * 1024 });
+    const rs = fs.createReadStream(toExtendedPath(filePath), { highWaterMark: 4 * 1024 * 1024 });
     rs.on('error', reject);
     rs.on('data', chunk => { if (signal?.aborted) { rs.destroy(); reject(new Error('Aborted')); } else hash.update(chunk); });
     rs.on('end', () => resolve(hash.digest('hex')));
@@ -642,14 +664,13 @@ async function hashFile(filePath, signal) {
 }
 
 async function copyFileStream(src, dst, progressCallback, cancelCheck) {
-  await fs.promises.mkdir(path.dirname(dst), { recursive: true });
+  const srcE = toExtendedPath(src);
+  const dstE = toExtendedPath(dst);
+  await fs.promises.mkdir(toExtendedPath(path.dirname(dst)), { recursive: true });
   return new Promise((resolve, reject) => {
     let bytesCopied = 0;
-    // 4 MB read buffer: ×64 vs Node default 64KB.
-    // Dramatically reduces syscall overhead on NVMe-to-NVMe transfers.
-    // Combine with 4 MB write buffer for matching throughput.
-    const rs = fs.createReadStream(src,  { highWaterMark: 4 * 1024 * 1024 });
-    const ws = fs.createWriteStream(dst, { highWaterMark: 4 * 1024 * 1024 });
+    const rs = fs.createReadStream(srcE,  { highWaterMark: 4 * 1024 * 1024 });
+    const ws = fs.createWriteStream(dstE, { highWaterMark: 4 * 1024 * 1024 });
     rs.on('data', (chunk) => {
       if (cancelCheck()) {
         rs.destroy();
@@ -685,12 +706,21 @@ async function copyFileStream(src, dst, progressCallback, cancelCheck) {
  * @param {number} [maxAttempts] - Maximum retry attempts (default: RETRY_ATTEMPTS).
  * @returns {Promise<void>}
  */
-async function copyAndVerifyFile(srcPath, dstPath, progressCallback, cancelCheck, maxAttempts = RETRY_ATTEMPTS) {
+// Errors from OneDrive/Dropbox when a file is locked while syncing or downloading:
+// EPERM  — file locked during cloud download (OneDrive Files-on-Demand)
+// EACCES — access denied (cloud client holding exclusive lock)
+// EBUSY  — file in use (Dropbox mid-sync)
+// EIO    — I/O error (partial download / network interruption)
+const CLOUD_SYNC_ERRORS = new Set(['EPERM', 'EACCES', 'EBUSY', 'EIO']);
+
+async function copyAndVerifyFile(srcPath, dstPath, progressCallback, cancelCheck, maxAttempts = 5) {
+  const srcE = toExtendedPath(srcPath);
+  const dstE = toExtendedPath(dstPath);
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     if (cancelCheck()) throw new Error('Cancelled');
     try {
       // ── Checksum-DB skip: if dst exists and src hash is cached & matches dst size, skip copy ──
-      const srcStat = await fs.promises.stat(srcPath).catch(() => null);
+      const srcStat = await fs.promises.stat(srcE).catch(() => null);
       if (srcStat) {
         const cacheKey = crypto.createHash('sha1').update(srcPath + ':' + srcStat.size + ':' + srcStat.mtimeMs).digest('hex');
         const cached = checksumDb[cacheKey];
@@ -704,17 +734,15 @@ async function copyAndVerifyFile(srcPath, dstPath, progressCallback, cancelCheck
         }
       }
 
-      await copyFileStream(srcPath, dstPath, progressCallback, cancelCheck);
-      // Create an AbortController that fires if cancelCheck() becomes true.
+      await copyFileStream(srcE, dstE, progressCallback, cancelCheck);
       const ac = new AbortController();
       if (cancelCheck()) ac.abort();
       const [hSrc, hDst] = await Promise.all([
-        hashFile(srcPath, ac.signal),
-        hashFile(dstPath, ac.signal),
+        hashFile(srcE, ac.signal),
+        hashFile(dstE, ac.signal),
       ]);
       if (hSrc === hDst) {
-        try { const fd = await fs.promises.open(dstPath, 'r+'); await fd.sync(); await fd.close(); } catch (_) {}
-        // ── Cache the verified hash so future transfers can skip this file ──
+        try { const fd = await fs.promises.open(dstE, 'r+'); await fd.sync(); await fd.close(); } catch (_) {}
         if (srcStat) {
           const cacheKey = crypto.createHash('sha1').update(srcPath + ':' + srcStat.size + ':' + srcStat.mtimeMs).digest('hex');
           checksumDb[cacheKey] = { hash: hSrc, size: srcStat.size, cachedAt: Date.now() };
@@ -722,11 +750,19 @@ async function copyAndVerifyFile(srcPath, dstPath, progressCallback, cancelCheck
         }
         return;
       }
-      await fs.promises.unlink(dstPath).catch(_ => {});
+      await fs.promises.unlink(dstE).catch(_ => {});
       if (attempt === maxAttempts) throw new Error('Hash mismatch after retries');
     } catch (e) {
       if (attempt === maxAttempts) throw e;
-      await new Promise(res => setTimeout(res, RETRY_DELAY_MS));
+      // OneDrive/Dropbox: file locked while cloud client downloads or syncs it.
+      // Back off for up to 10s to give the cloud client time to release the lock.
+      const delay = CLOUD_SYNC_ERRORS.has(e.code)
+        ? Math.min(10000, 2000 * attempt)
+        : RETRY_DELAY_MS;
+      if (CLOUD_SYNC_ERRORS.has(e.code)) {
+        console.warn('[Transfer] Cloud lock on', srcPath, `(${e.code}) — retrying in ${delay}ms (attempt ${attempt})`);
+      }
+      await new Promise(res => setTimeout(res, delay));
     }
   }
 }
@@ -758,7 +794,7 @@ async function removePathRecursive(p) {
     throw new Error('Refusing to delete drive root: ' + abs);
   }
 
-  await fs.promises.rm(abs, { recursive: true, force: true });
+  await fs.promises.rm(toExtendedPath(abs), { recursive: true, force: true });
 }
 
 async function ensureUniqueTarget(basePath) {
@@ -799,8 +835,9 @@ async function getLocalFreeSpace(dirPath) {
   // Validate path is absolute and not an FTP URL
   if (dirPath.startsWith('ftp://')) throw new Error('FTP paths not supported');
   try {
-    // Node 19+ native statfs — fastest path
-    const stats = await fs.promises.statfs(dirPath);
+    // Node 19+ native statfs — fastest path. Use extended path so OneDrive/Dropbox
+    // long paths (> 260 chars) don't throw ENOENT on Windows.
+    const stats = await fs.promises.statfs(toExtendedPath(dirPath));
     return stats.bavail * stats.bsize;
   } catch (_) {
     // Fallback: platform-specific CLI tools
@@ -831,15 +868,18 @@ async function getLocalFreeSpace(dirPath) {
 }
 
 async function renameFileSameDevice(srcPath, dstPath, overwriteMode) {
-  const exists = await fs.promises.stat(dstPath).catch(() => false);
+  const srcE = toExtendedPath(srcPath);
+  const dstE = toExtendedPath(dstPath);
+  const exists = await fs.promises.stat(dstE).catch(() => false);
   let finalDst = dstPath;
   if (exists) {
     if (overwriteMode === 'skip') return { skipped: true, target: dstPath };
     if (overwriteMode === 'overwrite') await removePathRecursive(dstPath);
     else finalDst = await ensureUniqueTarget(dstPath);
   }
-  await fs.promises.mkdir(path.dirname(finalDst), { recursive: true });
-  await fs.promises.rename(srcPath, finalDst);
+  const finalDstE = toExtendedPath(finalDst);
+  await fs.promises.mkdir(toExtendedPath(path.dirname(finalDst)), { recursive: true });
+  await fs.promises.rename(srcE, finalDstE);
   return { moved: true, target: finalDst };
 }
 
@@ -852,17 +892,21 @@ async function copyFolderContentsSafely(srcDir, finalTarget, options = {}) {
   // Copy src directly to finalTarget — no temp dir, no double-copy.
   // progress events use proper objects so the UI bar updates correctly.
   async function copyDirRecursive(src, dst) {
-    await fs.promises.mkdir(dst, { recursive: true });
-    const entries = await fs.promises.readdir(src, { withFileTypes: true });
+    const srcE = toExtendedPath(src);
+    const dstE = toExtendedPath(dst);
+    await fs.promises.mkdir(dstE, { recursive: true });
+    const entries = await fs.promises.readdir(srcE, { withFileTypes: true });
     for (const ent of entries) {
       if (cancelCheck()) throw new Error('Cancelled');
       const srcPath = path.join(src, ent.name);
       const dstPath = path.join(dst, ent.name);
+      const srcPathE = toExtendedPath(srcPath);
+      const dstPathE = toExtendedPath(dstPath);
       if (ent.isFile()) {
-        const srcStat = await fs.promises.stat(srcPath).catch(() => ({ size: 0 }));
+        const srcStat = await fs.promises.stat(srcPathE).catch(() => ({ size: 0 }));
         const size = srcStat.size || 0;
         // File-level resume: skip if destination already exists with the same size
-        const dstStat = await fs.promises.stat(dstPath).catch(() => null);
+        const dstStat = await fs.promises.stat(dstPathE).catch(() => null);
         if (dstStat && dstStat.size === size) {
           // Check checksum DB — if we have a verified entry for this src, trust it
           let skipConfirmed = true; // size match is good enough for skipVerify mode
@@ -879,16 +923,14 @@ async function copyFolderContentsSafely(srcDir, finalTarget, options = {}) {
           }
         }
         if (skipVerify) {
-          // Fast copy: stream without SHA-256 verification
           await copyFileStream(
-            srcPath, dstPath,
+            srcPathE, dstPathE,
             (info) => progress?.({ type: 'go-file-progress', fileRel: ent.name, totalBytesCopied: info?.totalBytesCopied || 0, totalBytes }),
             cancelCheck
           );
         } else {
-          // Pass a proper progress object so progressFn can track bytes
           await copyAndVerifyFile(
-            srcPath, dstPath,
+            srcPathE, dstPathE,
             (info) => progress?.({ type: 'go-file-progress', fileRel: ent.name, totalBytesCopied: info?.totalBytesCopied || 0, totalBytes }),
             cancelCheck
           );
@@ -915,7 +957,7 @@ async function copyFolderContentsSafely(srcDir, finalTarget, options = {}) {
     }
   }
 
-  await fs.promises.mkdir(path.dirname(finalTarget), { recursive: true });
+  await fs.promises.mkdir(toExtendedPath(path.dirname(finalTarget)), { recursive: true });
   await copyDirRecursive(srcDir, finalTarget);
 }
 
@@ -925,8 +967,8 @@ async function moveFolderContentsSafely(srcDir, finalTarget, options = {}) {
   const overwriteMode = options.overwriteMode || 'rename';
   const totalBytes = options.totalBytes || 0;
 
-  await fs.promises.mkdir(path.dirname(finalTarget), { recursive: true });
-  const sameDevice = await isSameDevice(srcDir, path.dirname(finalTarget));
+  await fs.promises.mkdir(toExtendedPath(path.dirname(finalTarget)), { recursive: true });
+  const sameDevice = await isSameDevice(toExtendedPath(srcDir), toExtendedPath(path.dirname(finalTarget)));
 
   if (sameDevice) {
     // Same filesystem: try atomic rename (instant, no byte copying needed).
@@ -1304,7 +1346,13 @@ async function buildFtpManifest(ftpConfig, rootPath, progressCallback, cancelChe
 }
 
 
-async function scanFtpRecursive(client, remotePath, items, depth, onGameFound) {
+async function scanFtpRecursive(client, remotePath, items, depth, onGameFound, accessOpts = null, _seenPaths = null, _dlSemaphore = null) {
+  // _seenPaths: shared dedup Set across all candidate scans.
+  // _dlSemaphore: shared concurrency limiter for all dlClient connections in this scan tree.
+  //   Caps concurrent connections to MAX_FTP_SCAN_DL_CONNECTIONS (1) so the PS5 FTP daemon
+  //   (which supports only 3-4 simultaneous connections) is never overwhelmed during scanning.
+  if (!_seenPaths) _seenPaths = new Set();
+  if (!_dlSemaphore) _dlSemaphore = makeConcurrencyLimiter(MAX_FTP_SCAN_DL_CONNECTIONS);
   if (depth > MAX_SCAN_DEPTH) return;
   // Never recurse into sce_sys — it only contains metadata, not games
   if (remotePath.includes('/sce_sys/') || remotePath.endsWith('/sce_sys')) return;
@@ -1315,16 +1363,61 @@ async function scanFtpRecursive(client, remotePath, items, depth, onGameFound) {
     } catch (e) {
       await client.cd('"' + remotePath + '"');
     }
-    const list = await client.list();
+    // 10s timeout on list() — a corrupted/hung folder or frozen PS5 daemon can hang indefinitely
+    const list = await Promise.race([
+      client.list(),
+      new Promise((_, r) => setTimeout(() => r(new Error('list timeout (10s): ' + remotePath)), 10000))
+    ]);
 
-    // Download a remote file into a memory Buffer — AV-safe (no temp files).
-    const downloadToBuffer = (p) => new Promise((resolve, reject) => {
-      const chunks = [];
-      const writable = new Writable({ write(chunk, _enc, cb) { chunks.push(chunk); cb(); } });
-      writable.on('finish', () => resolve(Buffer.concat(chunks)));
-      writable.on('error', reject);
-      withFtpLock(() => client.downloadTo(writable, p)).catch(reject);
-    });
+    // ── Dedicated download connection ─────────────────────────────────────────
+    // NEVER use the scan client for downloadTo. basic-ftp is single-threaded per
+    // client: any cd/list call while a downloadTo is running on the same client
+    // causes "User launched a task while another one is still running".
+    //
+    // Solution: each download creates a fresh FTP connection, uses it, then
+    // closes it. PS5 FTP daemons support 3-5 simultaneous connections so a
+    // transient second connection during param/cover download is fine.
+    // Falls back to scan client only when no accessOpts are available (shouldn't
+    // happen in practice — scanFtpSource always passes them).
+    // ── downloadToBuffer: semaphore-guarded to cap concurrent PS5 FTP connections ──
+    // Each call acquires the per-scan semaphore before opening a dlClient, releases
+    // after closing it, and waits FTP_SCAN_INTER_OP_DELAY_MS before releasing so
+    // the PS5's FTP daemon has time to fully close the socket. This ensures at most
+    // MAX_FTP_SCAN_DL_CONNECTIONS (1) dedicated connections are open simultaneously,
+    // preventing the daemon from being overwhelmed and crashing.
+    const downloadToBuffer = async (p) => {
+      if (!accessOpts) {
+        // Fallback: legacy path using scan client with global lock (no semaphore needed)
+        return new Promise((resolve, reject) => {
+          const chunks = [];
+          const writable = new Writable({ write(chunk, _enc, cb) { chunks.push(chunk); cb(); } });
+          writable.on('finish', () => resolve(Buffer.concat(chunks)));
+          writable.on('error', reject);
+          withFtpLock(() => client.downloadTo(writable, p)).catch(reject);
+        });
+      }
+      // Semaphore-guarded dedicated connection
+      return _dlSemaphore(async () => {
+        const dlClient = new ftp.Client(8000); // 8s timeout — faster fail on dead paths
+        dlClient.ftp.verbose = false;
+        if (accessOpts.passive === false) dlClient.ftp.passive = false;
+        try {
+          await dlClient.access(accessOpts);
+          const chunks = [];
+          const writable = new Writable({ write(chunk, _enc, cb) { chunks.push(chunk); cb(); } });
+          const done = new Promise((res, rej) => {
+            writable.on('finish', () => res(Buffer.concat(chunks)));
+            writable.on('error', rej);
+          });
+          await dlClient.downloadTo(writable, p);
+          return await done;
+        } finally {
+          try { dlClient.close(); } catch (_) {}
+          // Inter-op delay: let PS5 FTP daemon fully release the socket before next connection
+          await new Promise(r => setTimeout(r, FTP_SCAN_INTER_OP_DELAY_MS));
+        }
+      });
+    };
 
     // ── Build a game record once param.json has been parsed ──────────────
     const buildAndEmit = async (data, gameFolderPath, outerFolderPath, folderName) => {
@@ -1332,23 +1425,30 @@ async function scanFtpRecursive(client, remotePath, items, depth, onGameFound) {
       const sku     = normalizeSku(data.localizedParameters?.en?.['@SKU'] || '');
       const title   = getTitleFromParam(data, null);
 
-      // Fetch cover from sce_sys inside gameFolderPath
+      // Fetch cover from sce_sys inside gameFolderPath.
+      // Limit to 3 most common PS5 cover locations to minimise connection count.
+      // Skip entirely when this is a PPSA-only fallback (no real param.json found) —
+      // there will be no cover, and probing would waste 3 connection cycles per game.
       let cover = '';
-      const coverCandidates = [
-        'sce_sys/icon0.png', 'sce_sys/icon0.jpg', 'sce_sys/icon0.jpeg',
-        'sce_sys/icon.png',  'sce_sys/cover.png', 'sce_sys/cover.jpg',
-        'sce_sys/tile0.png', 'icon0.png', 'icon0.jpg', 'icon0.jpeg',
-        'icon.png', 'cover.png', 'cover.jpg', 'tile0.png'
-      ];
-      for (const cand of coverCandidates) {
-        try {
-          const buf = await downloadToBuffer(path.posix.join(gameFolderPath, cand));
-          cover = 'data:image/png;base64,' + buf.toString('base64');
-          console.log('[FTP] Fetched cover for:', title, 'using', cand);
-          break;
-        } catch (_) {}
+      const isMetadataFallback = !data.titleId && !data.localizedParameters;
+      if (!isMetadataFallback) {
+        const coverCandidates = [
+          'sce_sys/icon0.png',  // Standard PS5 cover — present on 99% of games
+          'sce_sys/icon0.jpg',  // JPEG fallback
+          'icon0.png',          // Some non-standard dumps
+        ];
+        for (const cand of coverCandidates) {
+          try {
+            const buf = await downloadToBuffer(path.posix.join(gameFolderPath, cand));
+            if (buf && buf.length > 100) {
+              cover = 'data:image/png;base64,' + buf.toString('base64');
+              console.log('[FTP] Fetched cover for:', title, 'using', cand);
+              break;
+            }
+          } catch (_) {}
+        }
+        if (!cover) console.log('[FTP] No cover for:', title);
       }
-      if (!cover) console.log('[FTP] No cover for:', title);
 
       const record = {
         ppsa:             ppsaKey,
@@ -1368,6 +1468,14 @@ async function scanFtpRecursive(client, remotePath, items, depth, onGameFound) {
         paramParsed:      data,
       };
       console.log('[FTP] Found game:', title, 'at', gameFolderPath);
+      // Deduplicate by folder path — prevents double-emit if multiple
+      // candidate roots both lead to the same game folder.
+      const emitPath = gameFolderPath.toLowerCase();
+      if (_seenPaths.has(emitPath)) {
+        console.log('[FTP] Skipping duplicate:', gameFolderPath);
+        return null;
+      }
+      _seenPaths.add(emitPath);
       items.push(record);
       try { onGameFound?.(record); } catch (_) {}
       return record;
@@ -1472,7 +1580,7 @@ async function scanFtpRecursive(client, remotePath, items, depth, onGameFound) {
       // This handles arbitrarily deep nesting (e.g. Title/Disc1/PPSA*/sce_sys/param.json)
       if (!handledPaths.has(entryPath)) {
         try {
-          await scanFtpRecursive(client, entryPath, items, depth + 1, onGameFound);
+          await scanFtpRecursive(client, entryPath, items, depth + 1, onGameFound, accessOpts, _seenPaths, _dlSemaphore);
         } catch (e) {
           console.error('[FTP] Error recursing into:', entryPath, e);
         }
@@ -1480,7 +1588,17 @@ async function scanFtpRecursive(client, remotePath, items, depth, onGameFound) {
     }
 
   } catch (e) {
-    console.error('[FTP] Error listing:', remotePath, e);
+    // 550 = mount point doesn't exist on this PS5 — completely normal, log silently.
+    // Connection/timeout = transient, show message only (no stack trace noise).
+    // Other errors = scan content issue, show message only.
+    const ftpCode = (e?.message || '').match(/^(\d{3})/)?.[1] || String(e?.code || '');
+    if (ftpCode === '550' || (e?.message || '').includes('550')) {
+      console.log('[FTP] Not present (550):', remotePath);
+    } else if (/connect|timeout|closed|reset|ECONNRESET|ETIMEDOUT/i.test(e?.message || '')) {
+      console.warn('[FTP] Connection error at', remotePath + ':', (e?.message || String(e)).slice(0, 100));
+    } else {
+      console.warn('[FTP] Scan error at', remotePath + ':', (e?.message || String(e)).slice(0, 120));
+    }
   }
 }
 
@@ -1532,6 +1650,7 @@ async function scanFtpSource(ftpUrl, scanOpts = {}) {
   console.log('ftpUrl:', ftpUrl, 'url.port:', url.port, 'final port:', port);
   console.log('[FTP] Connecting to:', { host, port, user, pass: pass ? '***' : 'none' });
   const client = new ftp.Client();
+  client.ftp.verbose = false;
   applyFtpPassive(client, ftpConfig);
   try {
     await client.access({ host, port: parseInt(port), user, password: pass, secure: false });
@@ -1540,6 +1659,13 @@ async function scanFtpSource(ftpUrl, scanOpts = {}) {
     // Disk cache is validated per-game with a single LIST, so stale data can't persist silently.
     const items = [];
     console.log('[FTP] Starting recursive scan from:', remotePath);
+
+    // accessOpts is passed to scanFtpRecursive so downloadToBuffer can open
+    // its own dedicated connection rather than sharing the scan client.
+    const accessOpts = {
+      host, port: parseInt(port), user, password: pass, secure: false,
+      passive: callerFtpCfg?.passive,
+    };
 
     // onGameFound: fires for each game the instant it's discovered.
     // Sends a game-found IPC event so the table row appears immediately
@@ -1557,35 +1683,56 @@ async function scanFtpSource(ftpUrl, scanOpts = {}) {
 
     // Only auto-scan predefined candidates when the user gave no specific path.
     // A path like /mnt/usb0/etaHEN/games/ should be scanned directly, not replaced by the
-    // candidate list (which would scan 17 paths and create duplicates).
+    // candidate list (which would scan extra paths and create duplicates).
     if (remotePath === '/' || remotePath === '//' || remotePath === '') {
-      // Scan all mounted PS5 storage paths
+      // Scan root-level PS5 mount points only.
+      // scanFtpRecursive will recursively descend into etaHEN/games, games/, etc.
+      // DO NOT include both a root AND its subdirectory (e.g. /mnt/usb0 AND
+      // /mnt/usb0/etaHEN/games) — that causes the same folders to be scanned twice,
+      // flooding the PS5's FTP connection limit and producing duplicate results.
+      //
+      // We scan:
+      //   USB mounts  — /mnt/usb0 … /mnt/usb7
+      //   Ext storage — /mnt/ext0, /mnt/ext1
+      //   Internal    — /mnt/int0 (some firmwares), /data (ftpsrv/etaHEN root)
+      //   Data subdirs — /data/games, /data/etaHEN/games (many payloads put games here)
       const candidates = [
-        '/mnt/usb0/etaHEN/games',
-        '/mnt/usb1/etaHEN/games',
-        '/mnt/usb2/etaHEN/games',
-        '/mnt/usb3/etaHEN/games',
-        '/mnt/usb4/etaHEN/games',
-        '/mnt/usb5/etaHEN/games',
-        '/mnt/usb6/etaHEN/games',
-        '/mnt/ext0/etaHEN/games',
-        '/mnt/ext1/etaHEN/games',
-        '/mnt/ps5/etaHEN/games',
+        // USB drives (PS5 supports up to 8 USB ports including hubs)
         '/mnt/usb0',
         '/mnt/usb1',
+        '/mnt/usb2',
+        '/mnt/usb3',
+        '/mnt/usb4',
+        '/mnt/usb5',
+        '/mnt/usb6',
+        '/mnt/usb7',
+        // Extended / external storage (M.2 SSD or USB-C SSD)
         '/mnt/ext0',
         '/mnt/ext1',
+        // Internal storage (some payload versions expose this as int0)
+        '/mnt/int0',
+        // /data — ftpsrv and etaHEN root; also contains etaHEN/games on many setups.
+        // Scan the root so recursive descent finds games at any layout depth.
         '/data',
-        '/data/games',
-        '/data/etaHEN/games'
       ];
-      console.log('[FTP] Scanning etaHEN/games, USB/ext roots, and /data paths');
+      console.log('[FTP] Scanning', candidates.length, 'PS5 mount points');
+      const seenFtpPaths = new Set(); // shared across all candidate scans to prevent duplicates
+      // Shared semaphore limits all dlClient connections across ALL candidate scans to
+      // MAX_FTP_SCAN_DL_CONNECTIONS at a time — prevents PS5 FTP daemon overload.
+      const scanSemaphore = makeConcurrencyLimiter(MAX_FTP_SCAN_DL_CONNECTIONS);
       for (const cand of candidates) {
         try {
           console.log('[FTP] Checking:', cand);
-          await scanFtpRecursive(client, cand, items, 0, onGameFound);
+          await scanFtpRecursive(client, cand, items, 0, onGameFound, accessOpts, seenFtpPaths, scanSemaphore);
+          await new Promise(r => setTimeout(r, 120)); // let PS5 daemon release state between mounts
         } catch (e) {
-          console.log('[FTP] Skipping:', cand, e.message);
+          // 550 = path doesn't exist on this PS5 — completely normal to skip
+          const code = (e?.message || '').match(/^(\d{3})/)?.[1];
+          if (code === '550') {
+            console.log('[FTP] Not present:', cand);
+          } else {
+            console.log('[FTP] Skipping:', cand, '-', e.message);
+          }
         }
       }
     } else {
@@ -1605,7 +1752,8 @@ async function scanFtpSource(ftpUrl, scanOpts = {}) {
         }
       }
       if (cdOk) {
-        await scanFtpRecursive(client, remotePath, items, 0, onGameFound);
+        const specificSemaphore = makeConcurrencyLimiter(MAX_FTP_SCAN_DL_CONNECTIONS);
+        await scanFtpRecursive(client, remotePath, items, 0, onGameFound, accessOpts, null, specificSemaphore);
       }
     }
 
@@ -1685,18 +1833,27 @@ const { parentPort, workerData } = require('worker_threads');
 const fs = require('fs');
 const path = require('path');
 
+// Extended-length path for Windows to handle paths > 260 chars (OneDrive, Dropbox)
+function ext(p) {
+  if (process.platform !== 'win32' || !p || p.length <= 248) return p;
+  const n = p.replace(/\//g, '\\\\');
+  if (/^[A-Za-z]:\\\\/.test(n)) return '\\\\\\\\?\\\\' + n;
+  if (n.startsWith('\\\\\\\\')) return '\\\\\\\\?\\\\UNC\\\\' + n.slice(2);
+  return p;
+}
+
 function sizeDirs(roots) {
   let total = 0;
   const stack = Array.isArray(roots) ? [...roots] : [roots];
   while (stack.length) {
     const dir = stack.pop();
     let entries;
-    try { entries = fs.readdirSync(dir, { withFileTypes: true }); }
+    try { entries = fs.readdirSync(ext(dir), { withFileTypes: true }); }
     catch (_) { continue; }
     for (const ent of entries) {
       const full = path.join(dir, ent.name);
       if (ent.isFile()) {
-        try { total += Number(fs.statSync(full).size) || 0; } catch (_) {}
+        try { total += Number(fs.statSync(ext(full)).size) || 0; } catch (_) {}
       } else if ((ent.isDirectory() || ent.isSymbolicLink()) && !ent.name.startsWith('.')) {
         stack.push(full);
       }
@@ -2104,7 +2261,7 @@ async function downloadFtpFolder(ftpConfig, remotePath, localPath, progressCallb
     for (const fileEntry of files) {
       if (cancelCheck?.()) throw new Error('Cancelled');
       const localDest = path.join(localPath, ...fileEntry.relPath.split('/'));
-      await fs.promises.mkdir(path.dirname(localDest), { recursive: true });
+      await fs.promises.mkdir(toExtendedPath(path.dirname(localDest)), { recursive: true });
 
       // Retry up to 3 times on transient FTP errors — also auto-reconnects on disconnect
       let downloaded = false;
@@ -2224,9 +2381,17 @@ async function uploadFtpFolder(ftpConfig, localPath, remotePath, progressCallbac
     });
 
     const speedLimitBps = ftpConfig.speedLimitKbps > 0 ? ftpConfig.speedLimitKbps * 1024 : 0;
+    // Build access config once so uploadFtpRecursive can reconnect on disconnect
+    const _accessConfig = {
+      host: ftpConfig.host,
+      port: parseInt(ftpConfig.port),
+      user: ftpConfig.user || 'anonymous',
+      password: ftpConfig.pass || '',
+      secure: false,
+    };
     await uploadFtpRecursive(client, localPath, remotePath, (info) => {
       progressCallback?.(info);
-    }, cancelCheck, totalSize, speedLimitBps, bufBytes);
+    }, cancelCheck, totalSize, speedLimitBps, bufBytes, _accessConfig);
 
     client.trackProgress();
   } finally {
@@ -2267,7 +2432,7 @@ async function ftpEnsureDir(client, remotePath) {
   // Leave the client's working directory unchanged (don't CWD into the target)
 }
 
-async function uploadFtpRecursive(client, localPath, remotePath, progressCallback, cancelCheck, totalSize = 0, speedLimitBps = 0, bufBytes = 65536) {
+async function uploadFtpRecursive(client, localPath, remotePath, progressCallback, cancelCheck, totalSize = 0, speedLimitBps = 0, bufBytes = 65536, accessConfig = null) {
   if (cancelCheck()) throw new Error('Cancelled');
   await ftpEnsureDir(client, remotePath);
   const entries = await fs.promises.readdir(localPath, { withFileTypes: true });
@@ -2301,11 +2466,19 @@ async function uploadFtpRecursive(client, localPath, remotePath, progressCallbac
             const delay = isDisconnect ? 1500 : 500 * attempt;
             console.warn(`[FTP Upload] Attempt ${attempt} failed for ${ent.name} — retrying in ${delay}ms:`, e.message);
             await new Promise(r => setTimeout(r, delay));
-            // Auto-reconnect on disconnect
-            if (isDisconnect) {
+            // Auto-reconnect on disconnect using original access credentials
+            if (isDisconnect && accessConfig) {
               try { client.close(); } catch (_) {}
-              const accessOpts = { host: client.ftp.socket?.remoteAddress, port: client.ftp.socket?.remotePort, user: 'anonymous', password: '', secure: false };
-              // We can't easily re-read the access opts here — just let it fail and bubble up
+              try {
+                await client.access(accessConfig);
+                // Re-track progress after reconnect
+                client.trackProgress(info => {
+                  if (cancelCheck()) return;
+                  progressCallback?.({ type: 'go-file-progress', fileRel: info.name || '', totalBytesCopied: info.bytes || 0, totalBytes: totalSize });
+                });
+              } catch (reconnErr) {
+                console.warn('[FTP Upload] Reconnect failed:', reconnErr.message);
+              }
             }
           }
         }
@@ -2314,7 +2487,7 @@ async function uploadFtpRecursive(client, localPath, remotePath, progressCallbac
       const size = (await fs.promises.stat(localItem).catch(() => ({ size: 0 }))).size || 0;
       progressCallback?.({ type: 'go-file-complete', fileRel: ent.name, totalBytesCopied: size, totalBytes: totalSize });
     } else if (ent.isDirectory()) {
-      await uploadFtpRecursive(client, localItem, remoteItem, progressCallback, cancelCheck, totalSize, speedLimitBps, bufBytes);
+      await uploadFtpRecursive(client, localItem, remoteItem, progressCallback, cancelCheck, totalSize, speedLimitBps, bufBytes, accessConfig);
     }
   }
 }
@@ -2525,7 +2698,11 @@ ipcMain.handle('scan-source', async (event, sourceDir, opts = {}) => {
       activeCancelFlags.set(event.sender.id, () => { /* FTP: no abort, runs to completion */ });
       let items;
       try {
-        items = await scanFtpSource(sourceDir, { sender: event.sender, calcSize: opts.calcSize });
+        items = await scanFtpSource(sourceDir, {
+          sender: event.sender,
+          calcSize: opts.calcSize,
+          ftpConfig: opts.ftpConfig || null,
+        });
       } finally {
         activeCancelFlags.delete(event.sender.id);
       }
@@ -2535,7 +2712,11 @@ ipcMain.handle('scan-source', async (event, sourceDir, opts = {}) => {
       activeCancelFlags.set(event.sender.id, () => { /* FTP: no abort, runs to completion */ });
       let items;
       try {
-        items = await scanFtpSource('ftp://' + sourceDir, { sender: event.sender, calcSize: opts.calcSize });
+        items = await scanFtpSource('ftp://' + sourceDir, {
+          sender: event.sender,
+          calcSize: opts.calcSize,
+          ftpConfig: opts.ftpConfig || null,
+        });
       } finally {
         activeCancelFlags.delete(event.sender.id);
       }
@@ -2586,8 +2767,8 @@ async function doEnsureAndPopulate(event, opts) {
     // ── Free-space pre-check (local-to-local only) ──────────────────────────
     if (!ftpConfig && !ftpDestConfig && (action === 'copy' || action === 'copy-fast') && _grandTotalBytes > 0) {
       try {
-        await fs.promises.mkdir(dest, { recursive: true });
-        const freeBytes = await getLocalFreeSpace(dest);
+        await fs.promises.mkdir(toExtendedPath(dest), { recursive: true });
+        const freeBytes = await getLocalFreeSpace(toExtendedPath(dest));
         if (freeBytes < _grandTotalBytes + DISK_SPACE_SAFETY_BUFFER_BYTES) {
           const needGB = ((_grandTotalBytes + DISK_SPACE_SAFETY_BUFFER_BYTES) / (1024 ** 3)).toFixed(2);
           const freeGB = (freeBytes / (1024 ** 3)).toFixed(2);
@@ -2825,7 +3006,7 @@ async function doEnsureAndPopulate(event, opts) {
 
         if (action === 'folder-only') {
           event.sender?.send('scan-progress', { type: 'go-item', path: finalTarget, itemIndex: idx + 1, totalItems: items.length });
-          await fs.promises.mkdir(finalTarget, { recursive: true });
+          await fs.promises.mkdir(toExtendedPath(finalTarget), { recursive: true });
           event.sender?.send('scan-progress', { type: 'go-file-complete', fileRel: 'Folder created', totalBytesCopied: 0, totalBytes: 0 });
           results.push({ item: safeGameName, target: finalTarget, created: true, source: srcFolder, safeGameName, totalSize: itemTotalBytes });
         } else if (action === 'copy' || action === 'copy-fast' || action === 'move') {
@@ -2993,6 +3174,7 @@ ipcMain.handle('check-conflicts', async (event, items, dest, layout, customName)
     try {
       const u = new URL(dest);
       ccClient = new ftp.Client(8000);
+      ccClient.ftp.verbose = false;
       await ccClient.access({ host: u.hostname, port: parseInt(u.port || '2121'), user: u.username || 'anonymous', password: u.password || '', secure: false });
     } catch (e) {
       console.warn('[check-conflicts] FTP connect failed:', e.message);
@@ -3334,11 +3516,25 @@ ipcMain.handle('ps5-discover', async (_event, timeoutMs = 3000) => {
 // Probes known PS5 mount points and returns which ones are accessible.
 // Can't read /proc/mounts via FTP, so we just check known paths.
 ipcMain.handle('ftp-storage-info', async (_event, config, scannedItems = []) => {
-  const { Writable } = require('stream');
   const client = new ftp.Client(12000);
   client.ftp.verbose = false;
   applyFtpPassive(client, config);
-  const mounts = ['/mnt/ext0', '/mnt/ext1', '/mnt/usb0', '/mnt/usb1', '/mnt/usb2', '/mnt/usb3', '/data'];
+  // All known PS5 mount points. Ones not present on the PS5 are skipped automatically
+  // (inaccessible mounts throw on cd() and are caught with 'continue').
+  const mounts = [
+    '/data',           // internal SSD — primary games location on most payloads
+    '/mnt/ext0',       // extended storage (M.2 SSD slot)
+    '/mnt/ext1',       // extended storage slot 2
+    '/mnt/usb0',       // USB port 0
+    '/mnt/usb1',       // USB port 1
+    '/mnt/usb2',       // USB port 2
+    '/mnt/usb3',       // USB port 3
+    '/mnt/usb4',       // USB port 4 (via hub)
+    '/mnt/usb5',       // USB port 5 (via hub)
+    '/mnt/usb6',       // USB port 6 (via hub)
+    '/mnt/usb7',       // USB port 7 (via hub)
+    '/mnt/int0',       // internal storage alt mount (some payload versions)
+  ];
 
   // ── Pre-compute used-by-games per mount from already-scanned items ──────
   const gamesByMount = {};
