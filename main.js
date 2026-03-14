@@ -3519,21 +3519,21 @@ ipcMain.handle('ftp-storage-info', async (_event, config, scannedItems = []) => 
   const client = new ftp.Client(12000);
   client.ftp.verbose = false;
   applyFtpPassive(client, config);
-  // All known PS5 mount points. Ones not present on the PS5 are skipped automatically
-  // (inaccessible mounts throw on cd() and are caught with 'continue').
+
+  // All known PS5 mount points — inaccessible ones are skipped automatically.
   const mounts = [
-    '/data',           // internal SSD — primary games location on most payloads
-    '/mnt/ext0',       // extended storage (M.2 SSD slot)
-    '/mnt/ext1',       // extended storage slot 2
-    '/mnt/usb0',       // USB port 0
-    '/mnt/usb1',       // USB port 1
-    '/mnt/usb2',       // USB port 2
-    '/mnt/usb3',       // USB port 3
-    '/mnt/usb4',       // USB port 4 (via hub)
-    '/mnt/usb5',       // USB port 5 (via hub)
-    '/mnt/usb6',       // USB port 6 (via hub)
-    '/mnt/usb7',       // USB port 7 (via hub)
-    '/mnt/int0',       // internal storage alt mount (some payload versions)
+    '/data',      // internal SSD (primary games location on most payloads)
+    '/mnt/ext0',  // extended storage slot 1 (M.2 SSD or USB-C SSD)
+    '/mnt/ext1',  // extended storage slot 2
+    '/mnt/usb0',  // USB port 0
+    '/mnt/usb1',  // USB port 1
+    '/mnt/usb2',  // USB port 2
+    '/mnt/usb3',  // USB port 3
+    '/mnt/usb4',  // USB port 4 (via hub)
+    '/mnt/usb5',  // USB port 5 (via hub)
+    '/mnt/usb6',  // USB port 6 (via hub)
+    '/mnt/usb7',  // USB port 7 (via hub)
+    '/mnt/int0',  // internal storage alt mount (some payload versions)
   ];
 
   // ── Pre-compute used-by-games per mount from already-scanned items ──────
@@ -3549,139 +3549,163 @@ ipcMain.handle('ftp-storage-info', async (_event, config, scannedItems = []) => 
   }
 
   // ── PS5 hardware constants ───────────────────────────────────────────────
-  // PS5 internal SSD is 825 GB raw. After OS + system partition, ~667 GB is
-  // available to the user. /data is always the internal drive.
-  const PS5_INTERNAL_TOTAL = 667 * 1024 * 1024 * 1024; // ~667 GB usable
+  const PS5_INTERNAL_TOTAL = 667 * 1024 * 1024 * 1024; // ~667 GB usable on standard PS5
 
   // ── Helpers ──────────────────────────────────────────────────────────────
-  async function ftpSend(cmd, ms = 2500) {
+
+  // Send a raw FTP command with a timeout. Returns the full response message string.
+  async function ftpSend(cmd, ms = 3000) {
     try {
       const raw = await Promise.race([
         client.send(cmd),
-        new Promise((_, r) => setTimeout(() => r(new Error('timeout')), ms))
+        new Promise((_, r) => setTimeout(() => r(new Error('cmd-timeout')), ms))
       ]);
       return (raw && raw.message) ? raw.message : (typeof raw === 'string' ? raw : '');
     } catch (_) { return ''; }
   }
 
   // Download a small remote file into a string buffer via FTP RETR.
-  async function ftpRetr(remotePath, maxBytes = 8192, ms = 3000) {
+  async function ftpRetr(remotePath, maxBytes = 16384, ms = 3000) {
     return new Promise(resolve => {
-      let buf = '';
-      let done = false;
+      let buf = '', done = false;
       const timer = setTimeout(() => { if (!done) { done = true; resolve(''); } }, ms);
-      const writable = new Writable({
+      const w = new Writable({
         write(chunk, _enc, cb) {
           buf += chunk.toString('utf8');
           if (buf.length >= maxBytes) { done = true; clearTimeout(timer); resolve(buf); }
           cb();
         }
       });
-      client.downloadTo(writable, remotePath)
+      client.downloadTo(w, remotePath)
         .then(() => { if (!done) { done = true; clearTimeout(timer); resolve(buf); } })
         .catch(() => { if (!done) { done = true; clearTimeout(timer); resolve(''); } });
     });
   }
 
-  function firstLargeInt(str) {
-    const m = str.match(/(\d{7,})/); return m ? parseInt(m[1], 10) : 0;
-  }
-
-  function parseBlockResponse(str) {
+  // ── Universal space-response parser ──────────────────────────────────────
+  // Handles all known PS5 FTP daemon response formats in one place.
+  function parseSpaceMsg(msg) {
+    if (!msg || typeof msg !== 'string') return { available: 0, total: 0 };
     let available = 0, total = 0;
-    const bsize = (() => { const m = str.match(/[Bb]lock[_ ]?[Ss]ize[:\s]+(\d+)/); return m ? parseInt(m[1],10) : 4096; })();
-    const blocks = str.match(/[Bb]locks[:\s]+(\d+)/);
-    const free   = str.match(/[Ff]ree[:\s]+(\d+)/);
-    const avail  = str.match(/[Aa]vail(?:able)?[:\s]+(\d+)/);
-    if (blocks) total     = parseInt(blocks[1], 10) * bsize;
-    if (avail)  available = parseInt(avail[1], 10)  * bsize;
-    else if (free) available = parseInt(free[1], 10) * bsize;
-    return { available, total };
-  }
 
-  function parseDfResponse(str) {
-    let available = 0, total = 0;
-    const tot  = str.match(/[Tt]otal[:\s]+(\d+)/);
-    const free = str.match(/[Ff]ree[:\s]+(\d+)/);
-    const avail= str.match(/[Aa]vail(?:able)?[:\s]+(\d+)/);
-    if (tot)   total     = parseInt(tot[1], 10);
-    if (avail) available = parseInt(avail[1], 10);
-    else if (free) available = parseInt(free[1], 10);
-    return { available, total };
-  }
+    // ── Format 1: plain large integer (213 reply from AVBL/XAVBL/XDISKFREE)
+    // e.g. "213 1073741824"  or  "213-1073741824"
+    const singleInt = msg.match(/^2\d\d[- ](\d{6,})/m);
+    if (singleInt) return { available: parseInt(singleInt[1], 10), total: 0 };
 
-  // Parse /proc/mounts-style df output (Linux/BSD kernel exposes this on PS5)
-  // Format: "device mountpoint fstype options dump pass"
-  function parseProcMounts(text) {
-    // Returns a map of mountpoint → device
-    const map = {};
-    for (const line of text.split('\n')) {
-      const parts = line.trim().split(/\s+/);
-      if (parts.length >= 3) map[parts[1]] = parts[0];
+    // ── Format 2: key=value pairs (some SITE DF implementations)
+    // e.g. "Available=1073741824 Total=2147483648"
+    const kv = {};
+    for (const [, k, v] of msg.matchAll(/(\w+)=(\d+)/gi)) kv[k.toLowerCase()] = parseInt(v, 10);
+    if (kv.available || kv.avail || kv.free) {
+      available = kv.available || kv.avail || kv.free || 0;
+      total     = kv.total || kv.size || kv.capacity || 0;
+      if (available > 0 || total > 0) return { available, total };
     }
-    return map;
+
+    // ── Format 3: "X bytes free" / "X bytes available" (plain English)
+    const byteFree = msg.match(/(\d{6,})\s*bytes?\s*(?:free|available)/i);
+    if (byteFree) available = parseInt(byteFree[1], 10);
+    const byteTotal = msg.match(/(\d{6,})\s*bytes?\s*(?:total|capacity)/i);
+    if (byteTotal) total = parseInt(byteTotal[1], 10);
+    if (available > 0 || total > 0) return { available, total };
+
+    // ── Format 4: labeled multi-line (SITE DF BSD-style)
+    // e.g. "Filesystem  1K-blocks  Used  Available  Use%\n/dev/da0  976762584  123456  925384128  0%"
+    // Look for a line that looks like df output with 4+ numbers
+    for (const line of msg.split('\n')) {
+      const cols = line.trim().split(/\s+/);
+      // Typical df: filesystem, total_blocks, used_blocks, avail_blocks, pct
+      if (cols.length >= 4) {
+        const nums = cols.map(c => parseInt(c.replace('%',''), 10)).filter(n => !isNaN(n) && n > 0);
+        if (nums.length >= 3) {
+          // Heuristic: largest non-percentage number is total, second-largest is avail
+          const big = nums.filter(n => n > 1000).sort((a,b) => b-a);
+          if (big.length >= 2) {
+            // Assume 1K blocks if numbers are in the range 100k–10B (typical for GB drives in 1K-blocks)
+            const blockMultiplier = (big[0] > 1e8 && big[0] < 1e13) ? 1024 : 1;
+            total     = big[0] * blockMultiplier;
+            available = big[1] * blockMultiplier;
+            if (total > available && total > 1024 * 1024) return { available, total };
+          }
+        }
+      }
+    }
+
+    // ── Format 5: "X of Y" / "X/Y" pattern
+    const ofPattern = msg.match(/(\d{6,})\s*(?:bytes?\s*)?(?:free\s*of|of|\/)\s*(\d{6,})/i);
+    if (ofPattern) {
+      return { available: parseInt(ofPattern[1], 10), total: parseInt(ofPattern[2], 10) };
+    }
+
+    // ── Format 6: any two large integers (last resort — total then avail or avail then total)
+    const largeInts = [...msg.matchAll(/(\d{7,})/g)].map(m => parseInt(m[1], 10)).filter(n => n > 0);
+    if (largeInts.length >= 2) {
+      const sorted = largeInts.sort((a, b) => b - a);
+      total     = sorted[0];
+      available = sorted[1];
+      // Sanity: available must be ≤ total, and total must be > 10MB
+      if (available <= total && total > 10 * 1024 * 1024) return { available, total };
+    }
+
+    return { available: 0, total: 0 };
   }
 
-  // Parse /proc/diskstats to get sector counts per device
-  // Format: major minor name reads... sectors_read... writes... sectors_written...
-  function parseDiskstats(text) {
-    const stats = {};
-    for (const line of text.split('\n')) {
-      const p = line.trim().split(/\s+/);
-      if (p.length < 14) continue;
-      const name = p[2];
-      // sectors_read = p[5], sectors_written = p[9]  (512-byte sectors)
-      stats[name] = {
-        sectorsRead:    parseInt(p[5],  10) || 0,
-        sectorsWritten: parseInt(p[9],  10) || 0,
-      };
-    }
-    return stats;
-  }
-
-  // Try every known FTP disk-space command for a path
-  async function probeFtpCommands(mp) {
-    for (const cmd of ['XAVBL', 'AVBL']) {
-      const msg = await ftpSend(cmd + ' ' + mp);
-      const n = firstLargeInt(msg);
-      if (n > 0) return { available: n, total: 0, method: cmd };
-    }
-    for (const cmd of ['SITE DF ' + mp, 'SITE DF', 'SITE STATVFS ' + mp, 'SITE FREE ' + mp, 'SITE DISKINFO ' + mp]) {
-      const msg = await ftpSend(cmd);
-      const r = cmd.includes('STATVFS') ? parseBlockResponse(msg) : parseDfResponse(msg);
-      if (r.available > 0 || r.total > 0) return { ...r, method: cmd.split(' ')[1] };
-    }
-    return { available: 0, total: 0, method: null };
-  }
-
-  // Try MLSD (RFC 3659) — some servers include total-size and available-size facts
-  async function probeMlsd(mp) {
+  // ── Per-mount disk space probe ────────────────────────────────────────────
+  // CRITICAL FIX: PS5 FTP daemons require CWD to be set FIRST. Sending
+  // "SITE DF /mnt/usb0" doesn't work — you must `cd /mnt/usb0` then `SITE DF`.
+  // All commands are sent bare (no path argument) after cd-ing to the mount.
+  async function probeMountSpace(mountPath) {
+    // Step 1: cd to the mount point
     try {
-      await Promise.race([client.cd(mp), new Promise((_, r) => setTimeout(() => r(new Error('timeout')), 3000))]);
-      const list = await Promise.race([
-        client.list(),   // basic-ftp may use MLSD internally
-        new Promise((_, r) => setTimeout(() => r(new Error('timeout')), 3000))
+      await Promise.race([
+        client.cd(mountPath),
+        new Promise((_, r) => setTimeout(() => r(new Error('cd-timeout')), 3000))
       ]);
-      // basic-ftp exposes raw facts — check if any entry has size info
-      // (most payloads won't, but worth a shot)
-      _ = list; // accessed for side-effects; actual facts parsing below via MLSD raw
-    } catch (_) {}
+    } catch (_) {
+      return { available: 0, total: 0, method: null };
+    }
 
-    // Try raw MLSD and parse facts manually
+    // Step 2: try commands in order of reliability, all for CWD (no path arg)
+    const candidates = [
+      'AVBL',           // "Available bytes" — supported by some etaHEN/ftpsrv builds
+      'XAVBL',          // Extended AVBL (older servers)
+      'SITE DF',        // df-style output for CWD — most widely supported on PS5
+      'SITE FREESPACE', // Some BSD ftpd variants
+      'SITE DISKFREE',  // Alternative name
+      'SITE STATVFS',   // statvfs(2) output — block-based
+      'SITE FREE',      // Generic free space
+      'SITE DISKINFO',  // Some custom implementations
+      'XDISKFREE',      // Rare but present in some builds
+      'STAT .',         // CWD status — some daemons embed fs info here
+    ];
+
+    for (const cmd of candidates) {
+      const msg = await ftpSend(cmd, 2500);
+      if (!msg) continue;
+      const result = parseSpaceMsg(msg);
+      if (result.available > 0 || result.total > 0) {
+        return { ...result, method: cmd };
+      }
+    }
+
+    // Step 3: Try MLST . (RFC 3659 MLST for current dir) — some servers include size facts
     try {
-      const raw = await ftpSend('MLST ' + mp);
-      // Look for total-size= or available-size= in MLST facts
-      const total = raw.match(/[Tt]otal-[Ss]ize=(\d+)/);
-      const avail = raw.match(/[Aa]vail(?:able)?-[Ss]ize=(\d+)/);
-      if (total || avail) {
-        return {
-          total:     total ? parseInt(total[1], 10) : 0,
-          available: avail ? parseInt(avail[1], 10) : 0,
-          method: 'MLST'
-        };
+      const mlstMsg = await ftpSend('MLST .', 3000);
+      if (mlstMsg) {
+        const totalM = mlstMsg.match(/[Tt]otal-[Ss]ize=(\d+)/);
+        const availM = mlstMsg.match(/[Aa]vail(?:able)?(?:-[Ss]ize)?=(\d+)/);
+        if (totalM || availM) {
+          return {
+            available: availM ? parseInt(availM[1], 10) : 0,
+            total:     totalM ? parseInt(totalM[1], 10) : 0,
+            method: 'MLST',
+          };
+        }
       }
     } catch (_) {}
-    return null;
+
+    return { available: 0, total: 0, method: null };
   }
 
   // ── Main ──────────────────────────────────────────────────────────────────
@@ -3691,46 +3715,50 @@ ipcMain.handle('ftp-storage-info', async (_event, config, scannedItems = []) => 
       port:     parseInt(config.port) || 2121,
       user:     config.user || 'anonymous',
       password: config.password || config.pass || '',
-      secure:   false
+      secure:   false,
     });
 
-    // ── Step 1: try to read /proc/mounts and /proc/diskstats via FTP RETR ──
-    // PS5 runs a BSD/Linux hybrid; these paths may be readable over FTP.
-    let procMounts   = {};
-    let diskstats    = {};
-    let procDf       = {};   // mountpoint → { available, total } from /proc/df-like files
+    // ── Step 1: Try to read /proc/mounts for real filesystem device names ──
+    // Some PS5 payloads expose /proc over FTP — if so, we get accurate mount info.
+    let procMountsText = '';
+    try { procMountsText = await ftpRetr('/proc/mounts', 32768, 3000); } catch (_) {}
 
-    const mountsText = await ftpRetr('/proc/mounts', 16384);
-    if (mountsText) procMounts = parseProcMounts(mountsText);
+    // Parse /proc/mounts: "device mountpoint fstype options 0 0"
+    const mountDeviceMap = {}; // mountpoint → device
+    if (procMountsText) {
+      for (const line of procMountsText.split('\n')) {
+        const [dev, mp] = line.trim().split(/\s+/);
+        if (dev && mp && mp.startsWith('/')) mountDeviceMap[mp] = dev;
+      }
+    }
 
-    const diskstatsText = await ftpRetr('/proc/diskstats', 16384);
-    if (diskstatsText) diskstats = parseDiskstats(diskstatsText);
-
-    // /proc/df doesn't exist on Linux but some BSD variants expose /proc/filesystems
-    // Try reading /proc/filesystems or /proc/net/dev as a probe
-    // PS5 exposes /mnt/sandbox — more useful: try /system_data/priv/config or similar
-    // The most useful thing: try to RETR the output of 'df' as a text file if exposed
-
-    // ── Step 2: try FTP commands globally (once, not per-mount) ────────────
-    const globalSpace = await probeFtpCommands('/data');
-
-    // ── Step 3: per-mount results ───────────────────────────────────────────
+    // ── Step 2: Scan each mount point ─────────────────────────────────────
     const results = [];
+
     for (const mp of mounts) {
-      // Check accessibility
-      let itemCount = 0, subPath = null;
+      // Check accessibility + count items
+      let accessible = false;
+      let itemCount  = 0;
+      let subPath    = null;
+
       try {
-        // Check the mount root itself
-        await Promise.race([client.cd(mp), new Promise((_, r) => setTimeout(() => r(new Error('timeout')), 3000))]);
+        await Promise.race([
+          client.cd(mp),
+          new Promise((_, r) => setTimeout(() => r(new Error('timeout')), 3000))
+        ]);
         const rootList = await Promise.race([
           client.list(),
           new Promise((_, r) => setTimeout(() => r(new Error('timeout')), 3000))
         ]);
-        // Try to find the game subfolder
-        const gameDirs = ['etaHEN/games', 'PS5', 'PS4', 'games'];
-        for (const sub of gameDirs) {
+        accessible = true;
+
+        // Find game subfolder for display
+        for (const sub of ['etaHEN/games', 'games', 'PS5', 'PS4']) {
           try {
-            await Promise.race([client.cd(mp + '/' + sub), new Promise((_, r) => setTimeout(() => r(new Error('timeout')), 2000))]);
+            await Promise.race([
+              client.cd(mp + '/' + sub),
+              new Promise((_, r) => setTimeout(() => r(new Error('timeout')), 2000))
+            ]);
             const subList = await Promise.race([
               client.list(),
               new Promise((_, r) => setTimeout(() => r(new Error('timeout')), 2000))
@@ -3742,55 +3770,45 @@ ipcMain.handle('ftp-storage-info', async (_event, config, scannedItems = []) => 
             }
           } catch (_) {}
         }
-        if (!itemCount && rootList && rootList.length) {
-          itemCount = rootList.length;
-        }
+        if (!itemCount && rootList) itemCount = rootList.length;
       } catch (_) {
-        continue; // not accessible — skip
+        continue; // not accessible — skip silently
       }
 
-      // ── Disk space: command probe → MLSD → proc fallback → hardware spec ─
-      let space = await probeFtpCommands(mp);
+      // ── Probe disk space ──────────────────────────────────────────────────
+      // probeMountSpace cds to the mount first, then tries all known commands.
+      const space = await probeMountSpace(mp);
 
-      if (!space.available && !space.total) {
-        const mlsd = await probeMlsd(mp);
-        if (mlsd) space = mlsd;
-      }
-
-      // Fall back to global probe result
-      if (!space.available && !space.total && (globalSpace.available || globalSpace.total)) {
-        space = { ...globalSpace };
-      }
-
-      // ── Hardware-spec fallback for known PS5 partitions ──────────────────
-      // /data is always the internal SSD on every PS5.
-      // If we have scanned games, compute free = known_total - used_by_games.
       const gamesOnMount = gamesByMount[mp] || { totalSize: 0, count: 0 };
-      let totalHardware   = 0;
-      let availHardware   = 0;
-      let isHardwareFallback = false;
 
+      // ── Hardware-spec fallback for /data (internal SSD) ───────────────────
+      let isHardwareFallback = false;
+      let hardwareTotal = 0, hardwareAvail = 0;
       if (!space.total && mp === '/data') {
-        totalHardware  = PS5_INTERNAL_TOTAL;
-        availHardware  = gamesOnMount.totalSize > 0
+        hardwareTotal    = PS5_INTERNAL_TOTAL;
+        hardwareAvail    = gamesOnMount.totalSize > 0
           ? Math.max(0, PS5_INTERNAL_TOTAL - gamesOnMount.totalSize)
-          : 0; // can't compute free without knowing other disk usage
+          : 0;
         isHardwareFallback = true;
       }
 
       results.push({
         path:              mp,
+        device:            mountDeviceMap[mp] || null,
         subPath,
         itemCount,
-        available:         space.available  || availHardware,
-        total:             space.total      || totalHardware,
+        available:         space.available || hardwareAvail,
+        total:             space.total     || hardwareTotal,
         usedByGames:       gamesOnMount.totalSize,
         gameCount:         gamesOnMount.count,
         isHardwareFallback,
-        spaceKnown:        !!(space.available || space.total || totalHardware),
+        spaceMethod:       space.method,   // which command worked (for debugging)
+        spaceKnown:        !!(space.available || space.total || hardwareTotal),
       });
     }
+
     return results;
+
   } catch (e) {
     return { error: e.message };
   } finally {

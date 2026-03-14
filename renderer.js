@@ -463,7 +463,7 @@
     imgEl.addEventListener('click', onLeave);
   }
 
-  function openConflictModal(conflicts, onChoice) {
+  function openConflictModal(conflicts, onChoice, onCancelCb) {
     const backdrop = $('conflictModalBackdrop');
     const listEl = $('conflictList');
     const proceedBtn = $('conflictProceed');
@@ -502,7 +502,9 @@
     };
     const onCancel = () => {
       cleanup();
-      onChoice && onChoice('skip');
+      // Call dedicated cancel callback (does NOT start the transfer).
+      // Fall back to closing silently if no cancel handler supplied.
+      onCancelCb ? onCancelCb() : undefined;
     };
 
     proceedBtn.addEventListener('click', onProceed);
@@ -572,12 +574,18 @@
       backdrop.setAttribute('aria-hidden', 'true');
       btnGo.removeEventListener('click', onGo);
       btnCancel.removeEventListener('click', onCancel);
+      document.removeEventListener('keydown', onKeydown);
+      backdrop.removeEventListener('click', onBackdropClick);
     };
     const onGo = () => { cleanup(); onProceedCb && onProceedCb(); };
     const onCancel = () => { cleanup(); onCancelCb && onCancelCb(); };
+    const onKeydown = (e) => { if (e.key === 'Escape') onCancel(); };
+    const onBackdropClick = (e) => { if (e.target === backdrop) onCancel(); };
 
     btnGo.addEventListener('click', onGo);
     btnCancel.addEventListener('click', onCancel);
+    document.addEventListener('keydown', onKeydown, { once: true });
+    backdrop.addEventListener('click', onBackdropClick);
     backdrop.style.display = 'flex';
     backdrop.setAttribute('aria-hidden', 'false');
   }
@@ -1186,16 +1194,23 @@
         };
 
         if (conflicts.length) {
-          openConflictModal(conflicts, async (choice) => {
-            overwriteMode = choice || 'rename';
-            try {
-              await runOperation();
-            } catch (e) {
-              err('runOperation (conflict path) error:', e);
-              setResultModalBusy(false);
-              toast('Operation failed: ' + (e.message || String(e)));
+          openConflictModal(
+            conflicts,
+            async (choice) => {
+              overwriteMode = choice || 'rename';
+              try {
+                await runOperation();
+              } catch (e) {
+                err('runOperation (conflict path) error:', e);
+                setResultModalBusy(false);
+                toast('Operation failed: ' + (e.message || String(e)));
+              }
+            },
+            () => {
+              // User cancelled the conflict modal — unlock UI.
+              setAppBusy(false);
             }
-          });
+          );
         } else {
           try {
             await runOperation();
@@ -1208,7 +1223,12 @@
       };
 
 
-      openConfirmModal(preview, { action, layout }, proceedAfterConfirm, () => {});
+      openConfirmModal(preview, { action, layout }, proceedAfterConfirm, () => {
+        // User cancelled the confirm modal — unlock UI immediately.
+        // setAppBusy(true) fired at the top of goClickHandler; without this
+        // the app stays locked until the user refreshes.
+        setAppBusy(false);
+      });
     } catch (e) {
       err('ensureAndPopulate error', e);
       toast('Operation failed: ' + (e.message || String(e)));
@@ -3348,48 +3368,63 @@
                   const hasTotal = s.total > 0;
                   const hasGames = s.usedByGames > 0;
                   const hasItems = s.itemCount > 0;
+                  const hasAnyData = hasAvail || hasTotal || hasGames;
 
                   let spaceStr = '', spaceNote = '', bar = '';
 
                   if (hasAvail && hasTotal) {
+                    // Full picture: free + total → show bar + label
                     const usedBytes = s.total - s.available;
-                    const pct = Math.round((usedBytes / s.total) * 100);
+                    const pct = Math.min(100, Math.round((usedBytes / s.total) * 100));
                     const col = pct > 85 ? '#f87171' : pct > 65 ? '#fbbf24' : '#3b82f6';
-                    const label = s.isHardwareFallback
-                      ? `${bytesToHuman(usedBytes)} used of ~${bytesToHuman(s.total)}`
-                      : `${bytesToHuman(s.available)} free of ${bytesToHuman(s.total)}`;
-                    spaceStr = label;
                     if (s.isHardwareFallback) {
-                      spaceNote = `<div style="font-size:11px;color:rgba(148,163,184,0.5);margin-top:3px;">~${bytesToHuman(s.total)} usable on PS5 internal SSD · games only, other system usage not counted</div>`;
+                      spaceStr = `${bytesToHuman(usedBytes)} used of ~${bytesToHuman(s.total)}`;
+                      spaceNote = `<div style="font-size:10.5px;color:rgba(148,163,184,0.45);margin-top:3px;">~${bytesToHuman(s.total)} usable · estimate based on PS5 internal SSD spec</div>`;
+                    } else {
+                      spaceStr = `${bytesToHuman(s.available)} free of ${bytesToHuman(s.total)}`;
                     }
-                    bar = `<div style="background:rgba(255,255,255,0.07);border-radius:4px;height:5px;margin-top:8px;overflow:hidden;" title="${pct}% used"><div style="background:${col};width:${pct}%;height:100%;border-radius:4px;"></div></div>`;
-                  } else if (hasAvail) {
+                    bar = `<div style="background:rgba(255,255,255,0.07);border-radius:4px;height:5px;margin-top:7px;overflow:hidden;" title="${pct}% used"><div style="background:${col};width:${pct}%;height:100%;border-radius:4px;transition:width .3s;"></div></div>`;
+
+                  } else if (hasAvail && !hasTotal) {
+                    // Only free space known (e.g. AVBL returned bytes but no total)
                     spaceStr = `${bytesToHuman(s.available)} free`;
-                  } else if (hasTotal) {
-                    // Hardware spec known but no free space — show total + games used
-                    const pct = hasGames ? Math.round((s.usedByGames / s.total) * 100) : 0;
-                    const col = pct > 85 ? '#f87171' : pct > 65 ? '#fbbf24' : '#3b82f6';
+                    if (hasGames) {
+                      spaceNote = `<div style="font-size:10.5px;color:rgba(148,163,184,0.5);margin-top:3px;">${bytesToHuman(s.usedByGames)} in ${s.gameCount} scanned game${s.gameCount !== 1 ? 's' : ''}</div>`;
+                    }
+
+                  } else if (!hasAvail && hasTotal) {
+                    // Only total known (hardware fallback with no free data)
                     spaceStr = `${bytesToHuman(s.total)} total`;
                     if (hasGames) {
-                      spaceNote = `<div style="font-size:11px;color:rgba(148,163,184,0.5);margin-top:3px;">${bytesToHuman(s.usedByGames)} in scanned games</div>`;
-                      bar = `<div style="background:rgba(255,255,255,0.07);border-radius:4px;height:5px;margin-top:8px;overflow:hidden;" title="${pct}% used by games"><div style="background:${col};width:${pct}%;height:100%;border-radius:4px;"></div></div>`;
+                      const pct = Math.min(100, Math.round((s.usedByGames / s.total) * 100));
+                      const col = pct > 85 ? '#f87171' : pct > 65 ? '#fbbf24' : '#3b82f6';
+                      spaceNote = `<div style="font-size:10.5px;color:rgba(148,163,184,0.5);margin-top:3px;">${bytesToHuman(s.usedByGames)} in ${s.gameCount} scanned game${s.gameCount !== 1 ? 's' : ''}</div>`;
+                      bar = `<div style="background:rgba(255,255,255,0.07);border-radius:4px;height:5px;margin-top:7px;overflow:hidden;" title="${pct}% used by games"><div style="background:${col};width:${pct}%;height:100%;border-radius:4px;transition:width .3s;"></div></div>`;
                     }
+
                   } else if (hasGames) {
+                    // No disk space data at all, but we know game sizes from the scan
                     spaceStr = `${bytesToHuman(s.usedByGames)} in ${s.gameCount} game${s.gameCount !== 1 ? 's' : ''}`;
-                    spaceNote = `<div style="font-size:11px;color:rgba(148,163,184,0.5);margin-top:3px;">Scanned game data only · total capacity not available</div>`;
+                    spaceNote = `<div style="font-size:10.5px;color:rgba(148,163,184,0.45);margin-top:3px;">Drive capacity unavailable · this PS5 payload does not report free space</div>`;
+
                   } else {
-                    spaceStr = 'No games';
+                    spaceStr = 'Accessible · no game data';
                   }
+
+                  // Show which FTP command succeeded (dev aid, subtle)
+                  const methodTag = s.spaceMethod
+                    ? `<span style="font-size:9.5px;color:rgba(148,163,184,0.3);margin-left:5px;" title="Space reported via ${Utils.escapeHtml(s.spaceMethod)}">${Utils.escapeHtml(s.spaceMethod)}</span>`
+                    : '';
 
                   const itemLabel = hasItems
                     ? `<div style="font-size:11px;color:var(--muted);margin-top:2px;">${s.itemCount} folder${s.itemCount !== 1 ? 's' : ''}${s.subPath ? ` · ${Utils.escapeHtml(s.subPath)}` : ''}</div>`
                     : '';
 
-                  const dimmed = !hasGames && !hasItems;
+                  const dimmed = !hasAnyData && !hasItems;
                   return `<div style="padding:10px 0;border-bottom:1px solid rgba(255,255,255,0.06);${dimmed ? 'opacity:0.35;' : ''}">
                     <div style="display:flex;justify-content:space-between;align-items:baseline;font-size:13px;gap:12px;">
-                      <span style="font-weight:600;color:var(--title);flex-shrink:0;">${Utils.escapeHtml(s.path)}</span>
-                      <span style="color:${hasGames||hasAvail||hasTotal ? 'var(--title)' : 'var(--muted)'};font-size:12px;font-weight:${hasGames||hasAvail||hasTotal ? '500' : '400'};text-align:right;">${spaceStr}</span>
+                      <span style="font-weight:600;color:var(--title);flex-shrink:0;">${Utils.escapeHtml(s.path)}${methodTag}</span>
+                      <span style="color:${hasAnyData ? 'var(--title)' : 'var(--muted)'};font-size:12px;font-weight:${hasAnyData ? '500' : '400'};text-align:right;white-space:nowrap;">${spaceStr}</span>
                     </div>${itemLabel}${spaceNote}${bar}</div>`;
                 }).join('');
               }
