@@ -5,7 +5,7 @@
 // biggest scan speed win on any drive type.
 process.env.UV_THREADPOOL_SIZE = '128';
 
-const { app, BrowserWindow, ipcMain, dialog, shell, clipboard } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, clipboard, Tray, Menu, nativeImage } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
@@ -1843,31 +1843,32 @@ const PER_GAME_WORKERS = 32;
 // Worker code — accepts { dirs: [...] } (parallel chunk) or { folderPath } (fallback).
 const SIZE_WORKER_CODE = `
 const { parentPort, workerData } = require('worker_threads');
-const fs = require('fs');
+const fs   = require('fs');
 const path = require('path');
 
-// Extended-length path for Windows to handle paths > 260 chars (OneDrive, Dropbox)
-function ext(p) {
-  if (process.platform !== 'win32' || !p || p.length <= 248) return p;
-  const n = p.replace(/\//g, '\\\\');
-  if (/^[A-Za-z]:\\\\/.test(n)) return '\\\\\\\\?\\\\' + n;
-  if (n.startsWith('\\\\\\\\')) return '\\\\\\\\?\\\\UNC\\\\' + n.slice(2);
-  return p;
-}
-
+// Walk a directory tree and sum file sizes.
+// Uses plain readdirSync + statSync (NO withFileTypes) so NTFS junction
+// points (Sc0, Sc1, -app folders — how PS5 game data is stored on Windows)
+// are followed correctly. statSync follows junctions automatically.
+// withFileTypes classifies junctions as neither file/dir/symlink on some
+// Windows+Node combinations, causing game data folders to be silently skipped.
 function sizeDirs(roots) {
   let total = 0;
   const stack = Array.isArray(roots) ? [...roots] : [roots];
   while (stack.length) {
     const dir = stack.pop();
-    let entries;
-    try { entries = fs.readdirSync(ext(dir), { withFileTypes: true }); }
+    let names;
+    try { names = fs.readdirSync(dir); }
     catch (_) { continue; }
-    for (const ent of entries) {
-      const full = path.join(dir, ent.name);
-      if (ent.isFile()) {
-        try { total += Number(fs.statSync(ext(full)).size) || 0; } catch (_) {}
-      } else if ((ent.isDirectory() || ent.isSymbolicLink()) && !ent.name.startsWith('.')) {
+    for (const name of names) {
+      if (name.startsWith('.')) continue;
+      const full = path.join(dir, name);
+      let st;
+      try { st = fs.statSync(full); }  // follows junctions/symlinks
+      catch (_) { continue; }
+      if (st.isFile()) {
+        total += st.size || 0;
+      } else if (st.isDirectory()) {
         stack.push(full);
       }
     }
@@ -1876,13 +1877,12 @@ function sizeDirs(roots) {
 }
 
 try {
-  const { folderPath, dirs } = workerData;
-  parentPort.postMessage({ size: sizeDirs(dirs || folderPath) });
+  const { dirs } = workerData;
+  parentPort.postMessage({ size: sizeDirs(dirs) });
 } catch (e) {
   parentPort.postMessage({ size: 0, error: e.message });
 }
 `;
-
 // Split a game's subdirs across up to 8 worker threads for ~8x speed on large games.
 const MAX_SPLIT_WORKERS = 8;
 
@@ -1903,59 +1903,11 @@ function spawnSizeWorker(workerData, sig) {
 
 async function calcSingleGameSize(item, sig) {
   const folderPath = item.folderPath;
-  if (!folderPath) return 0;
-  if (sig?.aborted) return 0;
-
-  let rootEntries;
-  try { rootEntries = fs.readdirSync(folderPath, { withFileTypes: true }); }
-  catch (e) {
-    console.warn('[SizeCalc] Cannot read folder:', folderPath, e.message);
-    return 0;
-  }
-
-  let rootFileSize = 0;
-  const subdirs = [];
-  for (const ent of rootEntries) {
-    if (sig?.aborted) return 0;
-    if (ent.isFile()) {
-      try { rootFileSize += fs.statSync(path.join(folderPath, ent.name)).size; } catch (_) {}
-    } else if ((ent.isDirectory() || ent.isSymbolicLink()) && !ent.name.startsWith('.')) {
-      subdirs.push(path.join(folderPath, ent.name));
-    }
-  }
-
-  if (sig?.aborted) return 0;
-  if (!subdirs.length) return rootFileSize;
-
-  // Distribute subdirs across workers round-robin
-  const nWorkers = Math.min(subdirs.length, MAX_SPLIT_WORKERS);
-  const chunks   = Array.from({ length: nWorkers }, () => []);
-  subdirs.forEach((d, i) => chunks[i % nWorkers].push(d));
-
-  const sizes = await Promise.all(chunks.map(dirs => spawnSizeWorker({ dirs }, sig)));
-
-  // If aborted, workers may have returned 0 — don't use this result
-  if (sig?.aborted) return 0;
-
-  const total = rootFileSize + sizes.reduce((a, b) => a + b, 0);
-
-  // Sanity: if total is unreasonably small for a folder with subdirs, log a warning
-  // (helps surface issues in the console without crashing)
-  if (total < 1024 * 1024 && subdirs.length > 0 && !sig?.aborted) {
-    console.warn('[SizeCalc] Suspiciously small size for', folderPath,
-      '(' + total + ' bytes, ' + subdirs.length + ' subdirs) — retrying with single worker');
-    const retry = await spawnSizeWorker({ dirs: [folderPath] }, sig);
-    if (!sig?.aborted && retry > total) {
-      console.log('[SizeCalc] Retry got', retry, 'for', folderPath);
-      return retry;
-    }
-  } else if (total === 0 && !sig?.aborted) {
-    console.warn('[SizeCalc] Got 0 for', folderPath, '— retrying with single worker');
-    const retry = await spawnSizeWorker({ dirs: [folderPath] }, sig);
-    if (!sig?.aborted) return retry;
-  }
-
-  return total;
+  if (!folderPath || sig?.aborted) return 0;
+  // Delegate entirely to the worker which uses plain statSync (follows NTFS junctions).
+  // One worker per game — simpler, no sub-dir splitting coordination.
+  const sz = await spawnSizeWorker({ dirs: [folderPath] }, sig);
+  return (sig?.aborted) ? 0 : (sz || 0);
 }
 
 
@@ -1972,8 +1924,7 @@ async function calcAllGameSizes(gameItems, sig, onGameDone) {
   // ── Cache pass — instant results for already-measured games ──────────────
   const uncached = [];
   for (const item of gameItems) {
-    const raw = item.folderPath ? localSizeCache.get(item.folderPath) : undefined;
-    // Cache entries may be plain numbers (legacy) or { size, mtimeMs } objects
+    const raw    = item.folderPath ? localSizeCache.get(item.folderPath) : undefined;
     const cached = typeof raw === 'number' ? raw : (raw?.size ?? undefined);
     if (cached !== undefined && cached > 0) {
       item.totalSize = cached;
@@ -1984,70 +1935,43 @@ async function calcAllGameSizes(gameItems, sig, onGameDone) {
   }
   if (!uncached.length) return;
 
-  // Worker thread sizing: fast/slow pass so small games appear immediately
-  const deferred = [];
-  const fastLimit = makeConcurrencyLimiter(FAST_CONCURRENCY);
+  // ── Single sizing pass — no timeout per game ──────────────────────────────
+  // Design rationale: the previous fast/slow-pass split with a per-game timeout
+  // caused wrong sizes because: (1) the timeout aborted workers early, partial
+  // results leaked into the cache; (2) combineAbortSignals on the timeout signal
+  // caused workers to terminate mid-walk on NTFS junction points.
+  //
+  // Now: each game uses ONE worker that walks the full tree with statSync.
+  // Workers run until completion. The outer sig is the ONLY abort path
+  // (user starts a new scan). No intermediate timeouts.
+  // Fast games complete and stream to the UI immediately via onGameDone.
+  // Large games appear when the walk finishes — correct size guaranteed.
+  const sizeLimit = makeConcurrencyLimiter(FAST_CONCURRENCY);
 
   await Promise.all(uncached.map(item =>
-    fastLimit(async () => {
+    sizeLimit(async () => {
       if (sig?.aborted) return;
-      const fastCtrl = new AbortController();
-      const fastSig  = sig ? combineAbortSignals(sig, fastCtrl.signal) : fastCtrl.signal;
-      let timedOut   = false;
 
-      const sizePromise = calcSingleGameSize(item, fastSig).then(sz => {
-        // Guard 1: timed out — result came from aborted workers (partial/0), don't cache.
-        // Guard 2: outer signal aborted (new scan started) — combineAbortSignals fired,
-        //   workers terminated early, result is partial. Caching it would poison all
-        //   subsequent scans with tiny (e.g. sce_sys-only) values for up to 30 days.
-        const outerAborted = sig?.aborted;
-        if (!timedOut && !outerAborted) {
-          item.totalSize = sz;
-          if (item.folderPath && sz > 0) {
-            // Store size with current folder mtime so future scans can detect changes
-            try {
-              const st = fs.statSync(item.folderPath);
-              localSizeCache.set(item.folderPath, { size: sz, mtimeMs: st.mtimeMs });
-            } catch (_) {
-              localSizeCache.set(item.folderPath, sz); // fallback: store plain number
-            }
-          }
-          try { onGameDone(item); } catch (_) {}
-        }
-        return sz;
-      });
+      const sz = await calcSingleGameSize(item, sig);
 
-      const result = await Promise.race([
-        sizePromise,
-        new Promise(r => setTimeout(() => { timedOut = true; fastCtrl.abort(); r('timeout'); }, FAST_TIMEOUT_MS))
-      ]);
-
-      if (result === 'timeout') {
-        deferred.push(item);
+      // Only cache if the outer signal didn't abort (avoids caching partial results
+      // if a new scan started while this worker was running).
+      if (sig?.aborted) return;
+      if (sz <= 0) {
+        // Got 0 for a real game folder — log for user to diagnose in DevTools
+        console.warn('[SizeCalc] Got 0 bytes for', item.folderPath,
+          '— folder may be empty, inaccessible, or all content is in inaccessible junctions.');
+        return;
       }
-    })
-  ));
 
-  if (!deferred.length) return;
-
-  // Slow pass — no timeout, always completes. Workers use null signal so they run fully.
-  // Still guard outer sig before caching: if a new scan started while slow pass was
-  // waiting in fastLimit queue, the result is valid but no one is listening anymore.
-  await Promise.all(deferred.map(item =>
-    fastLimit(async () => {
-      if (sig?.aborted) return; // new scan started — skip entirely, don't cache
-      const sz = await calcSingleGameSize(item, null); // null = no worker abort
-      if (sig?.aborted) return; // aborted while worker was running — don't cache partial
       item.totalSize = sz;
-      if (item.folderPath && sz > 0) {
-        try {
-          const st = fs.statSync(item.folderPath);
-          localSizeCache.set(item.folderPath, { size: sz, mtimeMs: st.mtimeMs });
-        } catch (_) {
-          localSizeCache.set(item.folderPath, sz);
-        }
-        scheduleLocalSizeCacheSave();
+      try {
+        const st = fs.statSync(item.folderPath);
+        localSizeCache.set(item.folderPath, { size: sz, mtimeMs: st.mtimeMs });
+      } catch (_) {
+        localSizeCache.set(item.folderPath, sz);
       }
+      scheduleLocalSizeCacheSave();
       try { onGameDone(item); } catch (_) {}
     })
   ));
@@ -2869,7 +2793,7 @@ async function doEnsureAndPopulate(event, opts) {
         const rawVer = parsed?.contentVersion || parsed?.masterVersion || it?.contentVersion || it?.version || '';
         const verSuffix = rawVer ? ` (${sanitize(rawVer)})` : '';
         // safeGameWithVer is used for all game-name-based layouts.
-        // ppsa-only uses the PPSA ID directly so no version suffix there.
+                // ppsa-only: PPSA00000_00 (version), e.g. PPSA21564_00 (01.007.000)
         const safeGameWithVer = safeGame + verSuffix;
 
         let srcFolder = it.ppsaFolderPath || it.folderPath || null;
@@ -2899,7 +2823,7 @@ async function doEnsureAndPopulate(event, opts) {
           finalPpsaName = srcBase.replace(/[-_]*app\d*.*$/i, '').replace(/[-_]+$/,'') || srcBase;
         }
 
-        if (layout === 'ppsa-only') finalTarget = pathJoin(dest, finalPpsaName);
+        if (layout === 'ppsa-only') finalTarget = pathJoin(dest, finalPpsaName + verSuffix);
         else if (layout === 'game-only') finalTarget = pathJoin(dest, safeGameWithVer);
         else if (layout === 'etahen') finalTarget = pathJoin(dest, 'etaHEN', 'games', safeGameWithVer);
         else if (layout === 'itemzflow') finalTarget = pathJoin(dest, 'games', safeGameWithVer);
@@ -3423,26 +3347,14 @@ ipcMain.handle('resume-transfer', async (event, state) => {
 ipcMain.handle('get-api-status', async () => {
   return {
     port:       apiServer.getPort(),
-    keyPreview: (() => {
-      const k = apiServer.getKey() || '';
-      return k.length >= 12 ? k.slice(0, 8) + '…' + k.slice(-4) : k;
-    })(),
+    keyPreview: 'N/A — no auth required',
+    noAuth:     true,
   };
-});
-
-ipcMain.handle('get-api-key', async () => {
-  return { key: apiServer.getKey() };
-});
-
-ipcMain.handle('regenerate-api-key', async () => {
-  const newKey = apiServer.regenerateKey();
-  return {
-    key:        newKey,
-    keyPreview: newKey ? newKey.slice(0, 8) + '…' + newKey.slice(-4) : '',
-  };
-});
-
-// ── FTP test connection ───────────────────────────────────────────────────────
+});ipcMain.handle('get-api-key', async () => {
+  return { key: null, message: 'API key authentication removed — no key required' };
+});ipcMain.handle('regenerate-api-key', async () => {
+  return { keyPreview: 'N/A', message: 'API key authentication removed' };
+});// ── FTP test connection ───────────────────────────────────────────────────────
 ipcMain.handle('ftp-test-connection', async (_event, config) => {
   const start = Date.now();
   const client = new ftp.Client(8000); // 8s timeout
@@ -3489,15 +3401,20 @@ ipcMain.handle('ps5-discover', async (_event, timeoutMs = 3000) => {
   const tcpHits = [];  // [{ip, port}] — raw TCP open
   // Use a generous per-probe timeout so PS5s on Wi-Fi or busy networks respond in time.
   // Dividing by 6 gives ~1000 ms with the 6000 ms call from the renderer.
-  const perProbeTimeout = Math.max(500, Math.floor(timeoutMs / 6));
+  // perProbeTimeout: enough for Wi-Fi PS5s (~200ms RTT + buffer).
+  // All probes run in parallel so this IS the total scan wall-time.
+  const perProbeTimeout = Math.max(800, Math.floor(timeoutMs / 4));
 
+  // All subnets in parallel — one giant Promise.all so all probes race together.
+  // Previously subnets were scanned sequentially (await inside the loop) which
+  // meant 3 subnets × perProbeTimeout = 3× the wait time. Now all 254×N IPs
+  // probe simultaneously regardless of how many subnets are detected.
+  const allProbes = [];
   for (const subnet of Array.from(subnets)) {
-    const probes = [];
     for (let n = 1; n <= 254; n++) {
       const ip = `${subnet}.${n}`;
-      // Don't skip any host IPs — a PS5 could theoretically have any address in the subnet.
       for (const port of PS5_PORTS) {
-        probes.push(new Promise(resolve => {
+        allProbes.push(new Promise(resolve => {
           const sock = new net.Socket();
           let done = false;
           const finish = (hit) => {
@@ -3513,8 +3430,8 @@ ipcMain.handle('ps5-discover', async (_event, timeoutMs = 3000) => {
         }));
       }
     }
-    await Promise.all(probes);
   }
+  await Promise.all(allProbes);
 
   if (!tcpHits.length) return [];
 
@@ -4226,7 +4143,15 @@ ipcMain.handle('record-transfer-checksums', async (_event, entries) => {
 });
 
 // App bootstrap (unchanged)
+// ── Embedded / headless mode ─────────────────────────────────────────────────
+// Launch with --embedded to run as a background API-only service (no window):
+//   PS5Vault.exe --embedded
+// The REST API server starts normally on http://127.0.0.1:3731 with API key
+// auth. A system-tray icon lets the user see the process is running and quit.
+const EMBEDDED_MODE = process.argv.includes('--embedded');
+
 let mainWindow;
+let embeddedTray = null;
 const gotTheLock = app.requestSingleInstanceLock();
 if (!gotTheLock) {
   app.quit();
@@ -4238,16 +4163,44 @@ if (!gotTheLock) {
     }
   });
   app.whenReady().then(() => {
-  loadFtpSizeCacheFromDisk(); loadLocalSizeCacheFromDisk(); loadChecksumDb(); createWindow();
-  // Silently check for updates 5 s after launch — delay avoids blocking startup I/O
-  setTimeout(() => { if (mainWindow) checkForUpdates(mainWindow); }, 5000);
+  loadFtpSizeCacheFromDisk(); loadLocalSizeCacheFromDisk(); loadChecksumDb();
+
+  if (EMBEDDED_MODE) {
+    // ── Headless mode — no window, API server only ──────────────────────────
+    console.log('[PS5 Vault] Embedded mode — API starting on http://127.0.0.1:3731');
+    try {
+      const iconPath = path.join(__dirname, 'assets', 'icon.png');
+      const trayIcon = fs.existsSync(iconPath)
+        ? nativeImage.createFromPath(iconPath).resize({ width: 16, height: 16 })
+        : nativeImage.createEmpty();
+      embeddedTray = new Tray(trayIcon);
+      embeddedTray.setToolTip('PS5 Vault ' + VERSION + ' — Embedded (API :3731)');
+      embeddedTray.setContextMenu(Menu.buildFromTemplate([
+        { label: 'PS5 Vault ' + VERSION, enabled: false },
+        { label: 'API: http://127.0.0.1:3731', enabled: false },
+        { type: 'separator' },
+        { label: 'Open UI window', click: () => {
+            if (!mainWindow || mainWindow.isDestroyed()) createWindow();
+            else { mainWindow.show(); mainWindow.focus(); }
+          }
+        },
+        { type: 'separator' },
+        { label: 'Quit PS5 Vault', click: () => app.quit() },
+      ]));
+    } catch (e) {
+      console.warn('[PS5 Vault] Tray icon failed:', e.message);
+    }
+  } else {
+    // ── Normal mode — create the UI window ──────────────────────────────────
+    createWindow();
+    // Silently check for updates 5 s after launch
+    setTimeout(() => { if (mainWindow) checkForUpdates(mainWindow); }, 5000);
+  }
 
   // ── Start local developer API server ──────────────────────────────────────
   // Creates http://127.0.0.1:3731/api/v1 with API key auth.
   // The API key is auto-generated on first run and saved to userData.
   try {
-    const apiKeyPath = path.join(app.getPath('userData'), 'ps5vault-api-key.json');
-
     // Fake sender used when API-triggered scans need IPC-like progress events
     const apiSender = {
       id:          -9999,
@@ -4278,12 +4231,40 @@ if (!gotTheLock) {
     };
 
     apiServer.start({
-      keyPath: apiKeyPath,
       state: {
         getVersion:      () => VERSION,
         getLibrary:      () => apiLibrary,
         getScanStatus:   () => ({ active: apiScanActive, source: apiScanSource, progress: { ...apiScanProgress } }),
         getTransferStatus: () => ({ active: apiTransferActive, progress: { ...apiTransferProg } }),
+        triggerRename: async (item, newName) => {
+          const { path: nodePath, promises: fsP } = require('fs');
+          const p   = require('path');
+          const oldPath = item.ppsaFolderPath || item.folderPath;
+          if (!oldPath || !p.isAbsolute(oldPath)) throw new Error('Invalid source path');
+          const safeName = sanitize(newName);
+          if (!safeName || safeName === 'Unknown') throw new Error('Invalid new name');
+          if (safeName.includes('/') || safeName.includes('\\')) throw new Error('Name cannot contain path separators');
+          const newPath = p.join(p.dirname(oldPath), safeName);
+          if (p.dirname(newPath) !== p.dirname(oldPath)) throw new Error('Path traversal not allowed');
+          await fsP.rename(oldPath, newPath);
+          // Update library entry in-place so subsequent API calls return the new path
+          const entry = apiLibrary.find(g => (g.ppsaFolderPath || g.folderPath) === oldPath);
+          if (entry) {
+            entry.folderPath     = newPath;
+            entry.ppsaFolderPath = newPath;
+            entry.folderName     = p.basename(newPath);
+          }
+          return { newPath };
+        },
+        triggerDelete: async (item) => {
+          const pathToDel = item.ppsaFolderPath || item.folderPath;
+          if (!pathToDel || !require('path').isAbsolute(pathToDel)) throw new Error('Invalid path');
+          await removePathRecursive(pathToDel);
+          // Remove from library
+          const idx = apiLibrary.findIndex(g => (g.ppsaFolderPath || g.folderPath) === pathToDel);
+          if (idx !== -1) apiLibrary.splice(idx, 1);
+          return { deleted: pathToDel };
+        },
         triggerScan: async (source) => {
           if (apiScanActive) throw new Error('Scan already running');
           apiScanActive   = true;
@@ -4340,8 +4321,11 @@ if (!gotTheLock) {
   }
   });
 }
-app.on('window-all-closed', () => { app.quit(); });
-app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
+app.on('window-all-closed', () => {
+  // In embedded mode there is intentionally no window — never quit on close.
+  if (!EMBEDDED_MODE) app.quit();
+});
+app.on('activate', () => { if (!EMBEDDED_MODE && BrowserWindow.getAllWindows().length === 0) createWindow(); });
 
 function createWindow() {
   try {

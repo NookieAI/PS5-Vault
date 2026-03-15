@@ -3,73 +3,49 @@
 // Local HTTP REST + Server-Sent Events (SSE) server.
 // No extra npm dependencies — uses Node.js built-in `http` module only.
 //
-// Base URL:  http://127.0.0.1:3731/api/v1
-// Auth:      X-API-Key: <key>  (header on every request)
+// Binds to 127.0.0.1 ONLY — never reachable outside the local machine.
+// No authentication required (localhost-only is the security boundary).
 //
-// REST endpoints:
-//   GET  /api/v1/status              — app status, version, library count
-//   GET  /api/v1/library             — list all scanned games
-//   GET  /api/v1/library/:ppsa       — single game by PPSA ID
-//   GET  /api/v1/library/:ppsa/icon  — game cover art (PNG)
-//   POST /api/v1/scan                — trigger scan { source: "..." }
-//   GET  /api/v1/scan/status         — current scan state
-//   POST /api/v1/transfer            — trigger transfer (same opts as ensure-and-populate)
-//   GET  /api/v1/transfer/status     — current transfer state
-//   GET  /api/v1/events              — SSE stream (live scan/transfer events)
+// Base URL:  http://127.0.0.1:3731/api/v1
+//
+// ── Library ──────────────────────────────────────────────────────────────────
+//   GET    /api/v1/library                  list all scanned games
+//   GET    /api/v1/library/:id              single game (PPSA ID or folderName)
+//   GET    /api/v1/library/:id/icon         cover art PNG (Cache-Control: 1h)
+//   GET    /api/v1/library/:id/param        full raw param.json fields
+//   POST   /api/v1/library/:id/rename       rename folder  { name: "New Name" }
+//   DELETE /api/v1/library/:id             permanently delete game folder
+//
+// ── Scan ─────────────────────────────────────────────────────────────────────
+//   POST /api/v1/scan                       start scan  { source: "..." }
+//   GET  /api/v1/scan/status                current scan state
+//
+// ── Transfer ─────────────────────────────────────────────────────────────────
+//   POST /api/v1/transfer                   copy / move games
+//   GET  /api/v1/transfer/status            current transfer state
+//
+// ── App ──────────────────────────────────────────────────────────────────────
+//   GET  /api/v1/status                     health + counts
+//   GET  /api/v1/events                     SSE live event stream
 // ─────────────────────────────────────────────────────────────────────────────
 
-const http   = require('http');
-const crypto = require('crypto');
-const fs     = require('fs');
+const http = require('http');
+const fs   = require('fs');
 
 const API_PORT    = 3731;
 const API_VERSION = 'v1';
 const BASE        = `/api/${API_VERSION}`;
 
-let _state      = null;
-let _keyPath    = null;
-let _apiKey     = null;
-let _server     = null;
+let _state    = null;
+let _server   = null;
 const _sseClients = new Set();
 
-// ── Key management ────────────────────────────────────────────────────────────
-function loadOrCreateKey(keyPath) {
-  try {
-    const data = JSON.parse(fs.readFileSync(keyPath, 'utf8'));
-    if (data && typeof data.key === 'string' && data.key.length === 64) return data.key;
-  } catch (_) {}
-  return _writeNewKey(keyPath);
-}
-
-function _writeNewKey(keyPath) {
-  const key = crypto.randomBytes(32).toString('hex');
-  try { fs.writeFileSync(keyPath, JSON.stringify({ key, createdAt: new Date().toISOString() }), 'utf8'); } catch (_) {}
-  return key;
-}
-
-function regenerateKey() {
-  if (!_keyPath) return null;
-  _apiKey = _writeNewKey(_keyPath);
-  console.log('[API] API key regenerated');
-  return _apiKey;
-}
-
 // ── Helpers ───────────────────────────────────────────────────────────────────
-function authMiddleware(req, res) {
-  const provided = req.headers['x-api-key'];
-  if (!provided || provided !== _apiKey) {
-    res.writeHead(401, corsHeaders({ 'Content-Type': 'application/json' }));
-    res.end(JSON.stringify({ error: 'Unauthorized: missing or invalid X-API-Key header' }));
-    return false;
-  }
-  return true;
-}
-
 function corsHeaders(extra = {}) {
   return {
     'Access-Control-Allow-Origin':  '*',
-    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, X-API-Key',
+    'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type',
     ...extra,
   };
 }
@@ -100,24 +76,94 @@ function readBody(req) {
   });
 }
 
-// Sanitise a game item for external consumers.
-// Strips binary iconPath blobs; exposes only serialisable fields.
+// ── Serialisers ───────────────────────────────────────────────────────────────
+
 function serializeGame(item) {
   if (!item) return null;
+  const p = item.paramParsed || {};
+
+  // Collect all localised titles from param.json localizedParameters
+  const localizedTitles = {};
+  try {
+    const lp = p.localizedParameters || {};
+    for (const [lang, vals] of Object.entries(lp)) {
+      if (vals && vals.titleName) localizedTitles[lang] = vals.titleName;
+    }
+  } catch (_) {}
+
   return {
-    ppsa:        item.ppsa        || null,
-    contentId:   item.contentId   || null,
-    title:       item.displayTitle || item.folderName || null,
-    version:     item.contentVersion || item.version   || null,
-    sdkVersion:  item.sdkVersion  || null,
-    region:      item.region      || null,
-    sizeBytes:   item.totalSize   || null,
-    sizeMb:      item.totalSize   ? Math.round(item.totalSize / 1024 / 1024) : null,
-    folderPath:  item.folderPath  || item.ppsaFolderPath || null,
-    hasIcon:     !!(item.iconPath),
-    fwRequired:  item.fwSku       || null,
-    titleId:     item.titleId     || null,
+    // ── Identity
+    ppsa:            item.ppsa        || null,
+    contentId:       item.contentId   || null,
+    titleId:         item.titleId     || p.titleId || null,
+
+    // ── Display
+    title:           item.displayTitle || item.folderName || null,
+    folderName:      item.folderName   || null,
+    localizedTitles,
+    defaultLanguage: item.region || p.defaultLanguage || null,
+
+    // ── Version / firmware
+    version:         item.contentVersion || item.version || p.contentVersion || p.masterVersion || null,
+    sdkVersion:      item.sdkVersion  || p.sdkVersion  || null,
+    fwRequired:      item.fwSku       || p.requiredSystemSoftwareVersion || null,
+
+    // ── Size
+    sizeBytes:       item.totalSize || null,
+    sizeMb:          item.totalSize ? Math.round(item.totalSize / 1024 / 1024) : null,
+    sizeGb:          item.totalSize ? Math.round((item.totalSize / 1024 / 1024 / 1024) * 100) / 100 : null,
+
+    // ── Location
+    folderPath:      item.folderPath || item.ppsaFolderPath || null,
+    paramPath:       item.paramPath  || null,
+
+    // ── Cover art  (fetch via /icon endpoint)
+    hasIcon:         !!(item.iconPath),
+    iconUrl:         item.ppsa
+      ? `http://127.0.0.1:${API_PORT}${BASE}/library/${item.ppsa}/icon`
+      : null,
+
+    // ── Extra param.json fields
+    contentCategory:         p.contentType    || p.contentCategory    || null,
+    applicationCategoryType: p.applicationCategoryType               || null,
   };
+}
+
+function serializeParam(item) {
+  if (!item) return null;
+  const p = item.paramParsed || {};
+  return {
+    ppsa:       item.ppsa      || null,
+    contentId:  item.contentId || null,
+    titleId:    item.titleId   || p.titleId || null,
+    folderPath: item.folderPath || item.ppsaFolderPath || null,
+    paramPath:  item.paramPath  || null,
+    raw: {
+      titleName:                     p.titleName                     || null,
+      localizedParameters:           p.localizedParameters           || null,
+      contentId:                     p.contentId                     || null,
+      titleId:                       p.titleId                       || null,
+      contentVersion:                p.contentVersion                || null,
+      masterVersion:                 p.masterVersion                 || null,
+      sdkVersion:                    p.sdkVersion                    || null,
+      requiredSystemSoftwareVersion: p.requiredSystemSoftwareVersion || null,
+      defaultLanguage:               p.defaultLanguage               || null,
+      contentType:                   p.contentType                   || null,
+      applicationCategoryType:       p.applicationCategoryType       || null,
+    },
+  };
+}
+
+// Lookup by PPSA ID, folderName, or partial contentId — case-insensitive
+function findGame(id) {
+  const upper = id.toUpperCase();
+  const lib   = _state.getLibrary();
+  return (
+    lib.find(g => (g.ppsa        || '').toUpperCase() === upper) ||
+    lib.find(g => (g.folderName  || '').toUpperCase() === upper) ||
+    lib.find(g => (g.contentId   || '').toUpperCase().includes(upper)) ||
+    null
+  );
 }
 
 // ── SSE broadcast ─────────────────────────────────────────────────────────────
@@ -136,35 +182,9 @@ async function handleRequest(req, res) {
   const pathname = url.pathname.replace(/\/+$/, '') || '/';
   const method   = req.method.toUpperCase();
 
-  // CORS pre-flight
-  if (method === 'OPTIONS') {
-    res.writeHead(204, corsHeaders());
-    res.end();
-    return;
-  }
+  if (method === 'OPTIONS') { res.writeHead(204, corsHeaders()); res.end(); return; }
 
-  // ── SSE stream — auth then persist ──────────────────────────────────────
-  if (pathname === `${BASE}/events` && method === 'GET') {
-    if (!authMiddleware(req, res)) return;
-    res.writeHead(200, corsHeaders({
-      'Content-Type':  'text/event-stream',
-      'Cache-Control': 'no-cache',
-      'Connection':    'keep-alive',
-    }));
-    // Connected welcome event
-    res.write(`data: ${JSON.stringify({ type: 'connected', data: { version: _state.getVersion(), library: _state.getLibrary().length }, ts: Date.now() })}\n\n`);
-    _sseClients.add(res);
-    const ping = setInterval(() => {
-      try { res.write(': ping\n\n'); } catch (_) { clearInterval(ping); _sseClients.delete(res); }
-    }, 25000);
-    req.on('close', () => { clearInterval(ping); _sseClients.delete(res); });
-    return;
-  }
-
-  // All remaining routes require auth
-  if (!authMiddleware(req, res)) return;
-
-  // ── GET /api/v1/status ───────────────────────────────────────────────────
+  // ── GET /api/v1/status ────────────────────────────────────────────────────
   if (pathname === `${BASE}/status` && method === 'GET') {
     jsonOk(res, {
       ok:       true,
@@ -177,52 +197,98 @@ async function handleRequest(req, res) {
     return;
   }
 
-  // ── GET /api/v1/library ──────────────────────────────────────────────────
-  if (pathname === `${BASE}/library` && method === 'GET') {
-    const games = _state.getLibrary().map(serializeGame);
-    jsonOk(res, { count: games.length, games });
+  // ── GET /api/v1/events  (SSE) ─────────────────────────────────────────────
+  if (pathname === `${BASE}/events` && method === 'GET') {
+    res.writeHead(200, corsHeaders({
+      'Content-Type':  'text/event-stream',
+      'Cache-Control': 'no-cache',
+      'Connection':    'keep-alive',
+    }));
+    res.write(`data: ${JSON.stringify({ type: 'connected', data: { version: _state.getVersion(), library: _state.getLibrary().length }, ts: Date.now() })}\n\n`);
+    _sseClients.add(res);
+    const ping = setInterval(() => {
+      try { res.write(': ping\n\n'); } catch (_) { clearInterval(ping); _sseClients.delete(res); }
+    }, 25000);
+    req.on('close', () => { clearInterval(ping); _sseClients.delete(res); });
     return;
   }
 
-  // ── GET /api/v1/library/:ppsa ────────────────────────────────────────────
-  const ppsaMatch = pathname.match(new RegExp(`^${BASE}/library/([^/]+)$`));
-  if (ppsaMatch && method === 'GET') {
-    const ppsa = ppsaMatch[1].toUpperCase();
-    const item = _state.getLibrary().find(g => (g.ppsa || '').toUpperCase() === ppsa);
-    if (!item) { jsonErr(res, 404, `Game not found: ${ppsa}`); return; }
+  // ── GET /api/v1/library ───────────────────────────────────────────────────
+  if (pathname === `${BASE}/library` && method === 'GET') {
+    jsonOk(res, { count: _state.getLibrary().length, games: _state.getLibrary().map(serializeGame) });
+    return;
+  }
+
+  // ── Routes with :id ───────────────────────────────────────────────────────
+  const mBase  = pathname.match(new RegExp(`^${BASE}/library/([^/]+)$`));
+  const mIcon  = pathname.match(new RegExp(`^${BASE}/library/([^/]+)/icon$`));
+  const mParam = pathname.match(new RegExp(`^${BASE}/library/([^/]+)/param$`));
+  const mRen   = pathname.match(new RegExp(`^${BASE}/library/([^/]+)/rename$`));
+
+  // GET /api/v1/library/:id
+  if (mBase && method === 'GET') {
+    const item = findGame(mBase[1]);
+    if (!item) { jsonErr(res, 404, `Game not found: ${mBase[1]}`); return; }
     jsonOk(res, serializeGame(item));
     return;
   }
 
-  // ── GET /api/v1/library/:ppsa/icon ───────────────────────────────────────
-  const iconMatch = pathname.match(new RegExp(`^${BASE}/library/([^/]+)/icon$`));
-  if (iconMatch && method === 'GET') {
-    const ppsa = iconMatch[1].toUpperCase();
-    const item = _state.getLibrary().find(g => (g.ppsa || '').toUpperCase() === ppsa);
+  // DELETE /api/v1/library/:id
+  if (mBase && method === 'DELETE') {
+    const item = findGame(mBase[1]);
+    if (!item) { jsonErr(res, 404, `Game not found: ${mBase[1]}`); return; }
+    try {
+      const result = await _state.triggerDelete(item);
+      jsonOk(res, { ok: true, deleted: result.deleted });
+    } catch (e) { jsonErr(res, 500, e.message); }
+    return;
+  }
+
+  // GET /api/v1/library/:id/icon
+  if (mIcon && method === 'GET') {
+    const item = findGame(mIcon[1]);
     if (!item || !item.iconPath) { jsonErr(res, 404, 'Icon not found'); return; }
     try {
       if (item.iconPath.startsWith('data:')) {
-        // FTP inline base64 — decode and serve
-        const b64  = item.iconPath.split(',')[1] || '';
-        const buf  = Buffer.from(b64, 'base64');
-        res.writeHead(200, corsHeaders({ 'Content-Type': 'image/png', 'Content-Length': String(buf.length) }));
+        const buf = Buffer.from(item.iconPath.split(',')[1] || '', 'base64');
+        res.writeHead(200, corsHeaders({ 'Content-Type': 'image/png', 'Content-Length': String(buf.length), 'Cache-Control': 'public, max-age=3600' }));
         res.end(buf);
       } else {
-        // Local file path — stream it
         const stat = fs.statSync(item.iconPath);
-        res.writeHead(200, corsHeaders({ 'Content-Type': 'image/png', 'Content-Length': String(stat.size) }));
+        res.writeHead(200, corsHeaders({ 'Content-Type': 'image/png', 'Content-Length': String(stat.size), 'Cache-Control': 'public, max-age=3600' }));
         fs.createReadStream(item.iconPath).pipe(res);
       }
-    } catch (e) {
-      jsonErr(res, 500, `Icon read error: ${e.message}`);
-    }
+    } catch (e) { jsonErr(res, 500, `Icon read error: ${e.message}`); }
+    return;
+  }
+
+  // GET /api/v1/library/:id/param
+  if (mParam && method === 'GET') {
+    const item = findGame(mParam[1]);
+    if (!item) { jsonErr(res, 404, `Game not found: ${mParam[1]}`); return; }
+    jsonOk(res, serializeParam(item));
+    return;
+  }
+
+  // POST /api/v1/library/:id/rename
+  if (mRen && method === 'POST') {
+    const item = findGame(mRen[1]);
+    if (!item) { jsonErr(res, 404, `Game not found: ${mRen[1]}`); return; }
+    let body;
+    try { body = await readBody(req); } catch (_) { jsonErr(res, 400, 'Invalid JSON'); return; }
+    const name = typeof body.name === 'string' ? body.name.trim() : '';
+    if (!name) { jsonErr(res, 400, '"name" is required'); return; }
+    try {
+      const result = await _state.triggerRename(item, name);
+      jsonOk(res, { ok: true, newPath: result.newPath });
+    } catch (e) { jsonErr(res, 500, e.message); }
     return;
   }
 
   // ── POST /api/v1/scan ─────────────────────────────────────────────────────
   if (pathname === `${BASE}/scan` && method === 'POST') {
     let body;
-    try { body = await readBody(req); } catch (e) { jsonErr(res, 400, 'Invalid JSON'); return; }
+    try { body = await readBody(req); } catch (_) { jsonErr(res, 400, 'Invalid JSON'); return; }
     if (_state.getScanStatus().active) { jsonErr(res, 409, 'A scan is already running'); return; }
     const source = typeof body.source === 'string' && body.source.trim() ? body.source.trim() : 'all-drives';
     jsonOk(res, { ok: true, message: 'Scan started', source });
@@ -239,13 +305,9 @@ async function handleRequest(req, res) {
   // ── POST /api/v1/transfer ─────────────────────────────────────────────────
   if (pathname === `${BASE}/transfer` && method === 'POST') {
     let body;
-    try { body = await readBody(req); } catch (e) { jsonErr(res, 400, 'Invalid JSON'); return; }
-    if (!body.items || !Array.isArray(body.items) || !body.items.length) {
-      jsonErr(res, 400, 'items array is required'); return;
-    }
-    if (!body.dest || typeof body.dest !== 'string') {
-      jsonErr(res, 400, 'dest string is required'); return;
-    }
+    try { body = await readBody(req); } catch (_) { jsonErr(res, 400, 'Invalid JSON'); return; }
+    if (!body.items || !Array.isArray(body.items) || !body.items.length) { jsonErr(res, 400, 'items array is required'); return; }
+    if (!body.dest || typeof body.dest !== 'string') { jsonErr(res, 400, 'dest string is required'); return; }
     if (_state.getTransferStatus().active) { jsonErr(res, 409, 'A transfer is already running'); return; }
     jsonOk(res, { ok: true, message: 'Transfer started', itemCount: body.items.length });
     _state.triggerTransfer(body).catch(e => broadcast('transfer-error', { error: e.message }));
@@ -263,11 +325,9 @@ async function handleRequest(req, res) {
 
 // ── Public interface ──────────────────────────────────────────────────────────
 function start(opts) {
-  _state   = opts.state;
-  _keyPath = opts.keyPath;
-  _apiKey  = loadOrCreateKey(_keyPath);
+  _state  = opts.state;
 
-  _server  = http.createServer((req, res) => {
+  _server = http.createServer((req, res) => {
     handleRequest(req, res).catch(e => {
       console.error('[API] Request error:', e.message);
       try { jsonErr(res, 500, e.message); } catch (_) {}
@@ -275,9 +335,8 @@ function start(opts) {
   });
 
   _server.on('error', e => console.error('[API] Server error:', e.message));
-
   _server.listen(API_PORT, '127.0.0.1', () => {
-    console.log(`[API] Listening → http://127.0.0.1:${API_PORT}${BASE}`);
+    console.log(`[API] Listening → http://127.0.0.1:${API_PORT}${BASE} (no auth required)`);
   });
 }
 
@@ -287,7 +346,6 @@ function stop() {
   if (_server) { _server.close(); _server = null; }
 }
 
-function getKey()  { return _apiKey; }
 function getPort() { return API_PORT; }
 
-module.exports = { start, stop, broadcast, regenerateKey, getKey, getPort };
+module.exports = { start, stop, broadcast, getPort };
