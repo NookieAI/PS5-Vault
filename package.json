@@ -1,6 +1,6 @@
 {
   "name": "ps5-vault",
-  "version": "2.4.3",
+  "version": "2.4.4",
   "description": "PS5 game library manager \u2014 scan, organise and transfer games via USB or FTP",
   "main": "main.js",
   "author": "PS5 Vault",

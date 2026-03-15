@@ -3335,9 +3335,17 @@
             if (arr.length > 0) {
               const duration = Math.round((Date.now() - scanStartTime) / 1000);
               renderResults(arr, duration);
-            } else if (!window.__ps5_lastRenderedItems || window.__ps5_lastRenderedItems.length === 0) {
+            } else {
+              // Scan returned 0 games — clear any rows that were streamed via game-found
+              // events during the scan (those came from stale in-memory cache entries for
+              // games that were already moved/deleted). The authoritative answer is arr=[].
+              window.__ps5_lastRenderedItems = [];
               $('resultsBody').innerHTML = `<tr><td colspan="5" style="color:var(--muted);padding:12px">No games found.</td></tr>`;
               $('scanCount').textContent = '';
+              // Always dismiss the scan bar — without this it stays up forever when
+              // game-found events fired but the final result is empty, because the
+              // size-update path (which normally calls showScanUI(false)) never runs.
+              showScanUI(false);
             }
             currentSortBy = 'name';
           } catch (e) {

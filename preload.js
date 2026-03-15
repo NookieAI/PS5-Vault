@@ -19,9 +19,10 @@ contextBridge.exposeInMainWorld('ppsaApi', {
   resumeTransfer:   (state)       => ipcRenderer.invoke('resume-transfer', state),
 
   // ── Local item ops ──────────────────────────────────────────────────────
-  deleteItem:       (item)        => ipcRenderer.invoke('delete-item', item),
-  trashItem:        (item)        => ipcRenderer.invoke('trash-item', item),
-  renameItem:       (item, name)  => ipcRenderer.invoke('rename-item', item, name),
+  deleteItem:         (item)        => ipcRenderer.invoke('delete-item', item),
+  trashItem:          (item)        => ipcRenderer.invoke('trash-item', item),
+  renameItem:         (item, name)  => ipcRenderer.invoke('rename-item', item, name),
+  deleteParentFolder: (folderPath)  => ipcRenderer.invoke('delete-parent-folder', folderPath),
 
   // ── FTP ─────────────────────────────────────────────────────────────────
   ps5Discover:            (timeout)        => ipcRenderer.invoke('ps5-discover', timeout),

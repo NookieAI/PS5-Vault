@@ -1,7 +1,7 @@
 // CRITICAL: set libuv thread pool BEFORE any I/O — must be the very first line.
 // Node.js file I/O (readdir, stat, open) runs on libuv's thread pool.
 // Default = 4 threads. Even with 128 async workers only 4 OS threads do real
-// work at once. Raising to 64 gives ~16x more I/O parallelism — the single
+// work at once. Raising to 128 gives ~32x more I/O parallelism — the single
 // biggest scan speed win on any drive type.
 process.env.UV_THREADPOOL_SIZE = '128';
 
@@ -31,8 +31,7 @@ const SCAN_CONCURRENCY        = 64;    // Reduced from 128 — less aggressive o
 const DIR_READDIR_TIMEOUT_MS  = 8000;  // Network paths: 8s per readdir
 const LOCAL_READDIR_TIMEOUT_MS = 10000; // Local drives: 10s — secondary NVMe can stall mid-walk
 const MAX_FILE_SIZE_BYTES = 200 * 1024 * 1024 * 1024; // 200GB limit for sanity
-const RETRY_ATTEMPTS = 3;
-const RETRY_DELAY_MS = 100;
+const RETRY_DELAY_MS = 100; // Base retry delay for non-cloud-lock errors in copyAndVerifyFile
 // 512 MB safety buffer for free-space pre-check: accounts for filesystem overhead,
 // metadata, and in-progress writes so we don't fill the drive completely.
 const DISK_SPACE_SAFETY_BUFFER_BYTES = 512 * 1024 * 1024;
@@ -58,7 +57,7 @@ function sanitize(name) {
   // Only strip characters that are truly invalid on common filesystems (FAT32/NTFS/ext4):
   // < > : " / \ | ? * and control characters 0x00–0x1F.
   // Preserve: ! ' ™ and other characters that legitimately appear in game titles.
-  return String(name).replace(/[<>:"/\|?*\x00-\x1F]/g, '').trim().slice(0, 200) || 'Unknown';
+  return String(name).replace(/[<>:"/\\|?*\x00-\x1F]/g, '').replace(/  +/g, ' ').trim().slice(0, 200) || 'Unknown';
 }
 
 function deriveSafeGameName(item, parsed) {
@@ -555,7 +554,7 @@ async function readdirSafe(dir, isNet) {
 // Walk the filesystem with SCAN_CONCURRENCY workers (DFS / LIFO queue).
 // Each param.json found is pushed to `onFound(path)` immediately so
 // the caller can start parsing in parallel with the ongoing walk.
-// UV_THREADPOOL_SIZE=64 at the top of the file gives 16x more OS-level
+// UV_THREADPOOL_SIZE=128 at the top of the file gives 32x more OS-level
 // I/O parallelism than the Node.js default of 4 threads.
 async function findAllParamJsons(startDir, maxDepth, signal, onFound) {
   if (maxDepth == null) maxDepth = MAX_SCAN_DEPTH;
@@ -716,7 +715,7 @@ async function copyFileStream(src, dst, progressCallback, cancelCheck) {
  * @param {string} dstPath - Absolute path to the destination file.
  * @param {Function} progressCallback - Called with byte-progress updates.
  * @param {Function} cancelCheck - Returns true if the operation should be cancelled.
- * @param {number} [maxAttempts] - Maximum retry attempts (default: RETRY_ATTEMPTS).
+ * @param {number} [maxAttempts] - Maximum retry attempts (default: 5).
  * @returns {Promise<void>}
  */
 // Errors from OneDrive/Dropbox when a file is locked while syncing or downloading:
@@ -1010,18 +1009,20 @@ async function moveFolderContentsSafely(srcDir, finalTarget, options = {}) {
 }
 
 // FTP scan (added back for compatibility)
-let ftpClientBusy = false;
-
-async function withFtpLock(fn) {
-  while (ftpClientBusy) {
-    await new Promise(resolve => setTimeout(resolve, 10));
+// Single-slot concurrency limiter replaces the old busy-spin (10ms polling)
+// withFtpLock. Uses the same makeConcurrencyLimiter infrastructure so waiters
+// park on a Promise and are woken instantly rather than burning CPU.
+// Defined here so it is available before makeConcurrencyLimiter is declared;
+// re-assigned once makeConcurrencyLimiter is available (below).
+let _ftpLockLimiter = null;
+function withFtpLock(fn) {
+  if (!_ftpLockLimiter) {
+    // makeConcurrencyLimiter not yet defined — fall back to direct call (only
+    // possible if this is invoked before the limiter factory is declared, which
+    // should never happen in normal execution flow).
+    return fn();
   }
-  ftpClientBusy = true;
-  try {
-    return await fn();
-  } finally {
-    ftpClientBusy = false;
-  }
+  return _ftpLockLimiter(fn);
 }
 
 // ── FTP connection concurrency budget ────────────────────────────────────────
@@ -1030,8 +1031,7 @@ async function withFtpLock(fn) {
 //
 // PS5 FTP supports ≤4 simultaneous connections. All sizing uses a single
 // shared connection — reliable and fast on a local network (<5 ms per LIST).
-// Legacy constants — used by downloadFtpFolder (ftpConfig.parallel) and fallbacks
-const GAME_CONCURRENCY  = 3;
+// Legacy constant — used as the default workerCount for buildFtpManifest.
 const WORKERS_PER_GAME  = 2;
 // Parallel connections per game during sizing. PS5 FTP supports ~5 simultaneous
 // connections; 3 workers leaves headroom so no slot is ever refused.
@@ -1060,11 +1060,18 @@ function makeConcurrencyLimiter(maxConcurrent) {
   };
 }
 
+// Wire up the withFtpLock single-slot limiter now that makeConcurrencyLimiter exists.
+_ftpLockLimiter = makeConcurrencyLimiter(1);
+
 
 // ── Reusable FTP connection pool ─────────────────────────────────────────────
 // Connections are created lazily on first demand and reused across callers.
 // A caller calls pool.acquire() → gets a client, calls pool.release(client).
 // If a connection breaks, it is discarded; the next acquire() creates a fresh one.
+//
+// NOTE: This class is not currently instantiated anywhere. It was written in
+// anticipation of a connection-pooling refactor that was instead implemented
+// using per-operation clients + makeConcurrencyLimiter. Retained for future use.
 class FtpConnectionPool {
   constructor(accessOpts, maxSize = 4) {
     this._opts    = accessOpts;
@@ -1078,14 +1085,16 @@ class FtpConnectionPool {
     // Return an idle connection if one is available and alive
     while (this._idle.length > 0) {
       const c = this._idle.pop();
-      try { c.ftp.socket.writable; return c; } catch (_) { this._active--; /* discard dead */ }
+      // Properly check socket liveness — property access never throws, must test value
+      if (c.ftp?.socket?.writable) return c;
+      this._active--; // discard dead connection
     }
     // Create a new connection if under limit
     if (this._active < this._maxSize) {
       this._active++;
       const c = new ftp.Client();
       c.ftp.verbose = false;
-      if (this._opts._passive === false) c.ftp.passive = false;
+      if (this._opts.passive === false) c.ftp.passive = false; // was: this._opts._passive (typo)
       try {
         await c.access(this._opts);
         return c;
@@ -1111,6 +1120,11 @@ class FtpConnectionPool {
   }
 
   closeAll() {
+    // Reject any callers still waiting for a slot — pool is shutting down
+    for (const { reject } of this._waiters) {
+      try { reject(new Error('FTP pool closed')); } catch (_) {}
+    }
+    this._waiters = [];
     for (const c of this._idle) { try { c.close(); } catch (_) {} }
     this._idle = [];
     this._active = 0;
@@ -1838,8 +1852,6 @@ async function scanFtpSource(ftpUrl, scanOpts = {}) {
 
 const { Worker } = require('worker_threads');
 
-const PER_GAME_WORKERS = 32;
-
 // Worker code — accepts { dirs: [...] } (parallel chunk) or { folderPath } (fallback).
 const SIZE_WORKER_CODE = `
 const { parentPort, workerData } = require('worker_threads');
@@ -1883,8 +1895,6 @@ try {
   parentPort.postMessage({ size: 0, error: e.message });
 }
 `;
-// Split a game's subdirs across up to 8 worker threads for ~8x speed on large games.
-const MAX_SPLIT_WORKERS = 8;
 
 function spawnSizeWorker(workerData, sig) {
   return new Promise(resolve => {
@@ -1978,15 +1988,6 @@ async function calcAllGameSizes(gameItems, sig, onGameDone) {
 }
 
 
-function combineAbortSignals(a, b) {
-  if (a.aborted) return a;
-  if (b.aborted) return b;
-  const ctrl = new AbortController();
-  const done = () => ctrl.abort();
-  a.addEventListener('abort', done, { once: true });
-  b.addEventListener('abort', done, { once: true });
-  return ctrl.signal;
-}
 // ── Main local scan ──────────────────────────────────────────────────────────
 // Three-phase pipeline:
 //
@@ -2201,19 +2202,10 @@ async function downloadFtpFolder(ftpConfig, remotePath, localPath, progressCallb
       progressCallback?.({ type: 'ftp-manifest-progress', ...info });
     }, cancelCheck, ftpConfig.parallel || 4);
   } catch (e) {
-    console.error('[FTP] Manifest build failed, falling back to serial download:', e.message);
-    // Graceful fallback: open a new client and do it the old serial way
-    const fallbackClient = new ftp.Client();
-    try {
-      applyFtpPassive(fallbackClient, ftpConfig);
-      await fallbackClient.access({ host: ftpConfig.host, port: parseInt(ftpConfig.port, 10), user: ftpConfig.user || 'anonymous', password: ftpConfig.pass || '', secure: false });
-      // downloadFtpRecursive is not available — surface the original error
-      console.error('[FTP] Manifest failed and no serial fallback available:', e.message);
-      throw e;
-    } finally {
-      fallbackClient.close();
-    }
-    return;
+    // Manifest build failed — no serial fallback is available (downloadFtpRecursive
+    // was removed). Surface the error directly so the caller can handle it.
+    console.error('[FTP] Manifest build failed:', e.message);
+    throw e;
   }
 
   const { files, totalSize } = manifest;
@@ -2270,7 +2262,7 @@ async function downloadFtpFolder(ftpConfig, remotePath, localPath, progressCallb
         }
       }
       if (!downloaded) {
-        throw new Error(`FTP download failed for file: ${path.basename(fileEntry.remotePath)} after 3 attempts`);
+        throw new Error(`FTP download failed for file: ${path.basename(fileEntry.remotePath)} after 5 attempts`);
       }
       bytesCopied += fileEntry.size;
       progressCallback?.({ type: 'go-file-progress', fileRel: path.basename(fileEntry.remotePath), totalBytesCopied: bytesCopied, totalBytes: totalSize });
@@ -3350,11 +3342,17 @@ ipcMain.handle('get-api-status', async () => {
     keyPreview: 'N/A — no auth required',
     noAuth:     true,
   };
-});ipcMain.handle('get-api-key', async () => {
+});
+
+ipcMain.handle('get-api-key', async () => {
   return { key: null, message: 'API key authentication removed — no key required' };
-});ipcMain.handle('regenerate-api-key', async () => {
+});
+
+ipcMain.handle('regenerate-api-key', async () => {
   return { keyPreview: 'N/A', message: 'API key authentication removed' };
-});// ── FTP test connection ───────────────────────────────────────────────────────
+});
+
+// ── FTP test connection ───────────────────────────────────────────────────────
 ipcMain.handle('ftp-test-connection', async (_event, config) => {
   const start = Date.now();
   const client = new ftp.Client(8000); // 8s timeout
@@ -4146,8 +4144,9 @@ ipcMain.handle('record-transfer-checksums', async (_event, entries) => {
 // ── Embedded / headless mode ─────────────────────────────────────────────────
 // Launch with --embedded to run as a background API-only service (no window):
 //   PS5Vault.exe --embedded
-// The REST API server starts normally on http://127.0.0.1:3731 with API key
-// auth. A system-tray icon lets the user see the process is running and quit.
+// The REST API server starts on http://127.0.0.1:3731 (no auth required —
+// localhost-only binding is the security boundary).
+// A system-tray icon lets the user see the process is running and quit.
 const EMBEDDED_MODE = process.argv.includes('--embedded');
 
 let mainWindow;
@@ -4198,8 +4197,8 @@ if (!gotTheLock) {
   }
 
   // ── Start local developer API server ──────────────────────────────────────
-  // Creates http://127.0.0.1:3731/api/v1 with API key auth.
-  // The API key is auto-generated on first run and saved to userData.
+  // Creates http://127.0.0.1:3731/api/v1 — no authentication required.
+  // Localhost-only binding (127.0.0.1) is the security boundary.
   try {
     // Fake sender used when API-triggered scans need IPC-like progress events
     const apiSender = {
@@ -4237,28 +4236,26 @@ if (!gotTheLock) {
         getScanStatus:   () => ({ active: apiScanActive, source: apiScanSource, progress: { ...apiScanProgress } }),
         getTransferStatus: () => ({ active: apiTransferActive, progress: { ...apiTransferProg } }),
         triggerRename: async (item, newName) => {
-          const { path: nodePath, promises: fsP } = require('fs');
-          const p   = require('path');
           const oldPath = item.ppsaFolderPath || item.folderPath;
-          if (!oldPath || !p.isAbsolute(oldPath)) throw new Error('Invalid source path');
+          if (!oldPath || !path.isAbsolute(oldPath)) throw new Error('Invalid source path');
           const safeName = sanitize(newName);
           if (!safeName || safeName === 'Unknown') throw new Error('Invalid new name');
           if (safeName.includes('/') || safeName.includes('\\')) throw new Error('Name cannot contain path separators');
-          const newPath = p.join(p.dirname(oldPath), safeName);
-          if (p.dirname(newPath) !== p.dirname(oldPath)) throw new Error('Path traversal not allowed');
-          await fsP.rename(oldPath, newPath);
+          const newPath = path.join(path.dirname(oldPath), safeName);
+          if (path.dirname(newPath) !== path.dirname(oldPath)) throw new Error('Path traversal not allowed');
+          await fs.promises.rename(oldPath, newPath);
           // Update library entry in-place so subsequent API calls return the new path
           const entry = apiLibrary.find(g => (g.ppsaFolderPath || g.folderPath) === oldPath);
           if (entry) {
             entry.folderPath     = newPath;
             entry.ppsaFolderPath = newPath;
-            entry.folderName     = p.basename(newPath);
+            entry.folderName     = path.basename(newPath);
           }
           return { newPath };
         },
         triggerDelete: async (item) => {
           const pathToDel = item.ppsaFolderPath || item.folderPath;
-          if (!pathToDel || !require('path').isAbsolute(pathToDel)) throw new Error('Invalid path');
+          if (!pathToDel || !path.isAbsolute(pathToDel)) throw new Error('Invalid path');
           await removePathRecursive(pathToDel);
           // Remove from library
           const idx = apiLibrary.findIndex(g => (g.ppsaFolderPath || g.folderPath) === pathToDel);
@@ -4278,8 +4275,21 @@ if (!gotTheLock) {
               const ftpSrc = source.startsWith('ftp://') ? source : 'ftp://' + source;
               items = await scanFtpSource(ftpSrc, { sender: apiSender, calcSize: true });
               apiLibrary = Array.isArray(items) ? items : [];
+            } else if (source === 'all-drives') {
+              // Scan all connected drives, same as the UI "All Drives" button.
+              const drives = await getAllDrives();
+              const allItems = [];
+              for (const drive of drives) {
+                try {
+                  const driveItems = await findContentFoldersByTopLevelWithProgress(drive, apiSender);
+                  if (Array.isArray(driveItems)) allItems.push(...driveItems);
+                } catch (e) {
+                  console.warn(`[API triggerScan] Drive ${drive} error:`, e.message);
+                }
+              }
+              apiLibrary = allItems;
             } else {
-              items = await findContentFoldersByTopLevelWithProgress(source === 'all-drives' ? 'C:\\' : source, apiSender);
+              items = await findContentFoldersByTopLevelWithProgress(source, apiSender);
               apiLibrary = Array.isArray(items) ? items : [];
             }
             apiServer.broadcast('scan-complete', { count: apiLibrary.length });
