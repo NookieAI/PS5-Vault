@@ -71,11 +71,6 @@
       return Promise.resolve(null);
     }
 
-    // Default path by port — returns root so users can browse themselves
-    function defaultPathForPort(port) {
-      return '/';
-    }
-
     // Parse initialUrl if provided
     if (initialUrl) {
       try {
@@ -84,13 +79,13 @@
         hostInput.value = url.hostname;
         portInput.value = detectedPort;
         // Only use URL pathname if it's something other than root '/'
-        pathInput.value = (url.pathname && url.pathname !== '/') ? url.pathname : defaultPathForPort(detectedPort);
+        pathInput.value = (url.pathname && url.pathname !== '/') ? url.pathname : '/';
         userInput.value = url.username || 'anonymous';
         passInput.value = url.password || '';
       } catch (e) {
         hostInput.value = initialUrl.replace('ftp://', '').split(':')[0] || '';
         portInput.value = '';
-        pathInput.value = defaultPathForPort('');
+        pathInput.value = '/';
         userInput.value = 'anonymous';
         passInput.value = '';
       }
@@ -100,7 +95,7 @@
       if (lastConfig) {
         hostInput.value = lastConfig.host || '';
         portInput.value = lastConfig.port || '';
-        pathInput.value = lastConfig.path || defaultPathForPort(lastConfig.port);
+        pathInput.value = lastConfig.path || '/';
         userInput.value = lastConfig.user || 'anonymous';
         passInput.value = lastConfig.pass || '';
         passiveCheckbox.checked = lastConfig.passive !== false; // Default to true
@@ -110,7 +105,7 @@
       } else {
         hostInput.value = '';
         portInput.value = '';
-        pathInput.value = defaultPathForPort('');
+        pathInput.value = '/';
         userInput.value = 'anonymous';
         passInput.value = '';
         passiveCheckbox.checked = true; // Default passive mode
@@ -119,16 +114,6 @@
         if (speedLimitInput) speedLimitInput.value = '0';
       }
     }
-
-    // When port changes and path is still a default, update path suggestion to match port
-    const onPortChange = () => {
-      const currentPath = pathInput.value.trim();
-      const suggestedPaths = ['/'];
-      if (!currentPath || suggestedPaths.includes(currentPath)) {
-        pathInput.value = defaultPathForPort(portInput.value.trim());
-      }
-    };
-    portInput.addEventListener('change', onPortChange);
 
     backdrop.style.display = 'flex';
     backdrop.setAttribute('aria-hidden', 'false');
@@ -149,7 +134,6 @@
       const cleanup = () => {
         backdrop.style.display = 'none';
         backdrop.setAttribute('aria-hidden', 'true');
-        portInput.removeEventListener('change', onPortChange);
         proceedBtn.removeEventListener('click', onProceed);
         cancelBtn.removeEventListener('click', onCancel);
         backdrop.removeEventListener('click', onBackdropClick);

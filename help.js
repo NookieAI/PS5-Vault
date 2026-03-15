@@ -11,7 +11,7 @@
   <li><kbd>F1</kbd> opens this help at any time.</li>
 </ul>
 
-<h3>What's New (v2.4)</h3>
+<h3>What's New (v2.4.4)</h3>
 <ul>
   <li><strong>Copy (fast)</strong>: Skips SHA-256 hash verification — ideal for same-drive transfers where re-reading every byte is unnecessary.</li>
   <li><strong>File-level Resume</strong>: Interrupted transfers now skip files already fully present at the destination (matching size), so only missing or partial files are re-copied.</li>
@@ -90,9 +90,9 @@
 
 <h3>Developer API</h3>
 <ul>
-  <li>Runs on <code>http://127.0.0.1:3731/api/v1</code> (localhost only).</li>
-  <li>Auth: <code>X-API-Key: &lt;your key&gt;</code> on every request.</li>
-  <li>Find key under <strong>Menu → ⚙ Developer API</strong>.</li>
+  <li>Runs on <code>http://127.0.0.1:3731/api/v1</code> (localhost only — not reachable from other devices).</li>
+  <li>No authentication required — localhost binding is the security boundary.</li>
+  <li>View the full endpoint reference under <strong>Menu → ⚙ Developer API</strong>.</li>
   <li>Endpoints: <code>GET /library</code>, <code>GET /library/:ppsa</code>, <code>GET /library/:ppsa/icon</code>, <code>POST /scan</code>, <code>GET /scan/status</code>, <code>POST /transfer</code>, <code>GET /transfer/status</code>, <code>GET /events</code> (SSE), <code>GET /status</code>.</li>
 </ul>
 

@@ -4,6 +4,34 @@ All notable changes to PS5 Vault are documented here.
 
 ---
 
+## [2.4.4] — 2026
+
+### Bug Fixes
+
+**Source folder cleanup buttons showed "Error" after a Move**
+After moving games the completion screen shows a "Source folder cleanup" section with a Delete button for each parent folder. Clicking it always showed "Error" — the underlying delete function existed but was never wired up to the UI. Now works correctly: clicking Delete removes the empty parent folder and shows the confirmation inline.
+
+**Scanning an empty folder caused the app to freeze**
+If you moved all games out of a folder and then scanned it again, the scan bar would spin forever and the UI would appear locked. This happened because the previous scan had cached the game entries in memory — those stale entries appeared in the table briefly, then the scan returned zero results, and the code that dismisses the scan bar only ran when it saw a clean empty state. The scan bar is now always dismissed when the scan returns no games, and any stale rows from the cache are cleared at the same time.
+
+### Improvements
+
+**FTP connection handling**
+The internal FTP lock used a busy-wait loop that polled every 10ms while waiting for a connection slot. It now uses a proper queue — no CPU spin, and concurrent callers are woken immediately when a slot becomes free.
+
+Dead connections in the FTP pool are now detected correctly before being handed to a caller. Previously the liveness check was a no-op (property access that never throws), so closed sockets could be returned and fail silently on first use.
+
+**API — all-drives scan**
+Triggering a scan via the Developer API with `"source": "all-drives"` previously only scanned the C: drive. It now scans every connected drive, the same as the UI button does.
+
+**API — browser clients no longer blocked by CORS**
+The API's CORS preflight was missing `X-API-Key` from the allowed headers list, which caused browser-based API clients to be rejected before the request was even sent. The allowed headers now include it.
+
+**Game title sanitization**
+Backslash characters in game titles were not being stripped when building folder names, which could cause unexpected path behaviour on some transfers. Fixed.
+
+---
+
 ## [2.4.0] — 2026
 
 ### New Features
