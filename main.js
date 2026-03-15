@@ -179,7 +179,7 @@ function scheduleDiskCacheSave() {
 // Baldur's Gate 3) are only ever walked once.  Each entry is { size, cachedAt }.
 let localSizeSaveTimer = null;
 const LOCAL_SIZE_CACHE_VERSION = 1;
-const LOCAL_SIZE_CACHE_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
+const LOCAL_SIZE_CACHE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000; // 7 days (reduced — stale values cause wrong sizes)
 
 function getLocalSizeCachePath() {
   try { return path.join(app.getPath('userData'), 'local-size-cache.json'); }
@@ -194,11 +194,21 @@ function loadLocalSizeCacheFromDisk() {
       const now = Date.now();
       let loaded = 0;
       for (const [k, v] of Object.entries(parsed.entries)) {
-        if (v && typeof v.size === 'number' && v.size > 0 &&
-            now - (v.cachedAt || 0) < LOCAL_SIZE_CACHE_MAX_AGE_MS) {
-          localSizeCache.set(k, v.size);
-          loaded++;
+        if (!(v && typeof v.size === 'number' && v.size > 0)) continue;
+        if (now - (v.cachedAt || 0) >= LOCAL_SIZE_CACHE_MAX_AGE_MS) continue;
+        // Validate against folder mtime: if folder was modified after caching,
+        // discard the entry so the game is re-sized with fresh data.
+        if (v.mtimeMs && v.mtimeMs > 0) {
+          try {
+            const st = fs.statSync(k);
+            if (st.mtimeMs > v.mtimeMs + 5000) { // 5s grace for clock skew
+              console.log('[Local Cache] Invalidated (folder modified):', k);
+              continue;
+            }
+          } catch (_) { /* folder gone or inaccessible — skip */ continue; }
         }
+        localSizeCache.set(k, v.size);
+        loaded++;
       }
       console.log('[Local Cache] Loaded', loaded, 'local size entries from disk');
     }
@@ -212,8 +222,11 @@ function scheduleLocalSizeCacheSave() {
     try {
       const entries = {};
       const now = Date.now();
-      for (const [k, size] of localSizeCache.entries()) {
-        if (size > 0) entries[k] = { size, cachedAt: now };
+      for (const [k, val] of localSizeCache.entries()) {
+        // val is either a raw number (legacy) or { size, mtimeMs, cachedAt }
+        const size = typeof val === 'number' ? val : val?.size;
+        const mtimeMs = typeof val === 'object' ? val?.mtimeMs : undefined;
+        if (size > 0) entries[k] = { size, mtimeMs: mtimeMs || 0, cachedAt: now };
       }
       fs.writeFileSync(getLocalSizeCachePath(),
         JSON.stringify({ version: LOCAL_SIZE_CACHE_VERSION, entries }, null, 2), 'utf8');
@@ -1891,14 +1904,19 @@ function spawnSizeWorker(workerData, sig) {
 async function calcSingleGameSize(item, sig) {
   const folderPath = item.folderPath;
   if (!folderPath) return 0;
+  if (sig?.aborted) return 0;
 
   let rootEntries;
   try { rootEntries = fs.readdirSync(folderPath, { withFileTypes: true }); }
-  catch (e) { console.warn('[SizeCalc] Cannot read folder:', folderPath, e.message); return 0; }
+  catch (e) {
+    console.warn('[SizeCalc] Cannot read folder:', folderPath, e.message);
+    return 0;
+  }
 
   let rootFileSize = 0;
   const subdirs = [];
   for (const ent of rootEntries) {
+    if (sig?.aborted) return 0;
     if (ent.isFile()) {
       try { rootFileSize += fs.statSync(path.join(folderPath, ent.name)).size; } catch (_) {}
     } else if ((ent.isDirectory() || ent.isSymbolicLink()) && !ent.name.startsWith('.')) {
@@ -1915,14 +1933,26 @@ async function calcSingleGameSize(item, sig) {
   subdirs.forEach((d, i) => chunks[i % nWorkers].push(d));
 
   const sizes = await Promise.all(chunks.map(dirs => spawnSizeWorker({ dirs }, sig)));
+
+  // If aborted, workers may have returned 0 — don't use this result
+  if (sig?.aborted) return 0;
+
   const total = rootFileSize + sizes.reduce((a, b) => a + b, 0);
 
-  // Sanity: if total is 0 and we have subdirs, retry once with a single worker
-  // covering the whole tree (worker error may have caused a zero result)
-  if (total === 0 && !sig?.aborted) {
+  // Sanity: if total is unreasonably small for a folder with subdirs, log a warning
+  // (helps surface issues in the console without crashing)
+  if (total < 1024 * 1024 && subdirs.length > 0 && !sig?.aborted) {
+    console.warn('[SizeCalc] Suspiciously small size for', folderPath,
+      '(' + total + ' bytes, ' + subdirs.length + ' subdirs) — retrying with single worker');
+    const retry = await spawnSizeWorker({ dirs: [folderPath] }, sig);
+    if (!sig?.aborted && retry > total) {
+      console.log('[SizeCalc] Retry got', retry, 'for', folderPath);
+      return retry;
+    }
+  } else if (total === 0 && !sig?.aborted) {
     console.warn('[SizeCalc] Got 0 for', folderPath, '— retrying with single worker');
     const retry = await spawnSizeWorker({ dirs: [folderPath] }, sig);
-    return retry;
+    if (!sig?.aborted) return retry;
   }
 
   return total;
@@ -1933,7 +1963,7 @@ async function calcSingleGameSize(item, sig) {
 // On Windows: PowerShell handles all games — no timeout/fast/slow split needed
 // because a single shell call completes in seconds regardless of file count.
 // On non-Windows: fast/slow pass with 5s timeout for large games.
-const FAST_TIMEOUT_MS  = 10000; // 10s: parallel workers finish large games faster
+const FAST_TIMEOUT_MS  = 90000; // 90s: large PS5 games (60GB+) on slow USB HDDs need time
 const FAST_CONCURRENCY = 8;    // 8 games × 8 workers = 64 threads, within UV_THREADPOOL_SIZE=128
 
 async function calcAllGameSizes(gameItems, sig, onGameDone) {
@@ -1942,7 +1972,9 @@ async function calcAllGameSizes(gameItems, sig, onGameDone) {
   // ── Cache pass — instant results for already-measured games ──────────────
   const uncached = [];
   for (const item of gameItems) {
-    const cached = item.folderPath ? localSizeCache.get(item.folderPath) : undefined;
+    const raw = item.folderPath ? localSizeCache.get(item.folderPath) : undefined;
+    // Cache entries may be plain numbers (legacy) or { size, mtimeMs } objects
+    const cached = typeof raw === 'number' ? raw : (raw?.size ?? undefined);
     if (cached !== undefined && cached > 0) {
       item.totalSize = cached;
       try { onGameDone(item); } catch (_) {}
@@ -1964,9 +1996,22 @@ async function calcAllGameSizes(gameItems, sig, onGameDone) {
       let timedOut   = false;
 
       const sizePromise = calcSingleGameSize(item, fastSig).then(sz => {
-        if (!timedOut) {
+        // Guard 1: timed out — result came from aborted workers (partial/0), don't cache.
+        // Guard 2: outer signal aborted (new scan started) — combineAbortSignals fired,
+        //   workers terminated early, result is partial. Caching it would poison all
+        //   subsequent scans with tiny (e.g. sce_sys-only) values for up to 30 days.
+        const outerAborted = sig?.aborted;
+        if (!timedOut && !outerAborted) {
           item.totalSize = sz;
-          if (item.folderPath && sz > 0) localSizeCache.set(item.folderPath, sz);
+          if (item.folderPath && sz > 0) {
+            // Store size with current folder mtime so future scans can detect changes
+            try {
+              const st = fs.statSync(item.folderPath);
+              localSizeCache.set(item.folderPath, { size: sz, mtimeMs: st.mtimeMs });
+            } catch (_) {
+              localSizeCache.set(item.folderPath, sz); // fallback: store plain number
+            }
+          }
           try { onGameDone(item); } catch (_) {}
         }
         return sz;
@@ -1985,13 +2030,22 @@ async function calcAllGameSizes(gameItems, sig, onGameDone) {
 
   if (!deferred.length) return;
 
-  // Slow pass — no timeout, always completes, always calls onGameDone
+  // Slow pass — no timeout, always completes. Workers use null signal so they run fully.
+  // Still guard outer sig before caching: if a new scan started while slow pass was
+  // waiting in fastLimit queue, the result is valid but no one is listening anymore.
   await Promise.all(deferred.map(item =>
     fastLimit(async () => {
-      const sz = await calcSingleGameSize(item, null);
+      if (sig?.aborted) return; // new scan started — skip entirely, don't cache
+      const sz = await calcSingleGameSize(item, null); // null = no worker abort
+      if (sig?.aborted) return; // aborted while worker was running — don't cache partial
       item.totalSize = sz;
       if (item.folderPath && sz > 0) {
-        localSizeCache.set(item.folderPath, sz);
+        try {
+          const st = fs.statSync(item.folderPath);
+          localSizeCache.set(item.folderPath, { size: sz, mtimeMs: st.mtimeMs });
+        } catch (_) {
+          localSizeCache.set(item.folderPath, sz);
+        }
         scheduleLocalSizeCacheSave();
       }
       try { onGameDone(item); } catch (_) {}
@@ -3814,6 +3868,134 @@ ipcMain.handle('ftp-storage-info', async (_event, config, scannedItems = []) => 
   } finally {
     try { client.close(); } catch (_) {}
   }
+});
+
+
+// ── Delete parent folder (post-move cleanup) ──────────────────────────────
+// Called from the completion screen when a move finishes and the user wants
+// to clean up the now-empty parent folder (e.g. C:\Games\Tekken 8 after
+// moving C:\Games\Tekken 8\Tekken 8 to the PS5 drive).
+// Returns: { status:'deleted' } | { status:'not_empty', count:N } | { status:'not_found' } | { error: str }
+ipcMain.handle('delete-parent-folder', async (_event, folderPath) => {
+  if (!folderPath || typeof folderPath !== 'string') return { error: 'Invalid path' };
+  if (!path.isAbsolute(folderPath)) return { error: 'Path must be absolute' };
+
+  // Returns true if a directory entry counts as real content (not system noise)
+  function isSignificant(name) {
+    if (!name) return false;
+    if (name.startsWith('.')) return false;
+    const low = name.toLowerCase();
+    return low !== 'desktop.ini' && low !== 'thumbs.db' && low !== '$recycle.bin' && low !== '.ds_store';
+  }
+
+  // Check if a directory is functionally empty (only system files / hidden files)
+  async function isFolderEmpty(dir) {
+    try {
+      const entries = await fs.promises.readdir(dir);
+      return !entries.some(isSignificant);
+    } catch (_) {
+      return false; // can't read = not empty (safe)
+    }
+  }
+
+  // Check if a directory contains a PS5 game (has sce_sys/param.json anywhere shallow)
+  // This is a fast 2-level check — enough to detect games we haven't moved yet.
+  async function containsGame(dir) {
+    try {
+      const topEntries = await fs.promises.readdir(dir, { withFileTypes: true });
+      for (const ent of topEntries) {
+        if (!ent.isDirectory() && !ent.isSymbolicLink()) continue;
+        const sub = path.join(dir, ent.name);
+        // Check for sce_sys at depth 1
+        try {
+          await fs.promises.access(path.join(sub, 'sce_sys', 'param.json'));
+          return true; // found a game
+        } catch (_) {}
+        // Check for sce_sys at depth 2 (wrapper layout: Title/PPSA*/sce_sys)
+        try {
+          const inner = await fs.promises.readdir(sub, { withFileTypes: true });
+          for (const ie of inner) {
+            if (!ie.isDirectory()) continue;
+            try {
+              await fs.promises.access(path.join(sub, ie.name, 'sce_sys', 'param.json'));
+              return true;
+            } catch (_) {}
+          }
+        } catch (_) {}
+      }
+    } catch (_) {}
+    return false;
+  }
+
+  // Walk UP from folderPath, deleting each level while it is empty.
+  // Stops when:
+  //   • a level has other content (files or non-empty subdirs)
+  //   • a level contains another PS5 game (sce_sys check)
+  //   • fewer than 2 path segments remain (never touch drive root or top-level)
+  const startAbs = path.resolve(folderPath);
+  const deleted  = [];   // paths we successfully removed
+  let   blocker  = null; // first path that stopped us (and why)
+
+  let cur = startAbs;
+  while (true) {
+    const segments = cur.split(path.sep).filter(Boolean);
+    if (segments.length < 2) {
+      // Reached drive root or top-level — stop here, don't delete
+      break;
+    }
+
+    // Check existence
+    try {
+      await fs.promises.access(cur);
+    } catch (_) {
+      // Already gone — treat as deleted and move up
+      deleted.push(cur);
+      cur = path.dirname(cur);
+      continue;
+    }
+
+    // Safety: never delete a folder that contains another PS5 game
+    const hasGame = await containsGame(cur);
+    if (hasGame) {
+      blocker = { path: cur, reason: 'contains_game' };
+      break;
+    }
+
+    // Check emptiness (ignoring system noise)
+    const empty = await isFolderEmpty(cur);
+    if (!empty) {
+      // Get the blocking items for display
+      try {
+        const entries = await fs.promises.readdir(cur);
+        const sig = entries.filter(isSignificant);
+        blocker = { path: cur, reason: 'not_empty', count: sig.length, sample: sig.slice(0, 3) };
+      } catch (_) {
+        blocker = { path: cur, reason: 'not_empty', count: 1, sample: [] };
+      }
+      break;
+    }
+
+    // Empty — delete it and walk up
+    try {
+      await fs.promises.rm(toExtendedPath(cur), { recursive: true, force: true });
+      console.log('[Cleanup] Deleted empty folder:', cur);
+      deleted.push(cur);
+    } catch (e) {
+      return { error: e.message, deleted };
+    }
+
+    cur = path.dirname(cur);
+  }
+
+  if (deleted.length === 0 && !blocker) {
+    return { status: 'not_found' };
+  }
+
+  return {
+    status: deleted.length > 0 ? 'deleted' : 'not_empty',
+    deleted,
+    blocker: blocker || null,
+  };
 });
 
 // ── Trash bin (soft delete) ───────────────────────────────────────────────────
