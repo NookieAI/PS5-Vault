@@ -2079,6 +2079,162 @@
       if ($('currentScanLabel')) $('currentScanLabel').textContent = '';
       transferStartTime = 0;
       setAppBusy(false);
+
+      // ── Post-move parent-folder cleanup ─────────────────────────────────
+      // Only for local moves (not FTP). Collect unique parent dirs of all
+      // transferred items and offer to delete any that are now empty.
+      try {
+        const isLocalMove = transferState?.action === 'move' && !transferState?.ftpConfig && !transferState?.ftpDestConfig;
+        if (isLocalMove && Array.isArray(transferState?.items) && transferState.items.length > 0) {
+          // Compute unique parent dirs — game is at item.ppsaFolderPath, parent is dirname
+          const seenParents = new Set();
+          const parentDirs  = [];
+          for (const item of transferState.items) {
+            const gamePath = item.ppsaFolderPath || item.folderPath || '';
+            if (!gamePath) continue;
+            // Normalise separators so path.dirname works on both / and \ paths
+            const norm   = gamePath.replace(/\//g, '\\');
+            const parent = norm.includes('\\') ? norm.replace(/\\[^\\]+$/, '') : '';
+            if (!parent || seenParents.has(parent.toLowerCase())) continue;
+            // Don't suggest deleting drive roots or top-level dirs
+            const segments = parent.split('\\').filter(Boolean);
+            if (segments.length < 2) continue;
+            seenParents.add(parent.toLowerCase());
+            parentDirs.push(parent);
+          }
+
+          if (parentDirs.length > 0) {
+            // Render the cleanup section below the result list
+            const listWrap = $('resultListWrap');
+            if (listWrap) {
+              const cleanupSection = document.createElement('div');
+              cleanupSection.id = 'parentFolderCleanup';
+              cleanupSection.style.cssText = 'margin-top:14px;border-top:1px solid rgba(255,255,255,0.07);padding-top:12px;';
+
+              const heading = document.createElement('div');
+              heading.style.cssText = 'font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin-bottom:10px;';
+              heading.textContent = 'Source folder cleanup';
+              cleanupSection.appendChild(heading);
+
+              for (const parentPath of parentDirs) {
+                const row = document.createElement('div');
+                row.style.cssText = 'display:flex;align-items:flex-start;gap:12px;padding:9px 12px;background:rgba(255,255,255,0.02);border:1px solid var(--card-border);border-radius:7px;margin-bottom:7px;';
+
+                const info = document.createElement('div');
+                info.style.cssText = 'flex:1;min-width:0;';
+
+                const label = document.createElement('div');
+                label.style.cssText = 'font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);margin-bottom:3px;';
+                label.textContent = 'Parent folder';
+                info.appendChild(label);
+
+                const pathEl = document.createElement('div');
+                pathEl.style.cssText = 'font-size:12px;color:var(--title);font-family:ui-monospace,monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+                pathEl.textContent = parentPath;
+                pathEl.title = parentPath;
+                info.appendChild(pathEl);
+
+                const gameLabel = document.createElement('div');
+                gameLabel.style.cssText = 'font-size:11px;color:var(--muted);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+                // Show which game was inside it
+                const gameInParent = (transferState.items || []).find(it => {
+                  const gp = (it.ppsaFolderPath || it.folderPath || '').replace(/\//g,'\\');
+                  return gp.replace(/\\[^\\]+$/, '').toLowerCase() === parentPath.toLowerCase();
+                });
+                if (gameInParent) {
+                  const gameName = gameInParent.displayTitle || gameInParent.folderName || '';
+                  const gamePath = (gameInParent.ppsaFolderPath || gameInParent.folderPath || '').replace(/\//g,'\\');
+                  gameLabel.textContent = 'contained: ' + (gamePath || gameName);
+                  gameLabel.title = gamePath || gameName;
+                }
+                info.appendChild(gameLabel);
+                row.appendChild(info);
+
+                const btn = document.createElement('button');
+                btn.className = 'btn';
+                btn.style.cssText = 'flex-shrink:0;white-space:nowrap;font-size:12px;padding:5px 12px;color:#f87171;border-color:rgba(248,113,113,0.25);background:rgba(248,113,113,0.05);align-self:center;';
+                btn.textContent = 'Delete folder';
+                btn.title = 'Delete if empty: ' + parentPath;
+
+                btn.addEventListener('click', async () => {
+                  btn.disabled = true;
+                  btn.textContent = 'Checking…';
+                  try {
+                    const result = await window.ppsaApi.deleteParentFolder(parentPath);
+
+                    if (result?.error) {
+                      btn.textContent = 'Error';
+                      toast('Delete failed: ' + result.error);
+                      return;
+                    }
+
+                    if (result?.status === 'deleted' && result.deleted?.length > 0) {
+                      // Show all deleted paths stacked in the row
+                      btn.style.display = 'none';
+                      const doneWrap = document.createElement('div');
+                      doneWrap.style.cssText = 'display:flex;flex-direction:column;gap:3px;align-self:center;';
+                      for (const dp of result.deleted) {
+                        const tag = document.createElement('div');
+                        tag.style.cssText = 'font-size:11px;color:#4ade80;font-weight:600;white-space:nowrap;';
+                        tag.textContent = '✓ ' + dp;
+                        doneWrap.appendChild(tag);
+                      }
+                      row.appendChild(doneWrap);
+                      row.style.opacity = '0.45';
+                      // Update path display to show what stopped us (if anything)
+                      if (result.blocker) {
+                        const stopNote = document.createElement('div');
+                        stopNote.style.cssText = 'font-size:10.5px;color:var(--muted);margin-top:4px;';
+                        if (result.blocker.reason === 'contains_game') {
+                          stopNote.textContent = 'Stopped — another game detected in: ' + result.blocker.path;
+                        } else {
+                          const s = result.blocker.sample?.join(', ') || '';
+                          stopNote.textContent = `Stopped — ${result.blocker.count} item${result.blocker.count !== 1 ? 's' : ''} in: ${result.blocker.path}${s ? ' (' + s + (result.blocker.count > 3 ? '…' : '') + ')' : ''}`;
+                        }
+                        info.appendChild(stopNote);
+                      }
+
+                    } else if (result?.status === 'not_empty') {
+                      // Nothing deleted — show why
+                      const b = result.blocker;
+                      if (b?.reason === 'contains_game') {
+                        btn.textContent = 'Contains another game';
+                        btn.title = 'Another PS5 game detected in: ' + b.path;
+                      } else {
+                        const count = b?.count || '?';
+                        const sample = b?.sample?.join(', ') || '';
+                        btn.textContent = `Not empty (${count} item${count !== 1 ? 's' : ''})`;
+                        btn.title = sample ? `Blocked by: ${sample}` : 'Folder not empty';
+                      }
+                      btn.style.color = '#fbbf24';
+                      btn.style.borderColor = 'rgba(251,191,36,0.25)';
+                      btn.style.background  = 'rgba(251,191,36,0.05)';
+
+                    } else if (result?.status === 'not_found') {
+                      btn.textContent = 'Already gone';
+                      btn.style.color = 'var(--muted)';
+                      row.style.opacity = '0.45';
+
+                    } else {
+                      btn.textContent = 'Error';
+                      toast('Delete failed: ' + (result?.error || 'Unknown error'));
+                    }
+                  } catch (e) {
+                    btn.textContent = 'Error';
+                    toast('Delete failed: ' + (e.message || String(e)));
+                  }
+                });
+
+                row.appendChild(btn);
+                cleanupSection.appendChild(row);
+              }
+              listWrap.appendChild(cleanupSection);
+            }
+          }
+        }
+      } catch (_) {}
+      // ── End post-move cleanup ────────────────────────────────────────────
+
       return;
     }
 
