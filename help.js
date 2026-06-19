@@ -11,7 +11,12 @@
   <li><kbd>F1</kbd> opens this help at any time.</li>
 </ul>
 
-<h3>What's New (v2.4.5)</h3>
+<h3>What's New (v2.4.6)</h3>
+<ul>
+  <li><strong>Find PS5 reliability</strong>: Auto-discovery now verifies the FTP banner on every open port before deciding, so consoles whose real FTP server runs on 1337 (while another service sits on 2121) are detected correctly instead of showing "No PS5 found". Discovery also no longer floods machines that have many network adapters.</li>
+</ul>
+
+<h3>v2.4.5</h3>
 <ul>
   <li><strong>Stability &amp; correctness</strong>: Fixed a crash in PS5 auto-connect error handling, a scan-progress listener leak, and a conflict-detection mismatch for the PPSA-only layout.</li>
   <li><strong>Hardened local API</strong>: The Developer API now restricts cross-origin requests to localhost only, and oversized request bodies are rejected without buffering.</li>

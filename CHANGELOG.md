@@ -4,6 +4,30 @@ All notable changes to PS5 Vault are documented here.
 
 ---
 
+## [2.4.6] — 2026
+
+### Bug Fixes
+
+**Find PS5 missed consoles with a non-FTP service on port 2121**
+Auto-discovery collected every open port per device, then deduplicated to the
+highest-priority port (2121 → 1337 → 1338) *before* checking for an FTP banner — and
+verified only that one port. If a console had something on 2121 that accepts a TCP
+connection but isn't an FTP server (no `220` banner) while its real FTP server ran on
+1337, discovery picked 2121, failed verification, and discarded the working 1337 hit.
+The console showed as "No PS5 found" even though it was reachable. Now the FTP banner
+is verified on **every** open port first, and only verified ports are deduplicated —
+so the console resolves to its real FTP port (e.g. 1337).
+
+### Reliability
+
+**Discovery no longer floods the network stack**
+On machines with several network interfaces (Ethernet + Wi-Fi + Hyper-V/WSL switches),
+the scan opened thousands of sockets simultaneously, which the OS throttles — sometimes
+starving the one probe that mattered. Probe concurrency is now capped so every host
+gets a fair connection attempt.
+
+---
+
 ## [2.4.5] — 2026
 
 ### Bug Fixes
