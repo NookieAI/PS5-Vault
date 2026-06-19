@@ -53,7 +53,7 @@
         }
       ],
       "icon": "assets/icon.ico",
-      "artifactName": "${productName}-${version}-portable.exe"
+      "artifactName": "${productName}.exe"
     },
     "portable": {
       "requestExecutionLevel": "user",
@@ -69,12 +69,14 @@
     "mac": {
       "target": "dmg",
       "icon": "assets/icon.png",
-      "category": "public.app-category.utilities"
+      "category": "public.app-category.utilities",
+      "artifactName": "${productName}-${arch}.dmg"
     },
     "linux": {
       "target": "AppImage",
       "icon": "assets/icon.png",
-      "category": "Utility"
+      "category": "Utility",
+      "artifactName": "${productName}.AppImage"
     },
     "directories": {
       "output": "dist",

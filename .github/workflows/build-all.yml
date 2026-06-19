@@ -34,9 +34,7 @@ jobs:
         run: npm ci
 
       - name: Build Windows portable EXE
-        run: npx electron-builder --win portable --x64
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npx electron-builder --win portable --x64 --publish never
 
       - name: Upload Windows artifacts
         uses: softprops/action-gh-release@v2
@@ -70,9 +68,8 @@ jobs:
         run: npm ci
 
       - name: Build macOS DMG (x64 + arm64)
-        run: npx electron-builder --mac dmg --x64 --arm64
+        run: npx electron-builder --mac dmg --x64 --arm64 --publish never
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CSC_IDENTITY_AUTO_DISCOVERY: false   # no Apple cert in CI — skip codesigning
 
       - name: Upload macOS artifacts
@@ -128,9 +125,7 @@ jobs:
         run: npm ci
 
       - name: Build Linux AppImage (x64)
-        run: npx electron-builder --linux AppImage --x64
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npx electron-builder --linux AppImage --x64 --publish never
 
       - name: Upload Linux artifacts
         uses: softprops/action-gh-release@v2
