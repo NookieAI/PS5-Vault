@@ -11,7 +11,12 @@
   <li><kbd>F1</kbd> opens this help at any time.</li>
 </ul>
 
-<h3>What's New (v2.4.6)</h3>
+<h3>What's New (v2.4.7)</h3>
+<ul>
+  <li><strong>Find PS5 scans all known FTP ports</strong>: Discovery now checks every port PS5 payloads use — 1337 and 2121 first, then 1338, 21 and 9090 — and verifies the FTP banner on each, so your console is found regardless of which port its FTP server runs on. A port that just accepts a connection without being FTP no longer hides the real one.</li>
+</ul>
+
+<h3>v2.4.6</h3>
 <ul>
   <li><strong>Find PS5 reliability</strong>: Auto-discovery now verifies the FTP banner on every open port before deciding, so consoles whose real FTP server runs on 1337 (while another service sits on 2121) are detected correctly instead of showing "No PS5 found". Discovery also no longer floods machines that have many network adapters.</li>
 </ul>

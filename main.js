@@ -3605,7 +3605,9 @@ ipcMain.handle('ps5-discover', async (_event, timeoutMs = 3000) => {
     }
   }
 
-  const PS5_PORTS = [2121, 1337, 1338];
+  // Known PS5 homebrew FTP ports. 1337 (etaHEN/ftpsrv/John) and 2121 (GoldHEN) are
+  // the common ones and are tried/preferred first; the rest cover other payloads.
+  const PS5_PORTS = [1337, 2121, 1338, 21, 9090];
   const tcpHits = [];  // [{ip, port}] — raw TCP open
   // Per-probe timeout — generous enough for Wi-Fi PS5s (~200ms RTT + buffer).
   const perProbeTimeout = Math.max(800, Math.floor(timeoutMs / 4));
@@ -3678,7 +3680,7 @@ ipcMain.handle('ps5-discover', async (_event, timeoutMs = 3000) => {
   // while its real server runs on 1337. Deduping first (picking 2121) would verify
   // only 2121, get no banner, and discard the working 1337 — so the console was
   // never found even though it was right there.
-  const portPriority = { 2121: 0, 1337: 1, 1338: 2 };
+  const portPriority = { 1337: 0, 2121: 1, 1338: 2, 21: 3, 9090: 4 };
   const verifiedAll = await Promise.all(
     tcpHits.map(async h => ({ ...h, ok: await verifyFtp(h.ip, h.port) }))
   );

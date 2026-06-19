@@ -4,6 +4,20 @@ All notable changes to PS5 Vault are documented here.
 
 ---
 
+## [2.4.7] — 2026
+
+### Improvements
+
+**Find PS5 now scans all known payload FTP ports**
+Discovery previously probed only 2121/1337/1338. It now scans every port PS5 homebrew
+FTP payloads are known to use — **1337 and 2121 first**, then 1338, 21 and 9090 — and
+verifies the FTP banner on each. Consoles whose FTP server runs on a less common port
+are detected, and a port that merely accepts TCP without being FTP (e.g. a 2121 or 9090
+service that sends no banner) no longer masks the real server. The preferred-port order
+when more than one is a valid FTP server is 1337 → 2121 → 1338 → 21 → 9090.
+
+---
+
 ## [2.4.6] — 2026
 
 ### Bug Fixes
