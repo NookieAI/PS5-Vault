@@ -4,6 +4,41 @@ All notable changes to PS5 Vault are documented here.
 
 ---
 
+## [2.4.10] — 2026
+
+A final deep audit of the remaining subsystems (delete/rename, diff, import, settings,
+the local API, and the updater) fixed 22 issues. Highlights:
+
+### Critical — data loss / security
+
+- **Rename no longer silently overwrites** an existing same-named game (local and over
+  FTP). It now refuses and tells you the name is taken.
+- **FTP delete/rename work on titles containing `%`** (e.g. "100% Orange Juice"). The
+  path was being URL-decoded, which could fail outright or target the wrong folder.
+- **Diff → "Transfer Missing" now selects the right games in card/grid view** (it only
+  worked in table view before, so GO could copy the wrong set).
+- **Local API hardening:** the transfer endpoint now refuses sources that aren't part of
+  the scanned library (could otherwise move/delete arbitrary folders); delete/rename
+  require an exact, unambiguous id and are blocked during an active scan/transfer; error
+  responses no longer leak filesystem paths.
+- **Auto-update security:** the updater now refuses to follow a download redirect down to
+  plain HTTP (prevents a man-in-the-middle from swapping the update), and writes to a
+  fresh private temp folder (prevents a local symlink/TOCTOU attack).
+
+### Other fixes
+
+- "Clear recent … and FTP" now also wipes the saved FTP password from transfer state.
+- Imported data is treated as display-only — a crafted import can't drive a delete/move
+  or corrupt your settings.
+- Diff comparison no longer false-matches two different games that share a folder name.
+- Stats total size ignores the "size unavailable" marker; history CSV export is
+  hardened against spreadsheet formula injection.
+- Fixed a per-game listener/Worker leak during sizing; the window/tray/API server are now
+  torn down cleanly on quit; launching the app while the headless service runs now opens
+  the window; the "sub-folders" context item no longer implies a selective transfer.
+
+---
+
 ## [2.4.9] — 2026
 
 ### Critical — Transfer safety (prevents data loss on Move)

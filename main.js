@@ -2098,14 +2098,24 @@ function spawnSizeWorker(workerData, sig) {
   return new Promise(resolve => {
     const w = new Worker(SIZE_WORKER_CODE, { eval: true, workerData });
     let done = false;
-    const finish = sz => { if (!done) { done = true; resolve(typeof sz === 'number' ? sz : 0); } };
+    const onAbort = () => { if (!done) { w.terminate(); finish(0); } };
+    // Remove the abort listener when the worker settles. { once:true } only auto-removes
+    // it if it FIRES; on the normal completion path it would otherwise accumulate one
+    // listener (and a retained Worker ref) per game on the shared sizing signal.
+    const finish = sz => {
+      if (!done) {
+        done = true;
+        if (sig) sig.removeEventListener('abort', onAbort);
+        resolve(typeof sz === 'number' ? sz : 0);
+      }
+    };
     w.on('message', ({ size, error }) => {
       if (error) console.warn('[SizeWorker] error in worker:', error);
       finish(size);
     });
     w.on('error', e => { console.warn('[SizeWorker] worker error:', e.message); finish(0); });
     w.on('exit',  c => { if (c !== 0) console.warn('[SizeWorker] worker exited with code', c); finish(0); });
-    if (sig) sig.addEventListener('abort', () => { if (!done) { w.terminate(); finish(0); } }, { once: true });
+    if (sig) sig.addEventListener('abort', onAbort);
   });
 }
 
@@ -3583,6 +3593,12 @@ ipcMain.handle('rename-item', async (event, item, newName) => {
     const newPath = path.join(path.dirname(oldPath), safeName);
     // Ensure dest stays within same parent directory
     if (path.dirname(newPath) !== path.dirname(oldPath)) throw new Error('Path traversal not allowed');
+    // Refuse to clobber a different existing item — fs.rename overwrites files and
+    // replaces empty dirs. A pure case-only rename on Windows is still allowed.
+    const _destExists = await fs.promises.access(newPath).then(() => true).catch(() => false);
+    if (_destExists && path.resolve(newPath).toLowerCase() !== path.resolve(oldPath).toLowerCase()) {
+      throw new Error('A file or folder named "' + safeName + '" already exists');
+    }
     await fs.promises.rename(oldPath, newPath);
     return { success: true };
   } catch (e) {
@@ -3592,7 +3608,9 @@ ipcMain.handle('rename-item', async (event, item, newName) => {
 
 // FTP operations
 ipcMain.handle('ftp-delete-item', async (event, config, remoteFtpPath) => {
-  const decodedPath = decodeURIComponent(remoteFtpPath);
+  // The renderer passes raw (never URI-encoded) POSIX paths from the scan, so decoding
+  // would corrupt any path containing '%' (e.g. "100% Orange Juice") or throw URIError.
+  const decodedPath = remoteFtpPath;
   const client = new ftp.Client(12000); // 12s: delete IPC — fast op, fail quickly if PS5 unreachable
   applyFtpPassive(client, config);
   try {
@@ -3607,12 +3625,23 @@ ipcMain.handle('ftp-delete-item', async (event, config, remoteFtpPath) => {
 });
 
 ipcMain.handle('ftp-rename-item', async (event, config, oldPath, newPath) => {
-  const decodedOld = decodeURIComponent(oldPath);
-  const decodedNew = decodeURIComponent(newPath);
+  // Raw POSIX paths from the scan — never URI-encoded, so do NOT decode (would corrupt
+  // any path containing '%' or throw URIError).
+  const decodedOld = oldPath;
+  const decodedNew = newPath;
   const client = new ftp.Client(12000); // 12s: rename IPC — fast op, fail quickly if PS5 unreachable
   applyFtpPassive(client, config);
   try {
     await client.access({ host: config.host, port: parseInt(config.port), user: config.user, password: config.pass, secure: false });
+    // Refuse to clobber an existing remote item — PS5 RNTO happily overwrites/merges,
+    // which would permanently lose the destination game with no trash/undo.
+    let destExists = false;
+    try { await client.size(decodedNew); destExists = true; }
+    catch (_) {
+      try { await client.cd(decodedNew); destExists = true; await client.cd(decodedOld.replace(/[^/]+$/, '') || '/'); }
+      catch (_) {}
+    }
+    if (destExists) throw new Error('A file or folder already exists at the destination on the PS5');
     await client.rename(decodedOld, decodedNew);
     // Invalidate cache for moved path
     for (const key of Object.keys(diskSizeCache)) {
@@ -4498,8 +4527,13 @@ if (!gotTheLock) {
   app.quit();
 } else {
   app.on('second-instance', () => {
-    if (mainWindow) {
+    // Surface the UI even when an --embedded/headless instance holds the lock (mainWindow
+    // is null then), and recover if the prior window was closed.
+    if (!mainWindow || mainWindow.isDestroyed()) {
+      createWindow();
+    } else {
       if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.show();
       mainWindow.focus();
     }
   });
@@ -4535,7 +4569,7 @@ if (!gotTheLock) {
     // ── Normal mode — create the UI window ──────────────────────────────────
     createWindow();
     // Silently check for updates 5 s after launch
-    setTimeout(() => { if (mainWindow) checkForUpdates(mainWindow); }, 5000);
+    setTimeout(() => { if (mainWindow && !mainWindow.isDestroyed()) checkForUpdates(mainWindow); }, 5000);
   }
 
   // ── Start local developer API server ──────────────────────────────────────
@@ -4585,6 +4619,10 @@ if (!gotTheLock) {
           if (safeName.includes('/') || safeName.includes('\\')) throw new Error('Name cannot contain path separators');
           const newPath = path.join(path.dirname(oldPath), safeName);
           if (path.dirname(newPath) !== path.dirname(oldPath)) throw new Error('Path traversal not allowed');
+          const _exists = await fs.promises.access(newPath).then(() => true).catch(() => false);
+          if (_exists && path.resolve(newPath).toLowerCase() !== path.resolve(oldPath).toLowerCase()) {
+            throw new Error('A file or folder named "' + safeName + '" already exists');
+          }
           await fs.promises.rename(oldPath, newPath);
           // Update library entry in-place so subsequent API calls return the new path
           const entry = apiLibrary.find(g => (g.ppsaFolderPath || g.folderPath) === oldPath);
@@ -4593,6 +4631,7 @@ if (!gotTheLock) {
             entry.ppsaFolderPath = newPath;
             entry.folderName     = path.basename(newPath);
           }
+          apiServer.broadcast('library-changed', { action: 'rename', oldPath, newPath, count: apiLibrary.length });
           return { newPath };
         },
         triggerDelete: async (item) => {
@@ -4602,6 +4641,7 @@ if (!gotTheLock) {
           // Remove from library
           const idx = apiLibrary.findIndex(g => (g.ppsaFolderPath || g.folderPath) === pathToDel);
           if (idx !== -1) apiLibrary.splice(idx, 1);
+          apiServer.broadcast('library-changed', { action: 'delete', path: pathToDel, count: apiLibrary.length });
           return { deleted: pathToDel };
         },
         triggerScan: async (source) => {
@@ -4642,6 +4682,23 @@ if (!gotTheLock) {
         },
         triggerTransfer: async (opts) => {
           if (apiTransferActive) throw new Error('Transfer already running');
+          // SECURITY: the API is unauthenticated/localhost — only allow sources that
+          // belong to the scanned library. Never trust caller-supplied paths, or a crafted
+          // request could move/delete arbitrary directories on a Move.
+          const _normTp = (p) => {
+            if (!p || typeof p !== 'string') return null;
+            return p.startsWith('ftp://') ? p.replace(/\/+$/, '') : path.resolve(p);
+          };
+          const _known = new Set();
+          for (const g of apiLibrary) {
+            for (const p of [g.ppsaFolderPath, g.folderPath, g.contentFolderPath]) {
+              const n = _normTp(p); if (n) _known.add(n);
+            }
+          }
+          for (const it of (Array.isArray(opts?.items) ? opts.items : [])) {
+            const src = _normTp(it && (it.ppsaFolderPath || it.folderPath || it.contentFolderPath));
+            if (!src || !_known.has(src)) throw new Error('Source not in scanned library: ' + (src || '(none)'));
+          }
           apiTransferActive = true;
           apiTransferProg   = {};
           apiServer.broadcast('transfer-start', { itemCount: opts.items?.length || 0 });
@@ -4675,6 +4732,12 @@ if (!gotTheLock) {
     console.error('[PS5 Vault] app.whenReady error:', e);
   });
 }
+app.on('before-quit', () => {
+  // Tear down the tray icon (avoids a ghost icon on Windows) and the API server
+  // (closes the :3731 socket + SSE ping intervals so a fast relaunch can't hit EADDRINUSE).
+  try { if (embeddedTray) embeddedTray.destroy(); } catch (_) {}
+  try { apiServer.stop(); } catch (_) {}
+});
 app.on('window-all-closed', () => {
   // In embedded mode there is intentionally no window — never quit on close.
   if (!EMBEDDED_MODE) app.quit();
@@ -4717,6 +4780,9 @@ function createWindow() {
     mainWindow.loadFile('index.html').catch((e) => {
       console.error('[main] loadFile error:', e);
     });
+    // Null the reference on close so the destroyed BrowserWindow is GC'd and the
+    // update-timer guard doesn't fire against a dead webContents.
+    mainWindow.on('closed', () => { mainWindow = null; });
   } catch (e) {
     console.error('[main] createWindow error', e);
   }
@@ -4795,14 +4861,17 @@ async function checkForUpdates(win) {
 function httpsGetJson(url, redirects = 0) {
   return new Promise((resolve, reject) => {
     if (redirects > 5) return reject(new Error('Too many redirects'));
-    const mod = url.startsWith('https') ? require('https') : require('http');
-    mod.get(url, {
+    // Enforce HTTPS end-to-end — never follow a redirect down to cleartext HTTP
+    // (a MITM on the LAN could otherwise swap the update payload).
+    if (!url.startsWith('https://')) return reject(new Error('Refusing non-HTTPS update URL'));
+    require('https').get(url, {
       headers: {
         'User-Agent': `PS5-Vault/${VERSION}`,
         'Accept':     'application/vnd.github+json'
       }
     }, (res) => {
       if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+        if (!res.headers.location.startsWith('https://')) return reject(new Error('Refusing non-HTTPS redirect'));
         return resolve(httpsGetJson(res.headers.location, redirects + 1));
       }
       let raw = '';
@@ -4818,9 +4887,10 @@ function httpsGetJson(url, redirects = 0) {
 function httpsDownloadFile(url, destPath, onProgress, redirects = 0) {
   return new Promise((resolve, reject) => {
     if (redirects > 10) return reject(new Error('Too many redirects'));
-    const mod = url.startsWith('https') ? require('https') : require('http');
-    mod.get(url, { headers: { 'User-Agent': `PS5-Vault/${VERSION}` } }, (res) => {
+    if (!url.startsWith('https://')) return reject(new Error('Refusing non-HTTPS update URL'));
+    require('https').get(url, { headers: { 'User-Agent': `PS5-Vault/${VERSION}` } }, (res) => {
       if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+        if (!res.headers.location.startsWith('https://')) return reject(new Error('Refusing non-HTTPS redirect'));
         return resolve(httpsDownloadFile(res.headers.location, destPath, onProgress, redirects + 1));
       }
       if (res.statusCode !== 200) {
@@ -4828,10 +4898,13 @@ function httpsDownloadFile(url, destPath, onProgress, redirects = 0) {
       }
       const total   = parseInt(res.headers['content-length'] || '0', 10);
       let received  = 0;
-      const ws      = require('fs').createWriteStream(destPath);
+      // 'wx' (exclusive): refuse to follow/clobber an attacker-planted file/symlink at the
+      // (now per-run private) destination.
+      const ws      = require('fs').createWriteStream(destPath, { flags: 'wx' });
       res.on('data', chunk => {
         received += chunk.length;
-        ws.write(chunk);
+        // Honor backpressure so a fast download to a slow/full disk can't balloon memory.
+        if (!ws.write(chunk)) { res.pause(); ws.once('drain', () => res.resume()); }
         if (total > 0) onProgress?.(received, total);
       });
       res.on('end', () => ws.end());
@@ -4859,7 +4932,10 @@ ipcMain.handle('download-and-install-update', async (event, downloadUrl) => {
   const isWin   = process.platform === 'win32';
   const isMac   = process.platform === 'darwin';
   const fileExt = isWin ? '.exe' : isMac ? '.dmg' : '.AppImage';
-  const tmpFile = path.join(os.tmpdir(), `ps5vault-update${fileExt}`);
+  // Per-run private 0700 dir instead of a fixed shared-temp path, so the payload/.bat
+  // can't be pre-planted or symlink-attacked (TOCTOU) by another local user.
+  const updDir  = fsMod.mkdtempSync(path.join(os.tmpdir(), 'ps5vault-upd-'));
+  const tmpFile = path.join(updDir, `ps5vault-update${fileExt}`);
 
   // Windows portable: PORTABLE_EXECUTABLE_FILE is the original .exe the user ran.
   // process.execPath points to the unpacked copy inside %LOCALAPPDATA%.
@@ -4874,7 +4950,7 @@ ipcMain.handle('download-and-install-update', async (event, downloadUrl) => {
 
     if (isWin) {
       // Batch script: waits for the app to exit, overwrites the exe, relaunches
-      const tmpBat = path.join(os.tmpdir(), 'ps5vault-updater.bat');
+      const tmpBat = path.join(updDir, 'ps5vault-updater.bat');
       // Bounded retry: the copy fails while the old exe is still locked (app exiting).
       // Cap attempts so a *permanent* failure (permission denied, AV block) can't spin
       // cmd.exe forever — give up after ~30s and still relaunch the existing exe.
@@ -4917,7 +4993,7 @@ ipcMain.handle('download-and-install-update', async (event, downloadUrl) => {
 
   } catch (e) {
     console.error('[updater] Download/install failed:', e.message);
-    try { fsMod.unlinkSync(tmpFile); } catch (_) {}
+    try { fsMod.rmSync(updDir, { recursive: true, force: true }); } catch (_) {}
     throw new Error('Update failed: ' + e.message);
   }
 });

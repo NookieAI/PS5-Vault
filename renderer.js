@@ -853,18 +853,24 @@
       reader.onload = () => {
         try {
           const data = JSON.parse(reader.result);
-          if (data.results) {
-            renderResults(data.results);
+          if (Array.isArray(data.results)) {
+            // Tag imported rows as untrusted: their paths did not come from a real scan,
+            // so destructive ops (delete/move) must refuse them until a re-scan.
+            const tagged = data.results.map(it => (it && typeof it === 'object') ? { ...it, imported: true } : it);
+            renderResults(tagged);
             try {
-              const forStorage = data.results.map(item => {
-                if (!item.iconPath || !item.iconPath.startsWith('data:')) return item;
-                const { iconPath: _i, ...rest } = item; return rest;
+              const forStorage = tagged.map(item => {
+                const { paramParsed: _p, ...rest } = item;
+                if (rest.iconPath && rest.iconPath.startsWith('data:')) { const { iconPath: _i, ...r2 } = rest; return r2; }
+                return rest;
               });
               localStorage.setItem(LAST_RESULTS_KEY, JSON.stringify(forStorage));
             } catch (_) {}
           }
-          if (data.settings) {
-            settings = data.settings;
+          // Only accept a plain-object settings payload; merge so a primitive/array can't
+          // replace `settings` and break the strict-mode theme toggle.
+          if (data.settings && typeof data.settings === 'object' && !Array.isArray(data.settings)) {
+            settings = Object.assign({}, settings, data.settings);
             localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
             applySettings();
           }
@@ -1043,6 +1049,10 @@
     const rawSelected = getSelectedItemsAny();
     if (!rawSelected.length) {
       toast('No items selected');
+      return;
+    }
+    if (rawSelected.some(it => it && it.imported)) {
+      toast('Imported entries are display-only. Re-scan the source before transferring.');
       return;
     }
     setAppBusy(true);
@@ -2514,12 +2524,17 @@
     const rows   = history.map(h => [
       h.date || '',
       h.action || '',
-      (h.source || '').replace(/"/g, '""'),
-      (h.dest   || '').replace(/"/g, '""'),
+      h.source || '',
+      h.dest   || '',
       h.items   || 0,
       h.totalBytes || 0,
       h.durationMs || 0,
-    ].map(v => `"${v}"`).join(','));
+    ].map(v => {
+      // Neutralize CSV/formula injection (paths/URLs starting with = + - @) before quoting.
+      let s = String(v);
+      if (/^[=+\-@\t\r]/.test(s)) s = "'" + s;
+      return `"${s.replace(/"/g, '""')}"`;
+    }).join(','));
     const csv  = [header.join(','), ...rows].join('\r\n');
     const blob = new Blob([csv], { type: 'text/csv' });
     const url  = URL.createObjectURL(blob);
@@ -2728,7 +2743,7 @@
     if (!backdrop || !body) return;
 
     const total = items.length;
-    const totalSize = items.reduce((s, i) => s + (i.totalSize || 0), 0);
+    const totalSize = items.reduce((s, i) => s + (i.totalSize > 0 ? i.totalSize : 0), 0);
     const sized = items.filter(i => i.totalSize > 0);
     const avgSize = sized.length ? totalSize / sized.length : 0;
     const largest = items.reduce((m, i) => (i.totalSize || 0) > (m.totalSize || 0) ? i : m, items[0] || {});
@@ -2872,15 +2887,20 @@
         const destB = $('diffSourceB')?.value?.trim();
         if (!destB) { toast('Enter destination B first'); return; }
         close();
-        // Pre-select the missing items — set them as selected in main table
+        // Pre-select the missing items in BOTH table and card/grid views so GO
+        // (getSelectedItemsAny) finds them regardless of the current view mode.
         const tbody = $('resultsBody');
-        if (!tbody || !window.__ps5_lastRenderedItems) return;
-        // Uncheck all first
+        if (!window.__ps5_lastRenderedItems) return;
+        // Uncheck all first — table rows and cards.
         document.querySelectorAll('#resultsBody input[type="checkbox"]').forEach(cb => { cb.checked = false; cb.closest('tr')?.classList.remove('row-selected'); });
-        // Check matching
+        document.querySelectorAll('#cardGrid .card-item').forEach(c => { const chk = c.querySelector('.card-chk'); if (chk) { chk.checked = false; updateCardSelected(c, false); } });
+        // Check matching index in both representations.
         diffMissingItems.forEach(item => {
           const idx = window.__ps5_lastRenderedItems.indexOf(item);
-          if (idx >= 0) {
+          if (idx < 0) return;
+          const card = document.querySelector(`#cardGrid .card-item[data-index="${idx}"]`);
+          if (card) { const chk = card.querySelector('.card-chk'); if (chk) { chk.checked = true; updateCardSelected(card, true); } }
+          if (tbody) {
             const tr = tbody.querySelector(`tr[data-index="${idx}"]`);
             if (tr) { const cb = tr.querySelector('input[type="checkbox"]'); if (cb) { cb.checked = true; tr.classList.add('row-selected'); } }
           }
@@ -2917,15 +2937,18 @@
 
           const onlyInA = srcAItems.filter(i => {
             const key = i.ppsa || i.contentId;
-            if (key && setPpsaB.has(key)) return false;
-            const fn = (i.folderName || '').toLowerCase();
+            if (key) return !setPpsaB.has(key);             // has a reliable id → compare ids only
+            const fn = (i.folderName || '').toLowerCase();  // no id → fall back to folderName
             if (fn && setFolderB.has(fn)) return false;
             return true;
           });
           const _setAKeys = new Set(srcAItems.map(x => x.ppsa || x.contentId).filter(Boolean));
+          const _setAFolders = new Set(srcAItems.map(x => (x.folderName || '').toLowerCase()).filter(Boolean));
           const onlyInB = itemsB.filter(i => {
             const key = i.ppsa || i.contentId;
-            if (key && _setAKeys.has(key)) return false;
+            if (key) return !_setAKeys.has(key);
+            const fn = (i.folderName || '').toLowerCase();
+            if (fn && _setAFolders.has(fn)) return false;
             return true;
           });
           const inBoth = srcAItems.filter(i => !onlyInA.includes(i));
@@ -3143,6 +3166,11 @@
               localStorage.removeItem('ps5vault.recentFtp');
               localStorage.removeItem(LAST_SRC_KEY);
               localStorage.removeItem(LAST_DST_KEY);
+              // Also wipe the saved transfer state — it holds ftpConfig/ftpDestConfig with
+              // the FTP password in plaintext, which "clear FTP" must remove too.
+              localStorage.removeItem(TRANSFER_STATE_KEY);
+              resumeState = null;
+              transferState = {};
               if ($('sourcePath')) $('sourcePath').value = '';
               if ($('destPath')) $('destPath').value = '';
               updateSourceHistoryDatalist();
@@ -3554,6 +3582,10 @@
           if (appBusy) { toast('Please wait for the current operation to finish.'); return; }
           const selected = getSelectedItemsAny();
           if (!selected.length) { toast('No items selected'); return; }
+          if (selected.some(it => it && it.imported)) {
+            toast('Imported entries are display-only. Re-scan the source before deleting.');
+            return;
+          }
           const confirmed = await confirm(
             `Permanently delete ${selected.length} selected game${selected.length !== 1 ? 's' : ''}?\n\n` +
             `This will remove the files from disk and cannot be undone.`
@@ -3999,10 +4031,13 @@
         ].join(';');
         const menuItems = [
           ['📋 View details', () => openGameDetailModal(item)],
-          ['📁 Pick sub-folders…', async () => {
+          ['📁 View sub-folders…', async () => {
+            // Selective sub-folder transfer is not wired into the transfer backend (the
+            // whole game folder is always copied), so this only shows the breakdown —
+            // don't imply the selection changes what GO transfers.
             const subs = await openSubfolderPicker(item);
             if (subs && subs.length) {
-              toast(`${subs.length} sub-folder(s) selected — adjust destination then click GO`);
+              toast(`${subs.length} sub-folder(s) — note: GO always transfers the whole game folder`);
             }
           }],
         ];

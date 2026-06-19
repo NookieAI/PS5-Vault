@@ -11,7 +11,15 @@
   <li><kbd>F1</kbd> opens this help at any time.</li>
 </ul>
 
-<h3>What's New (v2.4.9)</h3>
+<h3>What's New (v2.4.10)</h3>
+<ul>
+  <li><strong>Rename safety</strong>: Renaming a game to a name that already exists is now refused instead of silently overwriting the other folder (local and over FTP), and rename/delete work on titles containing "%".</li>
+  <li><strong>Diff fix</strong>: "Transfer Missing" now selects the correct games in card/grid view, not just table view.</li>
+  <li><strong>Safer updates &amp; API</strong>: the auto-updater refuses insecure (non-HTTPS) download redirects, and the local developer API rejects transfers of anything outside your scanned library.</li>
+  <li><strong>Privacy</strong>: "Clear recent &amp; FTP" now also removes the saved FTP password from disk.</li>
+</ul>
+
+<h3>v2.4.9</h3>
 <ul>
   <li><strong>Transfer safety</strong>: Move is now safe against partial transfers — an incomplete FTP upload or download can no longer report success and delete your only copy. Uploads are size-verified on the PS5, same-place moves are skipped, and overwrite aborts if it can't clear the old folder first.</li>
   <li><strong>Transfer fixes</strong>: cross-drive Move checks free space, very long PS5 paths download correctly on Windows, already-downloaded files are skipped on resume, and the PPSA-only destination preview now matches reality.</li>

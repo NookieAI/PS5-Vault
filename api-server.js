@@ -166,7 +166,8 @@ function serializeParam(item) {
   };
 }
 
-// Lookup by PPSA ID, folderName, or partial contentId — case-insensitive
+// Lookup by PPSA ID, folderName, or partial contentId — case-insensitive.
+// Used only for read-only GET routes (lenient substring match is acceptable there).
 function findGame(id) {
   const upper = id.toUpperCase();
   const lib   = _state.getLibrary();
@@ -176,6 +177,21 @@ function findGame(id) {
     lib.find(g => (g.contentId   || '').toUpperCase().includes(upper)) ||
     null
   );
+}
+
+// Strict resolver for DESTRUCTIVE routes (delete/rename): exact ppsa or exact folderName
+// only, and refuse ambiguity — a substring contentId match could delete the wrong game.
+// Returns { item } on a unique match, { count } when ambiguous, or null when not found.
+function findGameStrict(id) {
+  const upper = id.toUpperCase();
+  const lib   = _state.getLibrary();
+  const matches = lib.filter(g =>
+    (g.ppsa || '').toUpperCase() === upper ||
+    (g.folderName || '').toUpperCase() === upper
+  );
+  if (matches.length === 0) return null;
+  if (matches.length > 1)  return { count: matches.length };
+  return { item: matches[0] };
 }
 
 // ── SSE broadcast ─────────────────────────────────────────────────────────────
@@ -247,12 +263,14 @@ async function handleRequest(req, res) {
 
   // DELETE /api/v1/library/:id
   if (mBase && method === 'DELETE') {
-    const item = findGame(mBase[1]);
-    if (!item) { jsonErr(req, res, 404, `Game not found: ${mBase[1]}`); return; }
+    const found = findGameStrict(mBase[1]);
+    if (!found)      { jsonErr(req, res, 404, `Game not found: ${mBase[1]}`); return; }
+    if (found.count) { jsonErr(req, res, 409, `Ambiguous id, ${found.count} matches`); return; }
+    if (_state.getScanStatus().active || _state.getTransferStatus().active) { jsonErr(req, res, 409, 'Cannot delete while a scan or transfer is running'); return; }
     try {
-      const result = await _state.triggerDelete(item);
+      const result = await _state.triggerDelete(found.item);
       jsonOk(req, res, { ok: true, deleted: result.deleted });
-    } catch (e) { jsonErr(req, res, 500, e.message); }
+    } catch (e) { console.error('[API] Delete failed:', e.message); jsonErr(req, res, 500, 'Delete failed'); }
     return;
   }
 
@@ -270,7 +288,7 @@ async function handleRequest(req, res) {
         res.writeHead(200, corsHeaders(req, { 'Content-Type': 'image/png', 'Content-Length': String(stat.size), 'Cache-Control': 'public, max-age=3600' }));
         fs.createReadStream(item.iconPath).pipe(res);
       }
-    } catch (e) { jsonErr(req, res, 500, `Icon read error: ${e.message}`); }
+    } catch (e) { console.error('[API] Icon read error:', e.message); jsonErr(req, res, 500, 'Icon unavailable'); }
     return;
   }
 
@@ -284,16 +302,18 @@ async function handleRequest(req, res) {
 
   // POST /api/v1/library/:id/rename
   if (mRen && method === 'POST') {
-    const item = findGame(mRen[1]);
-    if (!item) { jsonErr(req, res, 404, `Game not found: ${mRen[1]}`); return; }
+    const found = findGameStrict(mRen[1]);
+    if (!found)      { jsonErr(req, res, 404, `Game not found: ${mRen[1]}`); return; }
+    if (found.count) { jsonErr(req, res, 409, `Ambiguous id, ${found.count} matches`); return; }
+    if (_state.getScanStatus().active || _state.getTransferStatus().active) { jsonErr(req, res, 409, 'Cannot rename while a scan or transfer is running'); return; }
     let body;
     try { body = await readBody(req); } catch (_) { jsonErr(req, res, 400, 'Invalid JSON'); return; }
     const name = typeof body.name === 'string' ? body.name.trim() : '';
     if (!name) { jsonErr(req, res, 400, '"name" is required'); return; }
     try {
-      const result = await _state.triggerRename(item, name);
+      const result = await _state.triggerRename(found.item, name);
       jsonOk(req, res, { ok: true, newPath: result.newPath });
-    } catch (e) { jsonErr(req, res, 500, e.message); }
+    } catch (e) { console.error('[API] Rename failed:', e.message); jsonErr(req, res, 500, 'Rename failed'); }
     return;
   }
 
@@ -341,8 +361,9 @@ function start(opts) {
 
   _server = http.createServer((req, res) => {
     handleRequest(req, res).catch(e => {
+      // Generic message only — exception text can embed absolute local paths/usernames.
       console.error('[API] Request error:', e.message);
-      try { jsonErr(req, res, 500, e.message); } catch (_) {}
+      try { jsonErr(req, res, 500, 'Internal error'); } catch (_) {}
     });
   });
 
