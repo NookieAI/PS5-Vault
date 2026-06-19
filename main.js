@@ -3607,35 +3607,36 @@ ipcMain.handle('ps5-discover', async (_event, timeoutMs = 3000) => {
 
   const PS5_PORTS = [2121, 1337, 1338];
   const tcpHits = [];  // [{ip, port}] — raw TCP open
-  // Use a generous per-probe timeout so PS5s on Wi-Fi or busy networks respond in time.
-  // Dividing by 6 gives ~1000 ms with the 6000 ms call from the renderer.
-  // perProbeTimeout: enough for Wi-Fi PS5s (~200ms RTT + buffer).
-  // All probes run in parallel so this IS the total scan wall-time.
+  // Per-probe timeout — generous enough for Wi-Fi PS5s (~200ms RTT + buffer).
   const perProbeTimeout = Math.max(800, Math.floor(timeoutMs / 4));
 
-  // All subnets in parallel — one giant Promise.all so all probes race together.
-  // Previously subnets were scanned sequentially (await inside the loop) which
-  // meant 3 subnets × perProbeTimeout = 3× the wait time. Now all 254×N IPs
-  // probe simultaneously regardless of how many subnets are detected.
+  // Probe every IP × port, but cap concurrency. Detected machines can have several
+  // interfaces (Ethernet + Wi-Fi + Hyper-V/WSL switches), so an uncapped scan can be
+  // thousands of simultaneous sockets (e.g. 5 subnets × 254 × 3 = 3810), which the OS
+  // throttles — starving the one probe that matters. A high cap keeps it fast while
+  // ensuring every host gets a real connection attempt.
+  const probeLimit = makeConcurrencyLimiter(1024);
+  const probeOne = (ip, port) => new Promise(resolve => {
+    const sock = new net.Socket();
+    let done = false;
+    const finish = (hit) => {
+      if (done) return; done = true;
+      sock.destroy();
+      if (hit) tcpHits.push({ ip, port });
+      resolve();
+    };
+    sock.setTimeout(perProbeTimeout);
+    sock.connect(port, ip, () => finish(true));
+    sock.on('error', () => finish(false));
+    sock.on('timeout', () => finish(false));
+  });
+
   const allProbes = [];
   for (const subnet of Array.from(subnets)) {
     for (let n = 1; n <= 254; n++) {
       const ip = `${subnet}.${n}`;
       for (const port of PS5_PORTS) {
-        allProbes.push(new Promise(resolve => {
-          const sock = new net.Socket();
-          let done = false;
-          const finish = (hit) => {
-            if (done) return; done = true;
-            sock.destroy();
-            if (hit) tcpHits.push({ ip, port });
-            resolve();
-          };
-          sock.setTimeout(perProbeTimeout);
-          sock.connect(port, ip, () => finish(true));
-          sock.on('error', () => finish(false));
-          sock.on('timeout', () => finish(false));
-        }));
+        allProbes.push(probeLimit(() => probeOne(ip, port)));
       }
     }
   }
@@ -3643,21 +3644,9 @@ ipcMain.handle('ps5-discover', async (_event, timeoutMs = 3000) => {
 
   if (!tcpHits.length) return [];
 
-  // Deduplicate TCP hits by IP using port priority (2121 > 1337 > 1338) before
-  // FTP verification so only the preferred port per PS5 is verified — not
-  // whichever TCP probe happened to resolve first.
-  const portPriority = { 2121: 0, 1337: 1, 1338: 2 };
-  const byIpTcp = {};
-  for (const h of tcpHits) {
-    if (!byIpTcp[h.ip] || (portPriority[h.port] ?? 9) < (portPriority[byIpTcp[h.ip].port] ?? 9)) {
-      byIpTcp[h.ip] = h;
-    }
-  }
-  const dedupedHits = Object.values(byIpTcp);
-
   // ── FTP banner verification ───────────────────────────────────────────────
-  // For each deduplicated hit, open a raw socket and read the 220 banner to
-  // confirm it's actually an FTP server (not a router service).
+  // Open a raw socket and read the 220 banner to confirm it's actually an FTP
+  // server (not a router service or some other process that merely accepts TCP).
   // PS5 payloads (ftpsrv, etaHEN, ftpsrc) always send a 220 greeting.
   async function verifyFtp(ip, port) {
     return new Promise(resolve => {
@@ -3683,12 +3672,24 @@ ipcMain.handle('ps5-discover', async (_event, timeoutMs = 3000) => {
     });
   }
 
-  // Verify deduplicated hits in parallel (one preferred port per IP)
-  const verified = await Promise.all(
-    dedupedHits.map(async h => ({ ...h, ok: await verifyFtp(h.ip, h.port) }))
+  // Verify the FTP banner on EVERY open port in parallel, THEN dedupe per IP by
+  // port priority among the *verified* ports. Verifying before deduping is critical:
+  // a PS5 often has another service on 2121 that accepts TCP but sends no FTP banner
+  // while its real server runs on 1337. Deduping first (picking 2121) would verify
+  // only 2121, get no banner, and discard the working 1337 — so the console was
+  // never found even though it was right there.
+  const portPriority = { 2121: 0, 1337: 1, 1338: 2 };
+  const verifiedAll = await Promise.all(
+    tcpHits.map(async h => ({ ...h, ok: await verifyFtp(h.ip, h.port) }))
   );
-
-  return verified.filter(h => h.ok).map(({ ip, port }) => ({ ip, port }));
+  const byIp = {};
+  for (const h of verifiedAll) {
+    if (!h.ok) continue;
+    if (!byIp[h.ip] || (portPriority[h.port] ?? 9) < (portPriority[byIp[h.ip].port] ?? 9)) {
+      byIp[h.ip] = h;
+    }
+  }
+  return Object.values(byIp).map(({ ip, port }) => ({ ip, port }));
 });
 
 // ── FTP Storage Info ──────────────────────────────────────────────────────────
