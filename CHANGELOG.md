@@ -4,6 +4,40 @@ All notable changes to PS5 Vault are documented here.
 
 ---
 
+## [2.4.9] — 2026
+
+### Critical — Transfer safety (prevents data loss on Move)
+
+A deep audit of the transfer pipeline found several cases where a **Move** could report
+success after an *incomplete* transfer and then delete the source. All are now closed:
+
+- **Incomplete FTP download no longer deletes the source.** If any folder failed to list
+  during the manifest walk (common under PS5 FTP load), the download silently skipped those
+  files yet reported success — and a Move then deleted the source. The walk now retries
+  failed directories and, if any still can't be read, fails the whole transfer so the source
+  is preserved.
+- **Incomplete FTP upload no longer deletes the source.** Directories stored as NTFS
+  junctions/symlinks were silently skipped during upload. They are now followed and uploaded.
+- **FTP uploads are size-verified.** After each file uploads, its size on the PS5 is checked
+  against the local file; a short/truncated write is retried instead of being accepted.
+- **Same-place FTP Move is a no-op.** Moving/restoring a game to the exact path it already
+  occupies (with Overwrite) no longer risks deleting the just-written folder.
+- **Overwrite that can't clear the old folder now aborts** instead of merging the new files
+  on top of the old version.
+
+### Bug Fixes
+
+- Cross-drive local **Move** now runs the free-space pre-check (previously only Copy did).
+- FTP **download** uses extended-length paths, so very long PS5 game paths work on Windows.
+- FTP **download resumes**: files already fully present (matching size) are skipped.
+- PPSA-only layout **preview** now shows the version suffix, matching the folder actually created.
+- Free-space estimate ignores the "size unavailable" marker.
+- Speed-limited uploads no longer leak a file handle on a failed retry.
+- Cancelling a verified copy now aborts mid-hash promptly.
+- A failed transfer no longer shows the previous transfer's summary numbers.
+
+---
+
 ## [2.4.8] — 2026
 
 ### Bug Fixes — FTP scan UI (information loss)

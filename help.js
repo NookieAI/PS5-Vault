@@ -11,7 +11,13 @@
   <li><kbd>F1</kbd> opens this help at any time.</li>
 </ul>
 
-<h3>What's New (v2.4.8)</h3>
+<h3>What's New (v2.4.9)</h3>
+<ul>
+  <li><strong>Transfer safety</strong>: Move is now safe against partial transfers — an incomplete FTP upload or download can no longer report success and delete your only copy. Uploads are size-verified on the PS5, same-place moves are skipped, and overwrite aborts if it can't clear the old folder first.</li>
+  <li><strong>Transfer fixes</strong>: cross-drive Move checks free space, very long PS5 paths download correctly on Windows, already-downloaded files are skipped on resume, and the PPSA-only destination preview now matches reality.</li>
+</ul>
+
+<h3>v2.4.8</h3>
 <ul>
   <li><strong>FTP scan fixes</strong>: The SIZE column no longer gets stuck on a spinner — every game now resolves to its size, "0 B", or "—" (size unavailable), and the "sizing…" bar always finishes. Covers now appear live as they download, duplicate copies of a game show their own correct sizes, and large FTP libraries save reliably between sessions.</li>
 </ul>

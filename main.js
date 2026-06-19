@@ -749,10 +749,18 @@ async function copyAndVerifyFile(srcPath, dstPath, progressCallback, cancelCheck
       await copyFileStream(srcE, dstE, progressCallback, cancelCheck);
       const ac = new AbortController();
       if (cancelCheck()) ac.abort();
-      const [hSrc, hDst] = await Promise.all([
-        hashFile(srcE, ac.signal),
-        hashFile(dstE, ac.signal),
-      ]);
+      // Poll cancelCheck during hashing so a mid-hash cancel of a large file aborts both
+      // reads within ~200ms instead of running two full file reads to completion.
+      const cancelPoll = setInterval(() => { if (cancelCheck()) ac.abort(); }, 200);
+      let hSrc, hDst;
+      try {
+        [hSrc, hDst] = await Promise.all([
+          hashFile(srcE, ac.signal),
+          hashFile(dstE, ac.signal),
+        ]);
+      } finally {
+        clearInterval(cancelPoll);
+      }
       if (hSrc === hDst) {
         try { const fd = await fs.promises.open(dstE, 'r+'); await fd.sync(); await fd.close(); } catch (_) {}
         if (srcStat) {
@@ -1152,6 +1160,11 @@ async function buildFtpManifest(ftpConfig, rootPath, progressCallback, cancelChe
 
   const queue   = [];  // seeded by probe below
   const visited = new Set([rootPath]);
+  // Dirs whose LIST never succeeded (even after reconnect/retries). For a real download
+  // walk (!sizeOnly) any such dir means the manifest is INCOMPLETE — we fail loudly so a
+  // Move never deletes the source after a partial transfer. sizeOnly stays best-effort.
+  const failedDirs = [];
+  const dirAttempts = new Map(); // dir -> LIST attempts, caps re-enqueues (no infinite loop)
 
   // Event-based wake-up: replaces 5ms polling with zero-latency notification.
   // Each time a new dir is pushed (or the last in-flight worker finishes),
@@ -1237,6 +1250,9 @@ async function buildFtpManifest(ftpConfig, rootPath, progressCallback, cancelChe
               e.message.includes('ECONNRESET') ||
               e.message.includes('closed')
             );
+            const attempts = (dirAttempts.get(dir) || 0) + 1;
+            dirAttempts.set(dir, attempts);
+            let recovered = false;
             if (isBrokenState) {
               try { client.close(); } catch (_) {}
               if (accessOpts_w) {
@@ -1248,18 +1264,27 @@ async function buildFtpManifest(ftpConfig, rootPath, progressCallback, cancelChe
                   await newClient.access(accessOpts_w);
                   client = newClient;
                   console.log('[FTP Manifest] Worker reconnected after client error');
-                  // BUG FIX: re-enqueue the failed dir so its files are counted.
-                  // Without this, a timed-out dir is permanently lost from the walk.
-                  enqueueDir(dir);
+                  recovered = true;
                 } catch (reconnErr) {
                   console.warn('[FTP Manifest] Worker reconnect failed:', reconnErr.message);
-                  // BUG FIX: do NOT decrement inFlight here — finally does it.
-                  // Previous code had an explicit inFlight-- + return which caused
-                  // double-decrement with finally → inFlight went negative →
-                  // all workers parked forever and sizing hung indefinitely.
+                  // Do NOT decrement inFlight here — finally does it (a previous explicit
+                  // inFlight-- caused a double-decrement → workers parked forever).
                   workerDead = true; // signal loop to break after finally runs
                 }
               }
+            } else {
+              recovered = true; // client still usable — retry the dir
+            }
+            // Re-enqueue for another attempt (capped at 3 to avoid an infinite re-list
+            // loop on a persistently-failing dir); otherwise record it as failed so the
+            // manifest-incomplete guard below aborts a Move instead of deleting a source.
+            // visited.delete is required: enqueueDir() skips already-visited dirs, so the
+            // re-enqueue would silently no-op without it.
+            if (recovered && attempts < 3) {
+              visited.delete(dir);
+              enqueueDir(dir);
+            } else {
+              failedDirs.push(dir);
             }
             // fall through to finally (inFlight--, wakeWorkers)
           }
@@ -1367,6 +1392,13 @@ async function buildFtpManifest(ftpConfig, rootPath, progressCallback, cancelChe
     await Promise.all(clients.map(c => worker(c, accessOpts)));
   } finally {
     clients.forEach(c => { try { c.close(); } catch (_) {} });
+  }
+
+  // For a real download walk, a directory we never managed to list means the manifest
+  // is incomplete — fail loudly so downloadFtpFolder rethrows and a Move never deletes
+  // the source after a partial transfer. sizeOnly walks remain best-effort.
+  if (!sizeOnly && failedDirs.length > 0) {
+    throw new Error(`Manifest incomplete: failed to list ${failedDirs.length} dir(s), e.g. ${failedDirs[0]}`);
   }
 
   const result = { files, totalSize, fileCount: files.length, dirCount, fromCache: false };
@@ -2399,11 +2431,22 @@ async function downloadFtpFolder(ftpConfig, remotePath, localPath, progressCallb
       const localDest = path.join(localPath, ...fileEntry.relPath.split('/'));
       await fs.promises.mkdir(toExtendedPath(path.dirname(localDest)), { recursive: true });
 
+      // Resume skip: if the destination already exists at the exact expected size,
+      // it was fully downloaded on a prior run — skip it (partial files differ in size
+      // and are still re-fetched). Mirrors the local copy resume behavior.
+      const _existing = await fs.promises.stat(toExtendedPath(localDest)).catch(() => null);
+      if (_existing && _existing.size === fileEntry.size && fileEntry.size > 0) {
+        bytesCopied += fileEntry.size;
+        progressCallback?.({ type: 'go-file-progress', fileRel: path.basename(fileEntry.remotePath), totalBytesCopied: bytesCopied, totalBytes: totalSize });
+        continue;
+      }
+
       // Retry up to 5 attempts on transient FTP errors — also auto-reconnects on disconnect
       let downloaded = false;
       for (let attempt = 1; attempt <= 5 && !downloaded; attempt++) {
         try {
-          await client.downloadTo(localDest, fileEntry.remotePath);
+          // Extended path so long PS5 game trees (>260 chars) don't fail on Windows.
+          await client.downloadTo(toExtendedPath(localDest), fileEntry.remotePath);
           downloaded = true;
         } catch (e) {
           if (cancelCheck?.()) throw new Error('Cancelled');
@@ -2576,20 +2619,48 @@ async function uploadFtpRecursive(client, localPath, remotePath, progressCallbac
     if (cancelCheck()) throw new Error('Cancelled');
     const localItem  = path.join(localPath, ent.name);
     const remoteItem = path.posix.join(remotePath, ent.name);
-    if (ent.isFile()) {
+    // NTFS junctions/symlinks (PS5 Sc0/Sc1/-app game-data folders) classify as
+    // neither isFile() nor isDirectory() under withFileTypes on Windows. stat()
+    // follows the junction (as findAllParamJsons/listAllFilesWithStats do) — without
+    // this the whole subtree is silently skipped, producing an incomplete upload that
+    // is then reported as success (and the local source deleted on a Move).
+    const _st  = (ent.isFile() || ent.isDirectory()) ? null : await fs.promises.stat(localItem).catch(() => null);
+    const isFile = ent.isFile() || (_st && _st.isFile());
+    const isDir  = ent.isDirectory() || (_st && _st.isDirectory());
+    if (isFile) {
       let uploaded = false;
       let lastErr = null;
       for (let attempt = 1; attempt <= 5 && !uploaded; attempt++) {
         try {
           if (speedLimitBps > 0) {
-            const rs = fs.createReadStream(localItem, { highWaterMark: bufBytes });
-            const throttle = new ThrottledStream(speedLimitBps);
-            // Forward stream errors so the transfer fails cleanly rather than hanging
-            rs.on('error', (e) => throttle.destroy(e));
-            rs.pipe(throttle);
-            await client.uploadFrom(throttle, remoteItem);
+            let rs, throttle;
+            try {
+              rs = fs.createReadStream(localItem, { highWaterMark: bufBytes });
+              throttle = new ThrottledStream(speedLimitBps);
+              // Forward stream errors so the transfer fails cleanly rather than hanging
+              rs.on('error', (e) => throttle.destroy(e));
+              rs.pipe(throttle);
+              await client.uploadFrom(throttle, remoteItem);
+            } finally {
+              // Release the fd/stream on every attempt (success or failure) so a failed
+              // retry doesn't leak a file handle or keep a detached pipe alive.
+              try { rs && rs.destroy(); } catch (_) {}
+              try { throttle && throttle.destroy(); } catch (_) {}
+            }
           } else {
             await client.uploadFrom(localItem, remoteItem);
+          }
+          // Verify the remote byte count matches local before declaring success.
+          // basic-ftp resolves uploadFrom on the server's 226 reply; PS5 FTP can 226 a
+          // short write, so confirm SIZE. If the server lacks SIZE (<0/throws), trust
+          // the 226 rather than failing forever.
+          {
+            const localSize = (await fs.promises.stat(localItem).catch(() => ({ size: -1 }))).size;
+            let remoteSize = -1;
+            try { remoteSize = await client.size(remoteItem); } catch (_) { remoteSize = -1; }
+            if (remoteSize >= 0 && localSize >= 0 && remoteSize !== localSize) {
+              throw new Error(`size mismatch for ${ent.name}: local ${localSize} remote ${remoteSize}`);
+            }
           }
           uploaded = true;
         } catch (e) {
@@ -2622,7 +2693,7 @@ async function uploadFtpRecursive(client, localPath, remotePath, progressCallbac
       if (!uploaded) throw new Error(`FTP upload failed for file: ${ent.name} — ${lastErr?.message || 'unknown error'}`);
       const size = (await fs.promises.stat(localItem).catch(() => ({ size: 0 }))).size || 0;
       progressCallback?.({ type: 'go-file-complete', fileRel: ent.name, totalBytesCopied: size, totalBytes: totalSize });
-    } else if (ent.isDirectory()) {
+    } else if (isDir) {
       await uploadFtpRecursive(client, localItem, remoteItem, progressCallback, cancelCheck, totalSize, speedLimitBps, bufBytes, accessConfig);
     }
   }
@@ -2898,10 +2969,12 @@ async function doEnsureAndPopulate(event, opts) {
 
   const results = [];
   // Pre-compute once so progressFn doesn't call .reduce() on every IPC event
-  const _grandTotalBytes = items.reduce((s, x) => s + (x.totalSize || 0), 0);
+  // Sum only positive sizes — the -1 "size unavailable" sentinel (and 0) must not
+  // subtract from or pollute the free-space estimate.
+  const _grandTotalBytes = items.reduce((s, x) => s + (x.totalSize > 0 ? x.totalSize : 0), 0);
   try {
-    // ── Free-space pre-check ─────────────────────────────────────────────────
-    if ((action === 'copy' || action === 'copy-fast') && _grandTotalBytes > 0) {
+    // ── Free-space pre-check (also covers Move: a cross-device move is a full copy) ──
+    if ((action === 'copy' || action === 'copy-fast' || action === 'move') && _grandTotalBytes > 0) {
       try {
         if (!ftpConfig && !ftpDestConfig) {
           // Local-to-local: use OS free space API
@@ -3167,7 +3240,13 @@ async function doEnsureAndPopulate(event, opts) {
                 try {
                   await dc.access({ host: ftpDestConfig.host, port: parseInt(ftpDestConfig.port), user: ftpDestConfig.user || 'anonymous', password: ftpDestConfig.pass || '', secure: false });
                   await ftpDeleteRecursive(dc, ftpDestRemotePath);
-                } catch (e) { console.warn('[FTP] Pre-overwrite delete failed:', e.message); }
+                } catch (e) {
+                  // ftpDeleteRecursive no-ops on a missing target, so a thrown error here is
+                  // a real failure (shallow/protected path or remove error). Abort the item
+                  // rather than uploading on top of the old version (silent merge/corruption).
+                  console.warn('[FTP] Pre-overwrite delete failed:', e.message);
+                  throw new Error('Overwrite aborted — could not clear existing folder: ' + e.message);
+                }
                 finally { dc.close(); }
               }
             } else {
@@ -3186,11 +3265,15 @@ async function doEnsureAndPopulate(event, opts) {
               applyFtpPassive(rc, ftpDestConfig);
               try {
                 await rc.access({ host: ftpDestConfig.host, port: parseInt(ftpDestConfig.port), user: ftpDestConfig.user || 'anonymous', password: ftpDestConfig.pass || '', secure: false });
+                let renamed = false;
                 for (let n = 1; n <= 100; n++) {
                   const tryR = ftpDestRemotePath + ` (${n})`;
                   try { await rc.cd(tryR); await rc.list(); }
-                  catch (_) { ftpDestRemotePath = tryR; finalTarget = finalTarget + ` (${n})`; break; }
+                  catch (_) { ftpDestRemotePath = tryR; finalTarget = finalTarget + ` (${n})`; renamed = true; break; }
                 }
+                // All 100 numbered candidates exist — fall back to a timestamp suffix so we
+                // never merge into the original conflicting folder (matches the catch below).
+                if (!renamed) { const ts = Date.now(); ftpDestRemotePath += ` (${ts})`; finalTarget += ` (${ts})`; }
               } catch (e) {
                 const ts = Date.now(); ftpDestRemotePath += ` (${ts})`; finalTarget += ` (${ts})`;
               } finally { rc.close(); }
@@ -3228,6 +3311,18 @@ async function doEnsureAndPopulate(event, opts) {
               if (ftpConfig && action === 'move' &&
                   ftpConfig.host === ftpDestConfig.host &&
                   String(ftpConfig.port) === String(ftpDestConfig.port)) {
+                // Guard: when the destination resolves to the SAME server path as the
+                // source (e.g. moving/restoring a game in-place with overwrite), a
+                // server-side rename is a no-op and the download+upload+delete fallback
+                // would delete the just-restored game. Treat as already-satisfied.
+                const _nSrc = ('/' + String(srcFolder).replace(/^\/+/, '')).replace(/\/\/+/g, '/').replace(/\/$/, '');
+                const _nDst = ('/' + String(remotePath).replace(/^\/+/, '')).replace(/\/\/+/g, '/').replace(/\/$/, '');
+                if (_nSrc === _nDst) {
+                  console.warn('[FTP] Same-server move: source === destination — skipping (no-op):', _nDst);
+                  results.push({ item: safeGameName, target: finalTarget, moved: true, skipped: true, source: originalSrcFolder, safeGameName, totalSize: itemTotalBytes });
+                  progressFn({ type: 'go-file-complete', fileRel: path.basename(finalTarget), totalBytesCopied: 0, totalBytes: 0 });
+                  continue;
+                }
                 const client = new ftp.Client(15000); // 15s: rename is fast but needs round-trips
                 applyFtpPassive(client, ftpConfig);
                 let renameOk = false;

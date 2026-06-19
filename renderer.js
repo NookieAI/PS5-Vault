@@ -889,7 +889,7 @@
       : Utils.sanitizeName(it.displayTitle || it.dbTitle || it.folderName || it.ppsa || 'Unknown Game');
     const rawVer = it.contentVersion || it.version || '';
     const verSuffix = rawVer ? ' (' + rawVer + ')' : '';
-    const safeGame = layout === 'ppsa-only' ? baseName : (baseName + verSuffix);
+    const safeGame = baseName + verSuffix;
     let finalPpsaName = it.ppsa || (it.contentId && (String(it.contentId).match(/PPSA\d{4,6}/i) || [])[0]?.toUpperCase()) || null;
     if (!finalPpsaName) {
       const src = it.contentFolderPath || it.ppsaFolderPath || it.folderPath || '';
@@ -904,7 +904,7 @@
       const sep = (base && base.includes('\\')) ? '\\' : '/';
       return all.join(sep);
     };
-    if (layout === 'ppsa-only') return pathJoin(dest, finalPpsaName);
+    if (layout === 'ppsa-only') return pathJoin(dest, finalPpsaName + verSuffix);
     if (layout === 'game-only') return pathJoin(dest, safeGame);
     if (layout === 'etahen') return pathJoin(dest, 'etaHEN', 'games', safeGame);
     if (layout === 'itemzflow') return pathJoin(dest, 'games', safeGame);
@@ -2325,6 +2325,13 @@
       if (elapsedTimer) { clearInterval(elapsedTimer); elapsedTimer = null; }
       setResultModalBusy(false);
       setAppBusy(false);
+      // Reset the timer (mirrors go-complete) so a leftover non-zero value can't make the
+      // next transfer's go-start skip its setup, and clear stale stats so the failed
+      // transfer doesn't display the previous successful transfer's numbers.
+      transferStartTime = 0;
+      for (const id of ['finalDuration', 'finalTransferred', 'finalAvgSpeed', 'finalPeakSpeed']) {
+        const el = $(id); if (el) el.textContent = '—';
+      }
       const progressPanel = $('resultProgressPanel');
       const summaryPanel  = $('resultSummaryPanel');
       const titleEl       = $('resultTitleText');
