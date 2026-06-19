@@ -9,7 +9,10 @@
 window.Utils = {
   sanitizeName: function(name) {
     if (!name) return 'Unknown';
-    return String(name).replace(/[<>:"/\\|?*\x00-\x1F!'™@#$%^&[\]{}=+;,`~]/g, '').trim().slice(0, 200) || 'Unknown';
+    // Only strip characters that are truly invalid on common filesystems (FAT32/NTFS/ext4):
+    // < > : " / \ | ? * and control characters 0x00–0x1F.
+    // Preserve: ! ' ™ and other characters that legitimately appear in game titles.
+    return String(name).replace(/[<>:"/\\|?*\x00-\x1F]/g, '').replace(/  +/g, ' ').trim().slice(0, 200) || 'Unknown';
   },
 
   /**
@@ -59,6 +62,29 @@ window.Utils = {
    * @returns {boolean} True if ends with sce_sys.
    */
   pathEndsWithSceSys: function(p) {
-    return p && p.toLowerCase().endsWith('/sce_sys');
+    if (!p) return false;
+    const lp = p.toLowerCase();
+    return lp.endsWith('/sce_sys') || lp.endsWith('\\sce_sys');
+  },
+
+  /**
+   * Cleans and HTML-escapes a path for display (handles FTP and local paths).
+   * @param {string} p - The path to clean.
+   * @returns {string} Cleaned, escaped path string.
+   */
+  cleanPath: function(p) {
+    if (!p) return '';
+    if (p.startsWith('ftp://')) {
+      const parts = p.split('://');
+      if (parts.length === 2) {
+        const proto = parts[0] + '://';
+        let rest = parts[1].replace(/\/+/g, '/');
+        try { rest = decodeURIComponent(rest); } catch (_) { /* keep original on malformed % sequences */ }
+        return window.Utils.escapeHtml(proto + rest);
+      }
+    }
+    let cleaned = p.replace(/\/+/g, '/');
+    try { cleaned = decodeURIComponent(cleaned); } catch (_) { /* keep original on malformed % sequences */ }
+    return window.Utils.escapeHtml(cleaned);
   }
 };

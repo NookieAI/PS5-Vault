@@ -1,66 +1,42 @@
 (function () {
   'use strict';
 
+  const toast = (msg) => { if (typeof window.toast === 'function') window.toast(msg); else console.warn('[FTP]', msg); };
+
   // Global API for FTP
   window.FtpApi = {
-    openFtpModal: openFtpModal,
-    handleProgress: handleProgress
+    openFtpModal: openFtpModal
   };
 
-  function populateFtpDatalists() {
+  // Build option arrays for the FTP dropdowns from recent connection history.
+  function buildFtpOptions() {
     const recents = window.getRecentFtp ? window.getRecentFtp() : [];
     const hosts = new Set();
-    const ports = new Set();
-    const paths = new Set();
+    const ports = new Set(['1337', '2121', '1338', '21']);
+    const paths = new Set([
+      '/data/etaHEN/games',
+      '/data/games',
+      '/mnt/ext1/etaHEN/games',
+      '/mnt/usb0/etaHEN/games',
+      '/mnt/usb1/etaHEN/games',
+      '/mnt/usb0',
+      '/mnt/usb1',
+      '/mnt/ext1',
+      '/data',
+    ]);
     const users = new Set();
     for (const c of recents) {
       if (c.host) hosts.add(c.host);
-      if (c.port) ports.add(c.port);
+      if (c.port) ports.add(String(c.port));
       if (c.path) paths.add(c.path);
       if (c.user) users.add(c.user);
     }
-    // Add preset paths
-    paths.add('/mnt/usb0');
-    paths.add('/mnt/usb1');
-    paths.add('/mnt/ext1');
-    paths.add('/data');
-
-    const hostHistory = document.getElementById('hostHistory');
-    if (hostHistory) {
-      hostHistory.innerHTML = '';
-      for (const h of hosts) {
-        const opt = document.createElement('option');
-        opt.value = h;
-        hostHistory.appendChild(opt);
-      }
-    }
-    const portHistory = document.getElementById('portHistory');
-    if (portHistory) {
-      portHistory.innerHTML = '';
-      for (const p of ports) {
-        const opt = document.createElement('option');
-        opt.value = p;
-        portHistory.appendChild(opt);
-      }
-    }
-    const pathHistory = document.getElementById('pathHistory');
-    if (pathHistory) {
-      pathHistory.innerHTML = '';
-      for (const p of paths) {
-        const opt = document.createElement('option');
-        opt.value = p;
-        pathHistory.appendChild(opt);
-      }
-    }
-    const userHistory = document.getElementById('userHistory');
-    if (userHistory) {
-      userHistory.innerHTML = '';
-      for (const u of users) {
-        const opt = document.createElement('option');
-        opt.value = u;
-        userHistory.appendChild(opt);
-      }
-    }
+    return {
+      hosts: Array.from(hosts),
+      ports: Array.from(ports),
+      paths: Array.from(paths),
+      users: Array.from(users),
+    };
   }
 
   function getLastFtpConfig() {
@@ -68,8 +44,14 @@
     return recents.length > 0 ? recents[0] : null;
   }
 
+  /**
+   * Opens the FTP configuration modal and returns the user-confirmed config object.
+   * If initialUrl is provided, pre-fills the form fields from the parsed URL.
+   * Resolves with the FTP config object on confirm, or null if cancelled.
+   * @param {string} [initialUrl] - Optional FTP URL to pre-fill (e.g. from PS5 auto-detect).
+   * @returns {Promise<object|null>}
+   */
   async function openFtpModal(initialUrl) {
-    populateFtpDatalists();
     const backdrop = document.getElementById('ftpModalBackdrop');
     const hostInput = document.getElementById('ftpHost');
     const portInput = document.getElementById('ftpPort');
@@ -77,10 +59,13 @@
     const userInput = document.getElementById('ftpUser');
     const passInput = document.getElementById('ftpPass');
     const passiveCheckbox = document.getElementById('ftpPassive'); // Passive mode checkbox
-    const bufferInput = document.getElementById('ftpBufferSize'); // Buffer size input
-    const parallelInput = document.getElementById('ftpParallel'); // Parallel transfers input
+    const bufferInput     = document.getElementById('ftpBufferSize');
+    const parallelInput   = document.getElementById('ftpParallel');
+    const speedLimitInput = document.getElementById('ftpSpeedLimit');
+    const testBtn         = document.getElementById('ftpTestBtn');
+    const testResult      = document.getElementById('ftpTestResult');
     const proceedBtn = document.getElementById('ftpProceed');
-    const cancelBtn = document.getElementById('ftpCancel');
+    const cancelBtn  = document.getElementById('ftpCancel');
 
     if (!backdrop || !hostInput || !portInput || !pathInput || !userInput || !passInput || !passiveCheckbox || !bufferInput || !parallelInput || !proceedBtn || !cancelBtn) {
       return Promise.resolve(null);
@@ -90,14 +75,16 @@
     if (initialUrl) {
       try {
         const url = new URL(initialUrl.startsWith('ftp://') ? initialUrl : 'ftp://' + initialUrl);
+        const detectedPort = (url.port && /^\d+$/.test(url.port)) ? url.port : '';
         hostInput.value = url.hostname;
-        portInput.value = (url.port && /^\d+$/.test(url.port)) ? url.port : '1337';
-        pathInput.value = url.pathname || '/';
+        portInput.value = detectedPort;
+        // Only use URL pathname if it's something other than root '/'
+        pathInput.value = (url.pathname && url.pathname !== '/') ? url.pathname : '/';
         userInput.value = url.username || 'anonymous';
         passInput.value = url.password || '';
       } catch (e) {
         hostInput.value = initialUrl.replace('ftp://', '').split(':')[0] || '';
-        portInput.value = '1337';
+        portInput.value = '';
         pathInput.value = '/';
         userInput.value = 'anonymous';
         passInput.value = '';
@@ -107,27 +94,40 @@
       const lastConfig = getLastFtpConfig();
       if (lastConfig) {
         hostInput.value = lastConfig.host || '';
-        portInput.value = lastConfig.port || '1337';
-        pathInput.value = lastConfig.path || '/mnt/ext1/etaHEN/games';
+        portInput.value = lastConfig.port || '';
+        pathInput.value = lastConfig.path || '/';
         userInput.value = lastConfig.user || 'anonymous';
         passInput.value = lastConfig.pass || '';
         passiveCheckbox.checked = lastConfig.passive !== false; // Default to true
-        bufferInput.value = lastConfig.bufferSize || '65536'; // Default 64KB
-        parallelInput.value = lastConfig.parallel || '1'; // Default 1
+        bufferInput.value = lastConfig.bufferSize ? Math.round(lastConfig.bufferSize / 1024) : 256;
+        parallelInput.value = lastConfig.parallel || '3';
+        if (speedLimitInput) speedLimitInput.value = lastConfig.speedLimitKbps || '0';
       } else {
         hostInput.value = '';
-        portInput.value = '1337';
-        pathInput.value = '/mnt/ext1/etaHEN/games';
+        portInput.value = '';
+        pathInput.value = '/';
         userInput.value = 'anonymous';
         passInput.value = '';
         passiveCheckbox.checked = true; // Default passive mode
-        bufferInput.value = '65536'; // 64KB buffer
-        parallelInput.value = '1'; // 1 parallel connection
+        bufferInput.value = '256';
+        parallelInput.value = '3';
+        if (speedLimitInput) speedLimitInput.value = '0';
       }
     }
 
     backdrop.style.display = 'flex';
     backdrop.setAttribute('aria-hidden', 'false');
+
+    // Attach show-all custom dropdowns now that the modal is visible.
+    // Build option arrays fresh from the latest recent-FTP history.
+    if (typeof window.makeShowAllDropdown === 'function') {
+      const opts = buildFtpOptions();
+      window.makeShowAllDropdown(hostInput, opts.hosts);
+      window.makeShowAllDropdown(portInput, opts.ports);
+      window.makeShowAllDropdown(pathInput, opts.paths);
+      window.makeShowAllDropdown(userInput, opts.users);
+    }
+
     hostInput.focus();
 
     return new Promise((resolve) => {
@@ -136,6 +136,36 @@
         backdrop.setAttribute('aria-hidden', 'true');
         proceedBtn.removeEventListener('click', onProceed);
         cancelBtn.removeEventListener('click', onCancel);
+        backdrop.removeEventListener('click', onBackdropClick);
+        document.removeEventListener('keydown', onKeydown);
+        if (testBtn) testBtn.removeEventListener('click', onTest);
+      };
+
+      // ── Test connection ──────────────────────────────────────────────────
+      const onTest = async () => {
+        const host = hostInput.value.trim();
+        const port = portInput.value.trim();
+        const user = userInput.value.trim() || 'anonymous';
+        const pass = passInput.value.trim() || '';
+        if (!host) { toast('Enter a host address first'); return; }
+        if (testBtn)   { testBtn.disabled = true; testBtn.textContent = 'Testing…'; }
+        if (testResult) { testResult.style.display = 'block'; testResult.textContent = 'Connecting…'; testResult.className = 'ftp-test-result'; }
+        try {
+          const res = await window.ppsaApi.ftpTestConnection({ host, port, user, pass });
+          if (testResult) {
+            if (res.ok) {
+              testResult.textContent = `✓ Connected in ${res.latencyMs}ms — ${res.listing} items at root`;
+              testResult.classList.add('ftp-test-ok');
+            } else {
+              testResult.textContent = `✗ Failed: ${res.error || 'Unknown error'}`;
+              testResult.classList.add('ftp-test-err');
+            }
+          }
+        } catch (e) {
+          if (testResult) { testResult.textContent = `✗ ${e.message}`; testResult.classList.add('ftp-test-err'); }
+        } finally {
+          if (testBtn) { testBtn.disabled = false; testBtn.textContent = 'Test'; }
+        }
       };
 
       const onProceed = () => {
@@ -146,27 +176,32 @@
           user: userInput.value.trim(),
           pass: passInput.value.trim(),
           passive: passiveCheckbox.checked, // Passive mode
-          bufferSize: parseInt(bufferInput.value.trim()) || 65536, // Buffer size in bytes
-          parallel: parseInt(parallelInput.value.trim()) || 1 // Parallel transfers
+          bufferSize: (parseInt(bufferInput.value.trim()) || 256) * 1024,  // field is KB → store bytes
+          parallel: parseInt(parallelInput.value.trim()) || 3,
+          speedLimitKbps: parseInt(speedLimitInput?.value?.trim()) || 0
         };
 
-        // Validate port
-        const portNum = parseInt(config.port);
-        if (isNaN(portNum) || portNum < 1 || portNum > 65535) {
-          alert('Invalid port number. Must be between 1 and 65535.');
+        // Validate host
+        if (!config.host) { toast('Please enter a host address.'); return; }
+        // Validate port — blank → default 2121
+        const portNum = parseInt(config.port) || 2121;
+        if (portNum < 1 || portNum > 65535) {
+          toast('Invalid port — must be between 1 and 65535.');
           return;
         }
         config.port = String(portNum);
+        // Save as last config immediately so port persists
+        if (window.addRecentFtp) window.addRecentFtp(config);
 
         // Validate buffer size
-        if (config.bufferSize < 1024 || config.bufferSize > 1048576) { // 1KB to 1MB
-          alert('Buffer size must be between 1024 and 1048576 bytes.');
+        if (config.bufferSize < 1024 || config.bufferSize > 1048576) {
+          toast('Buffer size must be between 1 and 1024 KB.');
           return;
         }
 
         // Validate parallel
         if (config.parallel < 1 || config.parallel > 10) { // 1 to 10
-          alert('Parallel transfers must be between 1 and 10.');
+          toast('Parallel transfers must be between 1 and 10.');
           return;
         }
 
@@ -179,16 +214,13 @@
         resolve(null);
       };
 
+      const onBackdropClick = (e) => { if (e.target === backdrop) onCancel(); };
+      const onKeydown = (e) => { if (e.key === 'Escape') onCancel(); };
       proceedBtn.addEventListener('click', onProceed);
       cancelBtn.addEventListener('click', onCancel);
+      backdrop.addEventListener('click', onBackdropClick);
+      document.addEventListener('keydown', onKeydown);
+      if (testBtn) testBtn.addEventListener('click', onTest);
     });
-  }
-
-  function handleProgress(data) {
-    // Handle FTP-specific progress (e.g., transfer updates)
-    if (data.type === 'go-file-progress' || data.type === 'go-file-complete') {
-      // Update TransferStats or UI as needed
-      console.log('[FTP Progress]', data);
-    }
   }
 })();
