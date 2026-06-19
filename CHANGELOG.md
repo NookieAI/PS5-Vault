@@ -4,6 +4,46 @@ All notable changes to PS5 Vault are documented here.
 
 ---
 
+## [2.4.8] — 2026
+
+### Bug Fixes — FTP scan UI (information loss)
+
+**SIZE column stuck on a spinner and "sizing…" never finishing**
+When an FTP game's size walk failed all retries (broken/missing sce_sys, daemon
+connection-limit timeouts) or a game had no resolvable path, the sizing loop advanced
+its internal counter but sent no size-update event. If that happened on the last game,
+the renderer never saw done ≥ total, so the "Calculating sizes…" overlay, the progress
+bar, and the per-row ⟳ spinners stayed up forever. Every sizing outcome now emits a
+terminal size-update (with a "size unavailable" marker), plus a final completion event
+as a backstop, so the scan always finishes and unsized games show "—" instead of a
+permanent spinner.
+
+**Zero-byte FTP games kept spinning**
+A game that sized successfully to 0 bytes (only shader/save dirs, or beyond the depth
+cutoff) never had its spinner replaced because the update only painted sizes > 0. Sizes
+of 0 now render as "0 B".
+
+**Duplicate copies of a game showed each other's size**
+The same game present on two mounts shares a content ID. A size-update for one copy was
+also being applied to the other (matched by content ID), showing a wrong/early size. The
+content-ID match is now used only when no folder path is supplied, so each copy resolves
+to its own size.
+
+**FTP cover art did not appear until the scan finished**
+The app fetched FTP covers in a background pass and broadcast "cover-ready" events, but
+the renderer had no handler for them, so covers only appeared at the very end. Covers now
+pop in live as each one downloads.
+
+### Reliability
+
+**Large FTP libraries silently failed to persist**
+Saved scan results included the entire parsed param.json per game (≈30 localized titles),
+which could exceed the browser storage quota on big FTP libraries and silently drop the
+saved results. The heavy param data is now stripped from the saved copy (kept in memory),
+and a storage-full condition is surfaced instead of being ignored.
+
+---
+
 ## [2.4.7] — 2026
 
 ### Improvements

@@ -11,7 +11,12 @@
   <li><kbd>F1</kbd> opens this help at any time.</li>
 </ul>
 
-<h3>What's New (v2.4.7)</h3>
+<h3>What's New (v2.4.8)</h3>
+<ul>
+  <li><strong>FTP scan fixes</strong>: The SIZE column no longer gets stuck on a spinner — every game now resolves to its size, "0 B", or "—" (size unavailable), and the "sizing…" bar always finishes. Covers now appear live as they download, duplicate copies of a game show their own correct sizes, and large FTP libraries save reliably between sessions.</li>
+</ul>
+
+<h3>v2.4.7</h3>
 <ul>
   <li><strong>Find PS5 scans all known FTP ports</strong>: Discovery now checks every port PS5 payloads use — 1337 and 2121 first, then 1338, 21 and 9090 — and verifies the FTP banner on each, so your console is found regardless of which port its FTP server runs on. A port that just accepts a connection without being FTP no longer hides the real one.</li>
 </ul>

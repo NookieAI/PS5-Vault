@@ -1943,7 +1943,17 @@ async function scanFtpSource(ftpUrl, scanOpts = {}) {
       let doneCount = 0;
       for (const item of items) {
         const gamePath = item.ppsaFolderPath || item.folderPath;
-        if (!gamePath) { ++doneCount; continue; }
+        // No path — can't size. Emit a terminal update (sentinel -1 = unavailable)
+        // so the done counter still advances and the row resolves instead of
+        // spinning forever.
+        if (!gamePath) {
+          item.totalSize = -1;
+          sender?.send('scan-progress', {
+            type: 'size-update', contentId: item.contentId, folderPath: gamePath || null,
+            totalSize: -1, done: ++doneCount, total: items.length
+          });
+          continue;
+        }
         let sized = false;
         for (let attempt = 1; attempt <= 3 && !sized; attempt++) {
           try {
@@ -1958,8 +1968,15 @@ async function scanFtpSource(ftpUrl, scanOpts = {}) {
           }
         }
         if (!sized) {
-          console.error('[FTP Size] all attempts failed for', gamePath, '— will not emit size-update so spinner persists');
-          ++doneCount;
+          // All attempts failed — emit a terminal update (sentinel -1 = unavailable)
+          // so the done counter advances, the scan overlay can dismiss, and the row
+          // shows "—" instead of a permanent spinner.
+          console.error('[FTP Size] all attempts failed for', gamePath, '— marking size unavailable');
+          item.totalSize = -1;
+          sender?.send('scan-progress', {
+            type: 'size-update', contentId: item.contentId, folderPath: gamePath,
+            totalSize: -1, done: ++doneCount, total: items.length
+          });
           // Pause even on failure — daemon may need time to recover from the failed walks
           await new Promise(r => setTimeout(r, 500));
           continue;
@@ -1972,6 +1989,12 @@ async function scanFtpSource(ftpUrl, scanOpts = {}) {
         // the 3 worker connections before we open 3 more for the next game
         await new Promise(r => setTimeout(r, 250));
       }
+      // Backstop: always emit a terminal completion event so the renderer's
+      // `done >= total` branch dismisses the scan overlay even if a per-game
+      // emit was missed. No folderPath/contentId → touches no size cell.
+      sender?.send('scan-progress', {
+        type: 'size-update', done: items.length, total: items.length
+      });
       console.log('[FTP] Sizing complete for', doneCount, 'games');
     }
 

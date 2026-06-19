@@ -1533,12 +1533,16 @@
     tdGame.appendChild(subEl);
     tr.appendChild(tdGame);
 
-    // Size cell — spinner until size-update fires
+    // Size cell — spinner only while still calculating (size not yet known).
+    // >0 = human size; 0 = "0 B"; negative sentinel = "—" (size unavailable);
+    // null/undefined = still calculating (spinner).
     const tdSize = document.createElement('td');
     tdSize.className = 'size';
     tdSize.style.verticalAlign = 'top';
-    if (r.totalSize > 0) {
-      tdSize.textContent = bytesToHuman(r.totalSize);
+    if (typeof r.totalSize === 'number') {
+      if (r.totalSize > 0) tdSize.textContent = bytesToHuman(r.totalSize);
+      else if (r.totalSize === 0) tdSize.textContent = '0 B';
+      else tdSize.innerHTML = '<span class="size-unknown" title="Size unavailable">—</span>';
     } else {
       tdSize.innerHTML = '<span class="size-calculating" title="Calculating…">⟳</span>';
     }
@@ -1647,17 +1651,21 @@
     const durationText = scanDuration ? ` (scanned in ${scanDuration}s)` : '';
     $('scanCount') && ($('scanCount').textContent = `${list.length} games found${durationText}`);
     updateHeaderCheckboxState();
-    // Only hide scan UI if all items already have sizes (no pending size-update events).
-    // If any spinner remains, the size-update handler will hide it when done >= total.
-    const hasPendingSpinners = list.some(item => !item.totalSize || item.totalSize <= 0);
+    // Only hide scan UI if every item has a definitive size already (a number,
+    // including 0 or the -1 "unavailable" sentinel). A non-numeric totalSize means
+    // sizing is still pending — the size-update handler hides the UI when done>=total.
+    const hasPendingSpinners = list.some(item => typeof item.totalSize !== 'number');
     if (!hasPendingSpinners) showScanUI(false);
     try {
       const listForStorage = list.map(item => {
-        if (!item.iconPath || !item.iconPath.startsWith('data:')) return item;
-        const { iconPath: _i, ...rest } = item; return rest;
+        const { paramParsed: _p, ...rest } = item;
+        if (rest.iconPath && rest.iconPath.startsWith('data:')) { const { iconPath: _i, ...r2 } = rest; return r2; }
+        return rest;
       });
       localStorage.setItem(LAST_RESULTS_KEY, JSON.stringify(listForStorage));
-    } catch (_) {}
+    } catch (e) {
+      if (e && e.name === 'QuotaExceededError') toast('Could not save results for next launch (storage full)');
+    }
     applySearchFilter();
   }
 
@@ -1817,15 +1825,19 @@
         window.__ps5_lastRenderedItems.forEach((item, idx) => {
           if (
             (d.folderPath && (item.folderPath === d.folderPath || item.ppsaFolderPath === d.folderPath)) ||
-            (d.contentId  && item.contentId === d.contentId)
+            (!d.folderPath && d.contentId && item.contentId === d.contentId)
           ) {
             item.totalSize = d.totalSize;
-            if (tbody && d.totalSize > 0) {
+            // Render any definitive numeric size: >0 human-readable, 0 as "0 B",
+            // negative sentinel as "—" (size unavailable). A non-numeric size (the
+            // terminal completion emit) leaves the cell untouched.
+            if (tbody && typeof d.totalSize === 'number') {
               const row = tbody.querySelector(`tr[data-index="${idx}"]`);
               if (row) {
                 const sizeCell = row.querySelector('td.size');
                 if (sizeCell) {
-                  sizeCell.textContent = bytesToHuman(d.totalSize);
+                  sizeCell.textContent = d.totalSize > 0 ? bytesToHuman(d.totalSize)
+                    : (d.totalSize === 0 ? '0 B' : '—');
                   sizeCell.style.transition = 'opacity 0.3s';
                   sizeCell.style.opacity = '0.4';
                   requestAnimationFrame(() => { sizeCell.style.opacity = '1'; });
@@ -1849,12 +1861,53 @@
         if (sc) sc.textContent = `${n} game${n !== 1 ? 's' : ''} found`;
         try {
           const forStorage = (window.__ps5_lastRenderedItems || []).map(item => {
-            if (!item.iconPath || !item.iconPath.startsWith('data:')) return item;
-            const { iconPath: _i, ...rest } = item; return rest;
+            // Drop the full parsed param.json (huge for FTP records — ~30 langs each)
+            // and base64 covers from the persisted copy; both are re-derivable and
+            // together can blow the localStorage quota on large libraries.
+            const { paramParsed: _p, ...rest } = item;
+            if (rest.iconPath && rest.iconPath.startsWith('data:')) { const { iconPath: _i, ...r2 } = rest; return r2; }
+            return rest;
           });
           localStorage.setItem(LAST_RESULTS_KEY, JSON.stringify(forStorage));
-        } catch (_) {}
+        } catch (e) {
+          if (e && e.name === 'QuotaExceededError') toast('Could not save results for next launch (storage full)');
+        }
         setAppBusy(false);
+      }
+      return;
+    }
+
+    // Live cover streaming — FTP covers are fetched in a background pass after the
+    // row was streamed coverless, and main.js broadcasts a 'cover-ready' event per
+    // cover. Swap the placeholder for the real cover without a full re-render.
+    if (d.type === 'cover-ready') {
+      if (window.__ps5_lastRenderedItems && d.iconPath) {
+        const tbody = $('resultsBody');
+        window.__ps5_lastRenderedItems.forEach((item, idx) => {
+          if (
+            (d.folderPath && (item.folderPath === d.folderPath || item.ppsaFolderPath === d.folderPath)) ||
+            (!d.folderPath && d.contentId && item.contentId === d.contentId)
+          ) {
+            item.iconPath = d.iconPath;
+            const row = tbody && tbody.querySelector(`tr[data-index="${idx}"]`);
+            const wrap = row && row.querySelector('td.cover > div');
+            if (wrap && !wrap.querySelector('img.thumb')) {
+              wrap.innerHTML = '';
+              const img = document.createElement('img');
+              img.className = 'thumb';
+              img.alt = item.displayTitle || 'cover';
+              img.decoding = 'async';
+              img.loading = 'lazy';
+              img.src = d.iconPath;
+              img.style.transition = 'opacity 0.3s';
+              img.style.opacity = '0.4';
+              img.addEventListener('error', () => { img.style.display = 'none'; });
+              wrap.appendChild(img);
+              requestAnimationFrame(() => { img.style.opacity = '1'; });
+              if (typeof attachPreviewHandlers === 'function') attachPreviewHandlers(img, d.iconPath);
+            }
+          }
+        });
       }
       return;
     }
@@ -3412,6 +3465,10 @@
             showScanUI(false);
           } finally {
             setAppBusy(false);
+            // FTP sizing runs inline inside scanSource, so by the time it resolves
+            // sizing is fully done — guarantee the overlay dismisses even if the
+            // terminal size-update was somehow missed.
+            if (isFtpScan) showScanUI(false);
           }
         });
       }
