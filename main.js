@@ -17,7 +17,7 @@ const ftp = require('basic-ftp');
 const os = require('os');
 
 // ── PS5 FTP compatibility: force LIST instead of MLSD ─────────────────────────
-// Some PS5 FTP payloads (notably GoldHEN, commonly on port 2121) advertise MLST in
+// Some PS5 FTP servers (such as the one commonly on port 2121) advertise MLST in
 // FEAT but return an EMPTY MLSD listing for non-empty directories. basic-ftp then
 // "succeeds" with 0 entries and locks to MLSD, so the app sees every directory as
 // empty even though a plain LIST returns the real contents (which is what FileZilla
@@ -1849,7 +1849,6 @@ async function scanFtpSource(ftpUrl, scanOpts = {}) {
         // Instead enumerate only known game subdirectories explicitly.
         '/data/games',
         '/data/etaHEN/games',
-        '/data/etaHEN/GoldHEN/games',
         '/data/hb/games',
         '/data/homebrew/games',
         '/data/pkg',
@@ -2639,7 +2638,7 @@ async function uploadFtpFolder(ftpConfig, localPath, remotePath, progressCallbac
 }
 
 // PS5-compatible directory creation.
-// basic-ftp's client.ensureDir() uses MKD + CWD in a way that PS5's etaHEN/goldhen FTP
+// basic-ftp's client.ensureDir() uses MKD + CWD in a way that PS5's etaHEN FTP
 // server rejects — it returns 550 even when the directory already exists, causing ensureDir
 // to throw and abort the upload. This function creates each segment individually, tolerating
 // 550/521 "already exists" errors, and never clobbers an existing directory.
@@ -3802,8 +3801,8 @@ ipcMain.handle('ps5-discover', async (_event, timeoutMs = 3000) => {
     }
   }
 
-  // Known PS5 homebrew FTP ports. 2121 (GoldHEN) and 1337 (etaHEN/ftpsrv/John) are the
-  // common ones and are tried/preferred first; the rest cover other payloads.
+  // Known PS5 homebrew FTP ports. 2121 and 1337 (etaHEN / ftpsrv) are the common ones
+  // and are tried/preferred first; the rest cover other payloads.
   const PS5_PORTS = [2121, 1337, 1338, 21, 9090];
   const tcpHits = [];  // [{ip, port}] — raw TCP open
   // Per-probe timeout — generous enough for Wi-Fi PS5s (~200ms RTT + buffer).

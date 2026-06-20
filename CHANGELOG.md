@@ -4,6 +4,15 @@ All notable changes to PS5 Vault are documented here.
 
 ---
 
+## [2.4.14] — 2026
+
+### Docs
+
+Corrected FTP terminology: etaHEN is the PS5 payload (port 1337); the port-2121 listing
+fix is not specific to GoldHEN (a PS4 tool). No behavior change.
+
+---
+
 ## [2.4.13] — 2026
 
 ### Bug Fixes
@@ -23,13 +32,13 @@ it persists from then on.)
 
 ### Bug Fixes
 
-**Directories now read correctly on GoldHEN-style FTP (port 2121)**
-Some PS5 FTP payloads (notably GoldHEN, usually on port 2121) advertise MLSD in their
+**Directories now read correctly on FTP servers that use port 2121**
+Some PS5 FTP servers (such as the one commonly on port 2121) advertise MLSD in their
 feature list but return an *empty* MLSD listing for non-empty folders. The FTP library
 trusted that empty result and showed every directory as empty — so scanning over 2121
 found no games even though the files were right there (FileZilla, which uses the plain
-LIST command, showed them fine). PS5 Vault now always uses LIST, so 2121/GoldHEN consoles
-scan correctly. Verified live: a scan over port 2121 now finds the installed games.
+LIST command, showed them fine). PS5 Vault now always uses LIST, so those servers scan
+correctly. Verified live: a scan over port 2121 now finds the installed games.
 
 ### Changes
 
