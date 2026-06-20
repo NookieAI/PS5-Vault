@@ -74,6 +74,46 @@ function sanitize(name) {
   return String(name).replace(/[<>:"/\\|?*\x00-\x1F]/g, '').replace(/  +/g, ' ').trim().slice(0, 200) || 'Unknown';
 }
 
+// ── Canonical game version ───────────────────────────────────────────────────
+// Resolve the FULLEST available game version so every organized folder name carries
+// a version specific enough to tell two builds apart (e.g. 01.003.000 vs 01.004.000)
+// — a user must never delete one believing it is a duplicate of the other.
+//
+// PS5 param.json carries the authoritative installed version in `contentVersion`
+// (full 3-part, e.g. "01.004.000"). `masterVersion` (and the SFO APP_VER fallback)
+// is only the short 2-part base ("01.00") and must NEVER stand in for the full
+// version when a fuller value exists. We never invent digits (a 2-part value is left
+// as-is, never zero-padded to a fake 3-part). `sources` are objects (scan record
+// and/or parsed param.json) and/or plain strings, most-authoritative first.
+// NOTE: keep this logic byte-identical to window.Utils.resolveGameVersion in utils.js
+// (and its renderer fallback) so on-screen previews equal the folder names written.
+const VER_FULL = /^\d{1,2}\.\d{3}\.\d{3}$/; // 01.004.000 (contentVersion shape)
+function resolveGameVersion(...sources) {
+  const objs = [], strs = [];
+  for (const s of sources) {
+    if (!s) continue;
+    if (typeof s === 'string') { const t = s.trim(); if (t) strs.push(t); }
+    else if (typeof s === 'object') objs.push(s);
+  }
+  // 1) contentVersion is the authoritative installed version — use it as-is, any shape.
+  for (const o of objs) {
+    const cv = typeof o.contentVersion === 'string' ? o.contentVersion.trim() : '';
+    if (cv) return cv;
+  }
+  if (strs.length) return strs[0];
+  // 2) No contentVersion anywhere: fall back to the fullest other version field,
+  //    preferring a full 3-part value over a short 2-part one so builds stay distinct.
+  const fb = [];
+  for (const o of objs) fb.push(o.targetContentVersion, o.originContentVersion, o.version, o.masterVersion, o.appVer);
+  const clean = fb.map(v => (typeof v === 'string' ? v.trim() : '')).filter(Boolean);
+  return clean.find(v => VER_FULL.test(v)) || clean[0] || '';
+}
+// Folder-name suffix for a resolved version: " (01.004.000)" or "" when unknown.
+function versionSuffix(...sources) {
+  const v = resolveGameVersion(...sources);
+  return v ? ` (${sanitize(v)})` : '';
+}
+
 function deriveSafeGameName(item, parsed) {
   if (item?.displayTitle) return item.displayTitle;
   if (item?.dbTitle) return item.dbTitle;
@@ -1585,7 +1625,7 @@ async function scanFtpRecursive(client, remotePath, items, depth, onGameFound, a
         skuFromParam:     sku,
         displayTitle:     title,
         region:           data.defaultLanguage || data.localizedParameters?.defaultLanguage || '',
-        contentVersion:   data.contentVersion || data.masterVersion || data.version,
+        contentVersion:   resolveGameVersion(data) || null,
         sdkVersion:       data.sdkVersion,
         totalSize:        null,
         iconPath:         cover,
@@ -2371,7 +2411,7 @@ async function findContentFoldersByTopLevelWithProgress(startDir, sender, extern
       displayTitle:      getTitleFromParam(parsed, null) || parsed.titleName || null,
       region:            parsed.defaultLanguage || parsed.localizedParameters?.defaultLanguage || '',
       verified:          false,
-      contentVersion:    parsed.contentVersion || null,
+      contentVersion:    resolveGameVersion(parsed) || null,
       sdkVersion:        parsed.sdkVersion     || null,
       totalSize:         null,
       titleId:           parsed.titleId,
@@ -3150,13 +3190,15 @@ async function doEnsureAndPopulate(event, opts) {
         const safeGame = customName && layout === 'custom' ? sanitize(customName) : sanitize(safeGameName);
 
         // ── Version suffix for folder name ────────────────────────────────────
-        // Append game version in parentheses so the same game at different versions
-        // can coexist in the same destination: "Among Us (01.000.000)"
-        // Source of version: param.json contentVersion > masterVersion > item.contentVersion > item.version
-        const rawVer = parsed?.contentVersion || parsed?.masterVersion || it?.contentVersion || it?.version || '';
-        const verSuffix = rawVer ? ` (${sanitize(rawVer)})` : '';
+        // Append the FULL game version in parentheses so the same game at different
+        // versions can coexist and is never mistaken for a duplicate: "Among Us
+        // (01.004.000)". resolveGameVersion() prefers the authoritative full
+        // contentVersion over the short masterVersion. We resolve from the scan
+        // record (it) — NOT the re-read param.json — so the pre-flight
+        // check-conflicts handler (which only has the record) builds a byte-identical
+        // suffix and validates the exact path this transfer will write.
+        const verSuffix = versionSuffix(it);
         // safeGameWithVer is used for all game-name-based layouts.
-                // ppsa-only: PPSA00000_00 (version), e.g. PPSA21564_00 (01.007.000)
         const safeGameWithVer = safeGame + verSuffix;
 
         let srcFolder = it.ppsaFolderPath || it.folderPath || null;
@@ -3547,8 +3589,9 @@ ipcMain.handle('check-conflicts', async (event, items, dest, layout, customName)
   try {
     for (const it of items) {
       const safeGame = customName && layout === 'custom' ? sanitize(customName) : sanitize(deriveSafeGameName(it, null));
-      const rawVer = it?.contentVersion || it?.version || '';
-      const verSuffix = rawVer ? ` (${sanitize(rawVer)})` : '';
+      // Same suffix logic as doEnsureAndPopulate so the conflict pre-flight checks the
+      // exact folder name the transfer will write (full version, no truncation).
+      const verSuffix = versionSuffix(it);
       const safeGameWithVer = safeGame + verSuffix;
       let finalPpsaName = it.ppsa || (it.contentId && (String(it.contentId).match(/PPSA\d{4,6}/i) || [])[0]?.toUpperCase()) || null;
       if (!finalPpsaName) {

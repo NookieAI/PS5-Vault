@@ -11,7 +11,12 @@
   <li><kbd>F1</kbd> opens this help at any time.</li>
 </ul>
 
-<h3>What's New (v2.4.15)</h3>
+<h3>What's New (v2.4.16)</h3>
+<ul>
+  <li><strong>Full version on every folder</strong>: Organized folders always include the full game version (e.g. <code>(01.004.000)</code>), never the short <code>(01.00)</code>, so two different builds of the same game stay distinct and you won't delete one thinking it's a duplicate. The conflict check, the Compare view, the row info and the API all use the same full version now.</li>
+</ul>
+
+<h3>v2.4.15</h3>
 <ul>
   <li><strong>Covers always come back</strong>: Game covers are now restored from the on-disk cache every time the app opens, looked up by each game's content ID. Even if a saved result lost its cover reference, the cover reappears as long as it was fetched once — no more blank boxes after a restart.</li>
 </ul>

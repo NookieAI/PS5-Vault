@@ -4,6 +4,29 @@ All notable changes to PS5 Vault are documented here.
 
 ---
 
+## [2.4.16] — 2026
+
+### Fixed / Changed
+
+Folder names now always carry the **full** game version so different builds of the same
+game stay distinct and are never mistaken for duplicates. A single canonical resolver
+(`resolveGameVersion`) is now used by every folder-naming, preview, display, API and
+diff site. It prefers the authoritative full `contentVersion` (e.g. `01.004.000`) over
+the short 2-part `masterVersion`/SFO `APP_VER` (`01.00`), and never collapses or invents
+version digits.
+
+- The transfer (`doEnsureAndPopulate`) and the pre-flight conflict check now build
+  folder names with byte-identical version logic, so the path the conflict dialog
+  validates is exactly the path written — across all 8 layouts.
+- The **Compare/diff** view now keys games by id **and** version, so two locations
+  holding different builds of the same game (e.g. `01.003.000` vs `01.004.000`) show as
+  distinct entries instead of collapsing into "In both" — preventing a user from
+  deleting the wrong version as a "duplicate".
+- Row display, details, stats and the REST API version field all resolve the full
+  version the same way.
+
+---
+
 ## [2.4.15] — 2026
 
 ### Fixed

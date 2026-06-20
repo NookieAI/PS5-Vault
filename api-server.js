@@ -117,7 +117,11 @@ function serializeGame(item) {
     defaultLanguage: item.region || p.defaultLanguage || null,
 
     // ── Version / firmware
-    version:         item.contentVersion || item.version || p.contentVersion || p.masterVersion || null,
+    // Prefer the full 3-part contentVersion (01.004.000) from either the record or the
+    // parsed param.json before any short 2-part masterVersion/version (01.00), so API
+    // consumers get the version that distinguishes builds. masterVersion stays exposed
+    // separately under raw (serializeParam) for callers that want the base version.
+    version:         item.contentVersion || p.contentVersion || item.version || p.masterVersion || null,
     sdkVersion:      item.sdkVersion  || p.sdkVersion  || null,
     fwRequired:      item.fwSku       || p.requiredSystemSoftwareVersion || null,
 

@@ -16,6 +16,39 @@ window.Utils = {
   },
 
   /**
+   * Resolve the FULLEST available game version so folder names / previews tell two
+   * builds apart (01.003.000 vs 01.004.000) and a user never deletes a "duplicate"
+   * that is really a different version. Prefers the authoritative full contentVersion
+   * over the short 2-part masterVersion; never invents digits.
+   * MUST stay byte-identical to resolveGameVersion() in main.js so the on-screen
+   * preview equals the folder name the main process actually writes.
+   * @param {...(object|string)} sources - scan record and/or parsed param.json, most authoritative first.
+   * @returns {string} version string (unsanitized) or ''.
+   */
+  resolveGameVersion: function(...sources) {
+    var VER_FULL = /^\d{1,2}\.\d{3}\.\d{3}$/; // 01.004.000 (contentVersion shape)
+    var objs = [], strs = [];
+    for (var i = 0; i < sources.length; i++) {
+      var s = sources[i];
+      if (!s) continue;
+      if (typeof s === 'string') { var t = s.trim(); if (t) strs.push(t); }
+      else if (typeof s === 'object') objs.push(s);
+    }
+    for (var j = 0; j < objs.length; j++) {
+      var cv = typeof objs[j].contentVersion === 'string' ? objs[j].contentVersion.trim() : '';
+      if (cv) return cv;
+    }
+    if (strs.length) return strs[0];
+    var fb = [];
+    for (var k = 0; k < objs.length; k++) {
+      var o = objs[k];
+      fb.push(o.targetContentVersion, o.originContentVersion, o.version, o.masterVersion, o.appVer);
+    }
+    var clean = fb.map(function (v) { return typeof v === 'string' ? v.trim() : ''; }).filter(Boolean);
+    return clean.find(function (v) { return VER_FULL.test(v); }) || clean[0] || '';
+  },
+
+  /**
    * Escapes HTML special characters for safe rendering.
    * @param {string} text - The text to escape.
    * @returns {string} Escaped HTML string.

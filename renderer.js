@@ -7,6 +7,21 @@
   // Full fallback implementation — used when utils.js hasn't loaded at all.
   const _utilsFallback = {
     sanitizeName: (n) => (n ? String(n).replace(/[<>:"/\\|?*\x00-\x1F]/g, '').replace(/  +/g, ' ').trim().slice(0, 200) : '') || 'Unknown',
+    resolveGameVersion: (...sources) => {
+      const VER_FULL = /^\d{1,2}\.\d{3}\.\d{3}$/;
+      const objs = [], strs = [];
+      for (const s of sources) {
+        if (!s) continue;
+        if (typeof s === 'string') { const t = s.trim(); if (t) strs.push(t); }
+        else if (typeof s === 'object') objs.push(s);
+      }
+      for (const o of objs) { const cv = typeof o.contentVersion === 'string' ? o.contentVersion.trim() : ''; if (cv) return cv; }
+      if (strs.length) return strs[0];
+      const fb = [];
+      for (const o of objs) fb.push(o.targetContentVersion, o.originContentVersion, o.version, o.masterVersion, o.appVer);
+      const clean = fb.map(v => (typeof v === 'string' ? v.trim() : '')).filter(Boolean);
+      return clean.find(v => VER_FULL.test(v)) || clean[0] || '';
+    },
     escapeHtml: (s) => String(s || '').replace(/[&<>"']/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m])),
     normalizeDisplayPath: (p) => String(p || ''),
     pathEndsWithSceSys: (p) => { if (!p) return false; const lp = p.toLowerCase(); return lp.endsWith('/sce_sys') || lp.endsWith('\\sce_sys'); },
@@ -616,8 +631,8 @@
       const item = isItemMode ? itemOrName : null;
 
       // ── Compute preset values from item metadata ──────────────────────────
-      const rawVer   = item?.contentVersion || item?.version || item?.paramParsed?.contentVersion || '';
-      const verSuffix = rawVer ? ` (${rawVer.trim()})` : '';
+      const rawVer   = Utils.resolveGameVersion(item, item && item.paramParsed);
+      const verSuffix = rawVer ? ` (${Utils.sanitizeName(rawVer)})` : '';
       const titleStr  = (item?.displayTitle || item?.folderName || '').trim();
       const ppsa      = item?.ppsa || '';
       // The standard etaHEN folder name: "Game Name (01.000.000)"
@@ -893,8 +908,8 @@
     const baseName = customName && layout === 'custom'
       ? Utils.sanitizeName(customName)
       : Utils.sanitizeName(it.displayTitle || it.dbTitle || it.folderName || it.ppsa || 'Unknown Game');
-    const rawVer = it.contentVersion || it.version || '';
-    const verSuffix = rawVer ? ' (' + rawVer + ')' : '';
+    const rawVer = Utils.resolveGameVersion(it);
+    const verSuffix = rawVer ? ' (' + Utils.sanitizeName(rawVer) + ')' : '';
     const safeGame = baseName + verSuffix;
     let finalPpsaName = it.ppsa || (it.contentId && (String(it.contentId).match(/PPSA\d{4,6}/i) || [])[0]?.toUpperCase()) || null;
     if (!finalPpsaName) {
@@ -919,8 +934,8 @@
     if (layout === 'game-ppsa') return pathJoin(dest, safeGame, finalPpsaName);
     if (layout === 'porkfolio') {
       const baseOnly = Utils.sanitizeName(it.displayTitle || it.dbTitle || it.folderName || it.ppsa || 'Unknown Game');
-      const porkVer  = it.contentVersion || it.version || '';
-      const porkName = porkVer ? `${baseOnly} (${porkVer}) ${finalPpsaName}` : `${baseOnly} ${finalPpsaName}`;
+      const porkVer  = Utils.resolveGameVersion(it);
+      const porkName = porkVer ? `${baseOnly} (${Utils.sanitizeName(porkVer)}) ${finalPpsaName}` : `${baseOnly} ${finalPpsaName}`;
       return pathJoin(dest, porkName);
     }
     return pathJoin(dest, safeGame);
@@ -1569,7 +1584,7 @@
     fpDiv.textContent = fpPath;
     fpDiv.addEventListener('click', () => { if (fpPath) window.ppsaApi.showInFolder(fpPath); });
     tdFolder.appendChild(fpDiv);
-    const verShort = r.contentVersion || '';
+    const verShort = Utils.resolveGameVersion(r);
     const sdkDisp  = typeof formatSdkVersionHexToDisplay === 'function' ? formatSdkVersionHexToDisplay(r.sdkVersion) : '';
     const infoText = [verShort ? `v${verShort}` : '', sdkDisp ? `FW ${sdkDisp}` : ''].filter(Boolean).join(' - ');
     if (infoText) {
@@ -2369,7 +2384,7 @@
         ['Content ID', item.contentId || ''],
         ['Title ID', item.titleId || parsed.titleId || ''],
         ['PPSA ID', item.ppsa || ''],
-        ['Version', item.contentVersion || parsed.contentVersion || parsed.masterVersion || ''],
+        ['Version', Utils.resolveGameVersion(item, parsed) || ''],
         ['SDK Version', item.sdkVersion || parsed.sdkVersion || ''],
         ['Required FW', item.fwSku || parsed.requiredSystemSoftwareVersion || ''],
         ['Region', item.region || parsed.defaultLanguage || ''],
@@ -2760,7 +2775,7 @@
     // Version breakdown
     const versionCounts = {};
     for (const i of items) {
-      const v = i.contentVersion || '(none)';
+      const v = Utils.resolveGameVersion(i) || '(none)';
       versionCounts[v] = (versionCounts[v] || 0) + 1;
     }
 
@@ -2932,20 +2947,26 @@
             itemsB = Array.isArray(itemsB) ? itemsB : (itemsB?.items || []);
           }
 
-          const setPpsaB = new Set(itemsB.map(i => i.ppsa || i.contentId || i.folderName).filter(Boolean));
+          // Compare by stable id + resolved FULL version so two BUILDS of the same game
+          // (e.g. 01.003.000 vs 01.004.000) are NOT collapsed into "In both" — a user
+          // pruning duplicates across two locations must see they actually differ, or
+          // they could delete the wrong version. No id → folderName, which already
+          // carries the version suffix, so that path is version-aware too.
+          const idVer = i => { const k = i.ppsa || i.contentId; return k ? k + '@' + (Utils.resolveGameVersion(i) || '') : ''; };
+          const setKeyB = new Set(itemsB.map(idVer).filter(Boolean));
           const setFolderB = new Set(itemsB.map(i => (i.folderName || '').toLowerCase()).filter(Boolean));
 
           const onlyInA = srcAItems.filter(i => {
-            const key = i.ppsa || i.contentId;
-            if (key) return !setPpsaB.has(key);             // has a reliable id → compare ids only
+            const key = idVer(i);
+            if (key) return !setKeyB.has(key);              // reliable id+version → compare those
             const fn = (i.folderName || '').toLowerCase();  // no id → fall back to folderName
             if (fn && setFolderB.has(fn)) return false;
             return true;
           });
-          const _setAKeys = new Set(srcAItems.map(x => x.ppsa || x.contentId).filter(Boolean));
+          const _setAKeys = new Set(srcAItems.map(idVer).filter(Boolean));
           const _setAFolders = new Set(srcAItems.map(x => (x.folderName || '').toLowerCase()).filter(Boolean));
           const onlyInB = itemsB.filter(i => {
-            const key = i.ppsa || i.contentId;
+            const key = idVer(i);
             if (key) return !_setAKeys.has(key);
             const fn = (i.folderName || '').toLowerCase();
             if (fn && _setAFolders.has(fn)) return false;
