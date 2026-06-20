@@ -4,6 +4,20 @@ All notable changes to PS5 Vault are documented here.
 
 ---
 
+## [2.4.11] — 2026
+
+### Bug Fixes
+
+**Developer API: transfer endpoint rejects out-of-library sources up front**
+A `POST /transfer` for a source that isn't part of the scanned library is now rejected
+synchronously with `403 Source not in scanned library`, instead of replying `200 Transfer
+started` and only failing afterwards. (The transfer itself was already blocked from
+running, so no data was ever at risk — this just makes the HTTP response correct.) Found
+by an end-to-end functional test pass that also verified local + FTP scanning, local copy
+and FTP upload/download/verify/delete round-trips, and the auto-updater against a live PS5.
+
+---
+
 ## [2.4.10] — 2026
 
 A final deep audit of the remaining subsystems (delete/rename, diff, import, settings,

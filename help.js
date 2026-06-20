@@ -11,7 +11,12 @@
   <li><kbd>F1</kbd> opens this help at any time.</li>
 </ul>
 
-<h3>What's New (v2.4.10)</h3>
+<h3>What's New (v2.4.11)</h3>
+<ul>
+  <li><strong>Verified release</strong>: This build passed an end-to-end test pass against a live PS5 — local and FTP scanning, local copy and FTP upload/download transfers, and the auto-updater all confirmed working. Also tightened the local developer API so a transfer of anything outside your scanned library is refused immediately.</li>
+</ul>
+
+<h3>v2.4.10</h3>
 <ul>
   <li><strong>Rename safety</strong>: Renaming a game to a name that already exists is now refused instead of silently overwriting the other folder (local and over FTP), and rename/delete work on titles containing "%".</li>
   <li><strong>Diff fix</strong>: "Transfer Missing" now selects the correct games in card/grid view, not just table view.</li>

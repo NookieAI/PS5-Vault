@@ -31,6 +31,7 @@
 
 const http = require('http');
 const fs   = require('fs');
+const path = require('path');
 
 const API_PORT    = 3731;
 const API_VERSION = 'v1';
@@ -341,6 +342,18 @@ async function handleRequest(req, res) {
     if (!body.items || !Array.isArray(body.items) || !body.items.length) { jsonErr(req, res, 400, 'items array is required'); return; }
     if (!body.dest || typeof body.dest !== 'string') { jsonErr(req, res, 400, 'dest string is required'); return; }
     if (_state.getTransferStatus().active) { jsonErr(req, res, 409, 'A transfer is already running'); return; }
+    // SECURITY: reject SYNCHRONOUSLY (before the 200) any source that isn't part of the
+    // scanned library — never move/delete caller-supplied arbitrary paths. (triggerTransfer
+    // also enforces this as defense-in-depth, but doing it here returns a proper 403.)
+    {
+      const norm = (p) => (!p || typeof p !== 'string') ? null : (p.startsWith('ftp://') ? p.replace(/\/+$/, '') : path.resolve(p));
+      const known = new Set();
+      for (const g of _state.getLibrary()) {
+        for (const p of [g.folderPath, g.ppsaFolderPath, g.contentFolderPath]) { const n = norm(p); if (n) known.add(n); }
+      }
+      const bad = body.items.find(it => { const s = norm(it && (it.ppsaFolderPath || it.folderPath || it.contentFolderPath)); return !s || !known.has(s); });
+      if (bad) { jsonErr(req, res, 403, 'Source not in scanned library'); return; }
+    }
     jsonOk(req, res, { ok: true, message: 'Transfer started', itemCount: body.items.length });
     _state.triggerTransfer(body).catch(e => broadcast('transfer-error', { error: e.message }));
     return;
