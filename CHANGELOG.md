@@ -4,6 +4,20 @@ All notable changes to PS5 Vault are documented here.
 
 ---
 
+## [2.4.15] — 2026
+
+### Fixed
+
+Game covers now reliably survive an app restart. Covers are rehydrated from the durable
+on-disk cover cache on launch — looked up by each game's content ID (falling back to its
+folder path) — so a cover reappears even when the saved scan result lost its `iconPath`
+(e.g. results persisted before the cover was cached, or a `localStorage` write that never
+flushed). Previously such results showed a blank cover box until the next full re-scan.
+The cover-cache file itself is written synchronously during the scan's background cover
+pass, so it is always present to restore from. No FTP connection is made on restore.
+
+---
+
 ## [2.4.14] — 2026
 
 ### Docs

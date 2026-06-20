@@ -2809,6 +2809,19 @@ ipcMain.handle('open-directory', async () => {
   }
 });
 
+// Look up cached cover art for a batch of games by their cache key (contentId,
+// falling back to folder path). Returns a parallel array of absolute file paths
+// ('' when nothing is cached). Lets the renderer rehydrate covers from the
+// durable on-disk cache when restoring saved results, so a cover never vanishes
+// just because the persisted iconPath was stale or a localStorage write didn't
+// flush — if the cover was ever fetched, the file survives and reappears.
+ipcMain.handle('get-cached-covers', async (_event, keys) => {
+  if (!Array.isArray(keys)) return [];
+  return keys.map((k) => {
+    try { return findCachedCover(k) || ''; } catch (_) { return ''; }
+  });
+});
+
 ipcMain.handle('cancel-operation', async (event) => {
   const cancel = activeCancelFlags.get(event.sender.id);
   if (cancel) cancel();

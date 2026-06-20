@@ -3186,7 +3186,24 @@
         if (lastResults) {
           const arr = JSON.parse(lastResults);
           if (Array.isArray(arr) && arr.length) {
-            renderResults(arr);
+            // Rehydrate covers from the durable on-disk cover cache before
+            // rendering. The persisted iconPath can be stale or empty (results
+            // saved before the cover was cached, or a write that never flushed),
+            // but the cached cover file is written synchronously and survives —
+            // so look it up by contentId/folder and the cover reappears whenever
+            // it has ever been fetched, instead of showing a blank box.
+            (async () => {
+              try {
+                if (window.ppsaApi && typeof window.ppsaApi.getCachedCovers === 'function') {
+                  const keys = arr.map((it) => (it && (it.contentId || it.folderPath)) || '');
+                  const covers = await window.ppsaApi.getCachedCovers(keys);
+                  if (Array.isArray(covers)) {
+                    arr.forEach((it, i) => { if (it && covers[i]) it.iconPath = covers[i]; });
+                  }
+                }
+              } catch (_) {}
+              renderResults(arr);
+            })();
           }
         }
       } catch (_) {}

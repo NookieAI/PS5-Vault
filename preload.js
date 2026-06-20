@@ -13,6 +13,7 @@ contextBridge.exposeInMainWorld('ppsaApi', {
   scanSource:       (src, opts)   => ipcRenderer.invoke('scan-source', src, opts),
   getAllDrives:      ()            => ipcRenderer.invoke('get-all-drives'),
   cancelOperation:  ()            => ipcRenderer.invoke('cancel-operation'),
+  getCachedCovers:  (keys)        => ipcRenderer.invoke('get-cached-covers', keys),
 
   // ── Transfer / layout ───────────────────────────────────────────────────
   ensureAndPopulate:(opts)        => ipcRenderer.invoke('ensure-and-populate', opts),
