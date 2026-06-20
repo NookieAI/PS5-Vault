@@ -11,7 +11,13 @@
   <li><kbd>F1</kbd> opens this help at any time.</li>
 </ul>
 
-<h3>What's New (v2.4.11)</h3>
+<h3>What's New (v2.4.12)</h3>
+<ul>
+  <li><strong>GoldHEN / port 2121 fix</strong>: Consoles whose FTP runs on port 2121 (GoldHEN) now scan correctly. Previously their folders showed as empty because the payload's MLSD listing returns nothing — PS5 Vault now uses the plain LIST command, like FileZilla, so all your games are found.</li>
+  <li><strong>Find PS5 port order</strong>: Discovery now tries and prefers port 2121 before 1337 (then 1338, 21, 9090).</li>
+</ul>
+
+<h3>v2.4.11</h3>
 <ul>
   <li><strong>Verified release</strong>: This build passed an end-to-end test pass against a live PS5 — local and FTP scanning, local copy and FTP upload/download transfers, and the auto-updater all confirmed working. Also tightened the local developer API so a transfer of anything outside your scanned library is refused immediately.</li>
 </ul>
