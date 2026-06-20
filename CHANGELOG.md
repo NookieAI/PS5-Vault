@@ -4,6 +4,21 @@ All notable changes to PS5 Vault are documented here.
 
 ---
 
+## [2.4.13] — 2026
+
+### Bug Fixes
+
+**FTP game covers now persist across sessions**
+Cover art for games scanned over FTP used to disappear after restarting the app — the
+covers were inlined as base64 and then stripped from the saved scan results to stay under
+the browser storage limit, so on the next launch the cover column was blank. FTP covers
+are now cached to a small folder on disk and referenced by file path (exactly like local
+covers), so they survive a restart, reload instantly, and re-appear on a re-scan without
+re-downloading from the PS5. (After updating, scan once so each game's cover is cached;
+it persists from then on.)
+
+---
+
 ## [2.4.12] — 2026
 
 ### Bug Fixes

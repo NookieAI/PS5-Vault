@@ -1422,6 +1422,35 @@ async function buildFtpManifest(ftpConfig, rootPath, progressCallback, cancelChe
   return result;
 }
 
+// ── FTP cover cache ───────────────────────────────────────────────────────────
+// FTP covers are downloaded as raw image bytes. We cache them on disk and reference
+// them by FILE PATH (like local covers) instead of inlining a base64 data: URL.
+// Persisted scan results strip data: URLs to stay under the localStorage quota, which
+// is exactly why FTP covers used to vanish after an app restart. A file-path cover is
+// kept on persist and reloads instantly (and on re-scan, with no FTP fetch at all).
+function coverCacheDir() {
+  const d = path.join(app.getPath('userData'), 'cover-cache');
+  try { fs.mkdirSync(d, { recursive: true }); } catch (_) {}
+  return d;
+}
+function coverCacheKey(idOrPath) {
+  return crypto.createHash('sha1').update(String(idOrPath || '')).digest('hex');
+}
+function findCachedCover(idOrPath) {
+  if (!idOrPath) return null;
+  const base = path.join(coverCacheDir(), coverCacheKey(idOrPath));
+  for (const ext of ['.png', '.jpg', '.jpeg']) {
+    try { if (fs.existsSync(base + ext)) return base + ext; } catch (_) {}
+  }
+  return null;
+}
+function saveCachedCover(idOrPath, ext, buf) {
+  try {
+    const f = path.join(coverCacheDir(), coverCacheKey(idOrPath) + ext);
+    fs.writeFileSync(f, buf);
+    return f;
+  } catch (_) { return null; }
+}
 
 const FTP_SKIPPABLE_DIRS = new Set([
   'sandbox', '$recycle.bin', 'recycle.bin', 'windows',
@@ -1524,7 +1553,9 @@ async function scanFtpRecursive(client, remotePath, items, depth, onGameFound, a
       // crashes or freezes the PS5's FTP daemon.
       // Covers are fetched lazily in a background pass after all games are discovered,
       // where they can be cached and re-used on subsequent launches without any FTP at all.
-      const cover = '';
+      // Reuse a previously cached cover (keyed by contentId, falling back to folder path)
+      // so it shows instantly on re-scan and survives across sessions as a file path.
+      const cover = findCachedCover(data.contentId || gameFolderPath) || '';
       // isMetadataFallback: true when param.json couldn't be downloaded and we only
       // have the PPSA folder name. Used for integrity assessment and cover skipping.
       const isMetadataFallback = !data.titleId && !data.localizedParameters;
@@ -1952,8 +1983,13 @@ async function scanFtpSource(ftpUrl, scanOpts = {}) {
             await coverClient.downloadTo(writable, path.posix.join(gameFolderPath, cand));
             const buf = await done;
             if (buf && buf.length > 100) {
-              const mime = (cand.endsWith('.jpg') || cand.endsWith('.jpeg')) ? 'image/jpeg' : 'image/png';
-              item.iconPath = `data:${mime};base64,` + buf.toString('base64');
+              const ext = (cand.endsWith('.jpg') || cand.endsWith('.jpeg')) ? '.jpg' : '.png';
+              const mime = ext === '.jpg' ? 'image/jpeg' : 'image/png';
+              // Cache to disk and reference by file path so the cover survives the
+              // persisted-results strip and reloads next session. Fall back to an inline
+              // data: URL only if the disk write fails.
+              const cachedPath = saveCachedCover(item.contentId || gameFolderPath, ext, buf);
+              item.iconPath = cachedPath || (`data:${mime};base64,` + buf.toString('base64'));
               console.log('[FTP] Cover fetched for:', item.displayTitle);
               // Emit immediately so UI updates without waiting for all covers
               try {

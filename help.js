@@ -11,7 +11,12 @@
   <li><kbd>F1</kbd> opens this help at any time.</li>
 </ul>
 
-<h3>What's New (v2.4.12)</h3>
+<h3>What's New (v2.4.13)</h3>
+<ul>
+  <li><strong>Covers stay put</strong>: Game covers from FTP scans are now cached to disk and no longer vanish when you restart the app. Scan once after updating so each cover is cached — it persists from then on.</li>
+</ul>
+
+<h3>v2.4.12</h3>
 <ul>
   <li><strong>GoldHEN / port 2121 fix</strong>: Consoles whose FTP runs on port 2121 (GoldHEN) now scan correctly. Previously their folders showed as empty because the payload's MLSD listing returns nothing — PS5 Vault now uses the plain LIST command, like FileZilla, so all your games are found.</li>
   <li><strong>Find PS5 port order</strong>: Discovery now tries and prefers port 2121 before 1337 (then 1338, 21, 9090).</li>
