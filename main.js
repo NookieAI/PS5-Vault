@@ -446,9 +446,12 @@ function parseSfo(buf) {
       const keyOff     = buf.readUInt16LE(base);
       const dataLen    = buf.readUInt32LE(base + 8);
       const dataOff    = buf.readUInt32LE(base + 12);
-      // Read null-terminated key string
+      // Read null-terminated key string. Cap the scan — real SFO keys are short — so a
+      // malformed/truncated key table with no terminator can't merge the rest of the
+      // buffer into one giant garbage key.
       let keyEnd = keyTableStart + keyOff;
-      while (keyEnd < buf.length && buf[keyEnd] !== 0) keyEnd++;
+      const keyCap = Math.min(buf.length, keyTableStart + keyOff + 256);
+      while (keyEnd < keyCap && buf[keyEnd] !== 0) keyEnd++;
       const key = buf.slice(keyTableStart + keyOff, keyEnd).toString('ascii');
       // Read value (strip trailing null bytes for strings)
       const valStart = dataTableStart + dataOff;

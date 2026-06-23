@@ -4,6 +4,18 @@ All notable changes to PS5 Vault are documented here.
 
 ---
 
+## [2.4.17] — 2026
+
+### Hardened
+
+The `param.sfo` parser now caps the key-name scan length. A malformed or truncated SFO key
+table with no null terminator could previously merge the rest of the read buffer into one
+giant garbage key (bounded against crashes already, but wasteful and producing a bogus
+metadata key). Real SFO keys are short, so valid games are unaffected. Found by a security/
+robustness audit sweep.
+
+---
+
 ## [2.4.16] — 2026
 
 ### Fixed / Changed
