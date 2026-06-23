@@ -9,6 +9,10 @@ contextBridge.exposeInMainWorld('ppsaApi', {
   openExternal:     (url)         => ipcRenderer.invoke('open-external-link', url),
   copyToClipboard:  (text)        => ipcRenderer.invoke('clipboard-write', text),
 
+  // ── Secrets (FTP password encryption at rest, via OS safeStorage) ─────────
+  encryptSecret:    (s)           => ipcRenderer.invoke('secret-encrypt', s),
+  decryptSecret:    (s)           => ipcRenderer.invoke('secret-decrypt', s),
+
   // ── Scan ────────────────────────────────────────────────────────────────
   scanSource:       (src, opts)   => ipcRenderer.invoke('scan-source', src, opts),
   getAllDrives:      ()            => ipcRenderer.invoke('get-all-drives'),

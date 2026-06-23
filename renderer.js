@@ -170,7 +170,29 @@
     }
   }
 
+  // FTP-password encryption at rest (see main.js safeStorage handlers). Falls back to
+  // the raw value if the API is unavailable, so it can never break autofill.
+  async function encryptSecret(s) {
+    try { return (window.ppsaApi && window.ppsaApi.encryptSecret) ? await window.ppsaApi.encryptSecret(s) : s; } catch (_) { return s; }
+  }
+  async function decryptSecret(s) {
+    try { return (window.ppsaApi && window.ppsaApi.decryptSecret) ? await window.ppsaApi.decryptSecret(s) : s; } catch (_) { return s; }
+  }
+  // In-memory cache of recent FTP configs with DECRYPTED passwords. localStorage holds the
+  // encrypted form; we decrypt once on load so getRecentFtp() can stay synchronous (it
+  // feeds the FTP modal + dropdowns in ftp.js, which don't await).
+  let _recentFtpCache = null;
+  async function initRecentFtpCache() {
+    let list = [];
+    try { const s = localStorage.getItem('ps5vault.recentFtp'); list = s ? JSON.parse(s) : []; } catch (_) {}
+    try {
+      _recentFtpCache = await Promise.all(list.map(async c => ({ ...c, pass: c.pass ? await decryptSecret(c.pass) : (c.pass || '') })));
+    } catch (_) { _recentFtpCache = list; }
+  }
+  initRecentFtpCache();
+
   function getRecentFtp() {
+    if (_recentFtpCache) return _recentFtpCache;
     try {
       const stored = localStorage.getItem('ps5vault.recentFtp');
       return stored ? JSON.parse(stored) : [];
@@ -205,15 +227,18 @@
     updateDestHistoryDatalist();
   }
 
-  function addRecentFtp(config) {
+  async function addRecentFtp(config) {
     if (!config) return;
     const recents = getRecentFtp();
     const key = `${config.host}:${config.port}:${config.path}:${config.user}`;
     const filtered = recents.filter(c => `${c.host}:${c.port}:${c.path}:${c.user}` !== key);
     filtered.unshift(config);
     const limited = filtered.slice(0, 10);
+    _recentFtpCache = limited; // in-memory plaintext (autofill); persisted encrypted below
     try {
-      localStorage.setItem('ps5vault.recentFtp', JSON.stringify(limited));
+      // Persist with the password encrypted at rest; host/port/user/path stay plain.
+      const enc = await Promise.all(limited.map(async c => ({ ...c, pass: c.pass ? await encryptSecret(c.pass) : (c.pass || '') })));
+      localStorage.setItem('ps5vault.recentFtp', JSON.stringify(enc));
     } catch (_) {}
   }
 
@@ -1284,7 +1309,7 @@
   }
 
   function saveTransferState(state) {
-    transferState = state;
+    transferState = state; // in-memory keeps plaintext for the live operation
     try {
       const stateForStorage = Object.assign({}, state, {
         items: (state.items || []).map(item => {
@@ -1292,7 +1317,15 @@
           const { iconPath: _i, ...rest } = item; return rest;
         })
       });
-      localStorage.setItem(TRANSFER_STATE_KEY, JSON.stringify(stateForStorage));
+      // Encrypt FTP passwords at rest before persisting (fire-and-forget). The spreads
+      // build new config objects, so the in-memory plaintext above is left untouched.
+      (async () => {
+        if (stateForStorage.ftpConfig && stateForStorage.ftpConfig.pass)
+          stateForStorage.ftpConfig = { ...stateForStorage.ftpConfig, pass: await encryptSecret(stateForStorage.ftpConfig.pass) };
+        if (stateForStorage.ftpDestConfig && stateForStorage.ftpDestConfig.pass)
+          stateForStorage.ftpDestConfig = { ...stateForStorage.ftpDestConfig, pass: await encryptSecret(stateForStorage.ftpDestConfig.pass) };
+        localStorage.setItem(TRANSFER_STATE_KEY, JSON.stringify(stateForStorage));
+      })().catch(() => {});
     } catch (_) {}
   }
 
@@ -3185,6 +3218,7 @@
               localStorage.removeItem(RECENT_SOURCES_KEY);
               localStorage.removeItem(RECENT_DESTS_KEY);
               localStorage.removeItem('ps5vault.recentFtp');
+              _recentFtpCache = []; // also drop the in-memory decrypted cache
               localStorage.removeItem(LAST_SRC_KEY);
               localStorage.removeItem(LAST_DST_KEY);
               // Also wipe the saved transfer state — it holds ftpConfig/ftpDestConfig with
@@ -3250,16 +3284,25 @@
 
       try { resumeState = JSON.parse(localStorage.getItem(TRANSFER_STATE_KEY) || 'null'); } catch (_) { resumeState = null; }
       if (resumeState) {
-        const itemCount = (resumeState.items || []).length;
-        const destLabel = resumeState.dest || 'unknown destination';
-        const shouldResume = confirm('A previous transfer was interrupted. Resume it?\n\n' + itemCount + ' game(s) to ' + destLabel);
-        if (shouldResume) {
-          resumeTransfer();
-        } else {
-          // User declined — clear state so we don't keep prompting on every reload
-          localStorage.removeItem(TRANSFER_STATE_KEY);
-          resumeState = null;
-        }
+        // FTP passwords are encrypted at rest — decrypt before resume reconnects, then
+        // prompt. Wrapped in an async IIFE so the (sync) DOMContentLoaded handler is
+        // unchanged; resumeState is already assigned above for any synchronous readers.
+        (async () => {
+          try {
+            if (resumeState.ftpConfig && resumeState.ftpConfig.pass) resumeState.ftpConfig.pass = await decryptSecret(resumeState.ftpConfig.pass);
+            if (resumeState.ftpDestConfig && resumeState.ftpDestConfig.pass) resumeState.ftpDestConfig.pass = await decryptSecret(resumeState.ftpDestConfig.pass);
+          } catch (_) {}
+          const itemCount = (resumeState.items || []).length;
+          const destLabel = resumeState.dest || 'unknown destination';
+          const shouldResume = confirm('A previous transfer was interrupted. Resume it?\n\n' + itemCount + ' game(s) to ' + destLabel);
+          if (shouldResume) {
+            resumeTransfer();
+          } else {
+            // User declined — clear state so we don't keep prompting on every reload
+            localStorage.removeItem(TRANSFER_STATE_KEY);
+            resumeState = null;
+          }
+        })();
       }
 
       const madeBy = $('madeBy');

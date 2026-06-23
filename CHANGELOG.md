@@ -4,6 +4,26 @@ All notable changes to PS5 Vault are documented here.
 
 ---
 
+## [2.4.18] — 2026
+
+### Security / Hardening
+
+- **Saved FTP passwords are now encrypted at rest.** The connection history (and the
+  saved resume-transfer state) previously kept the FTP password in plaintext in
+  `localStorage`. Passwords are now encrypted via the OS keystore (Electron `safeStorage`)
+  and decrypted only in memory when needed. Existing plaintext entries still load and are
+  re-encrypted on next save; if the OS keystore is unavailable it falls back to the old
+  behaviour, so autofill never breaks.
+- **Window hardening.** `window.open` is now denied and navigation away from the local app
+  is blocked (`setWindowOpenHandler` + `will-navigate`), and the renderer now runs with
+  `sandbox: true`. Defence-in-depth on top of the existing `contextIsolation` + strict CSP.
+- **CSP tightened** with explicit `object-src 'none'`, `base-uri 'self'`, and
+  `frame-ancestors 'none'` (the latter two have no `default-src` fallback).
+
+Found by a follow-up concurrency / Electron-hardening audit sweep.
+
+---
+
 ## [2.4.17] — 2026
 
 ### Hardened

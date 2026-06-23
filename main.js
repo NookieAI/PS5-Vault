@@ -5,7 +5,7 @@
 // biggest scan speed win on any drive type.
 process.env.UV_THREADPOOL_SIZE = '128';
 
-const { app, BrowserWindow, ipcMain, dialog, shell, clipboard, Tray, Menu, nativeImage } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, clipboard, Tray, Menu, nativeImage, safeStorage } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
@@ -2852,6 +2852,28 @@ ipcMain.handle('open-directory', async () => {
   }
 });
 
+// ── safeStorage: encrypt/decrypt secrets (saved FTP passwords) at rest ────────
+// The renderer keeps connection history in localStorage; the password field is
+// encrypted here so it never sits in plaintext on disk. Backward-compatible: a value
+// without the 'v1:' marker is treated as legacy plaintext and returned as-is, and if
+// OS-level encryption is unavailable we fall back to plaintext (no worse than before).
+ipcMain.handle('secret-encrypt', (_e, plain) => {
+  try {
+    if (plain && safeStorage.isEncryptionAvailable()) {
+      return 'v1:' + safeStorage.encryptString(String(plain)).toString('base64');
+    }
+  } catch (_) {}
+  return plain == null ? '' : String(plain);
+});
+ipcMain.handle('secret-decrypt', (_e, stored) => {
+  try {
+    if (typeof stored === 'string' && stored.startsWith('v1:')) {
+      return safeStorage.decryptString(Buffer.from(stored.slice(3), 'base64'));
+    }
+  } catch (_) {}
+  return typeof stored === 'string' ? stored : '';
+});
+
 // Look up cached cover art for a batch of games by their cache key (contentId,
 // falling back to folder path). Returns a parallel array of absolute file paths
 // ('' when nothing is cached). Lets the renderer rehydrate covers from the
@@ -4869,8 +4891,16 @@ function createWindow() {
       webPreferences: {
         preload: path.join(__dirname, 'preload.js'),
         nodeIntegration: false,
-        contextIsolation: true
+        contextIsolation: true,
+        sandbox: true
       }
+    });
+
+    // Hardening: deny window.open (the renderer has a window.open fallback for external
+    // links) and block any navigation away from the local file:// app.
+    mainWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+    mainWindow.webContents.on('will-navigate', (e, url) => {
+      if (!url.startsWith('file://')) e.preventDefault();
     });
 
     // Maximize before show so the window is already full-size when it appears
