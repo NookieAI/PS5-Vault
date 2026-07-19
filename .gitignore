@@ -1,0 +1,5 @@
+﻿node_modules/
+dist/
+_logs/
+*.7z
+*.zip
